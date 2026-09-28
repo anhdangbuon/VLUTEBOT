@@ -1,0 +1,27 @@
+# Virtual environment
+.venv/
+env/
+venv/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environment variables
+.env
+.env.local
+
+# IDE settings
+.vscode/*
+!.vscode/settings.json
+!.vscode/launch.json
+.idea/
+
+# Streamlit runtime
+.streamlit/secrets.toml
+
+# Logs
+*.log
