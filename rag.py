@@ -348,10 +348,10 @@ def get_llm():
         try:
             from langchain_google_genai import ChatGoogleGenerativeAI
             _GLOBAL_LLM = ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash-latest",
+            model="gemini-1.5-flash-001",
             google_api_key=api_key,
-                temperature=0.1
-            )
+            temperature=0.1
+)
             return _GLOBAL_LLM
         except Exception as e:
             print(f"[Warning] Không thể khởi tạo ChatGoogleGenerativeAI: {e}. Fallback về Ollama.")
