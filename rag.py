@@ -269,7 +269,8 @@ class SmartRAGChain:
 
         context_str = "\n\n".join(context_parts)
         formatted_prompt = self.prompt.format(context=context_str, input=query)
-        answer = self.llm.invoke(formatted_prompt)
+        raw_answer = self.llm.invoke(formatted_prompt)
+        answer = raw_answer if isinstance(raw_answer, str) else getattr(raw_answer, 'content', str(raw_answer))
 
         return {
             "answer": answer,
@@ -289,6 +290,20 @@ _GLOBAL_VECTOR_DB = None
 _GLOBAL_LLM = None
 _GLOBAL_CHAIN = None
 
+def get_google_api_key():
+    """Đọc khóa API từ biến môi trường hoặc Streamlit Secrets."""
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    try:
+        import streamlit as st
+        if not api_key and hasattr(st, "secrets"):
+            if "GEMINI_API_KEY" in st.secrets:
+                api_key = st.secrets["GEMINI_API_KEY"]
+            elif "GOOGLE_API_KEY" in st.secrets:
+                api_key = st.secrets["GOOGLE_API_KEY"]
+    except Exception:
+        pass
+    return api_key
+
 def get_embedding_model():
     """Nạp mô hình Embedding tối ưu: Hỗ trợ Google Cloud nếu có API Key hoặc mô hình local nạp offline siêu tốc."""
     global _GLOBAL_EMBEDDINGS
@@ -296,7 +311,7 @@ def get_embedding_model():
         return _GLOBAL_EMBEDDINGS
 
     # 1. Hỗ trợ Google Generative AI Embeddings nếu có API Key (tính toán cloud nhẹ máy)
-    google_api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    google_api_key = get_google_api_key()
     if google_api_key:
         try:
             from langchain_google_genai import GoogleGenerativeAIEmbeddings
@@ -345,11 +360,26 @@ def get_vector_db():
     return _GLOBAL_VECTOR_DB
 
 def get_llm():
-    """Khởi tạo mô hình LLM Ollama với cấu hình tối ưu."""
+    """Khởi tạo mô hình LLM: Sử dụng ChatGoogleGenerativeAI(gemini-1.5-flash) nếu có api_key, fallback về OllamaLLM(llama3.2)."""
     global _GLOBAL_LLM
     if _GLOBAL_LLM is not None:
         return _GLOBAL_LLM
-    
+
+    # 1. Kiểm tra API Key từ môi trường hoặc Streamlit Secrets
+    api_key = get_google_api_key()
+    if api_key:
+        try:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            _GLOBAL_LLM = ChatGoogleGenerativeAI(
+                model="gemini-1.5-flash",
+                google_api_key=api_key,
+                temperature=0.1
+            )
+            return _GLOBAL_LLM
+        except Exception as e:
+            print(f"[Warning] Không thể khởi tạo ChatGoogleGenerativeAI: {e}. Fallback về Ollama.")
+
+    # 2. Fallback về OllamaLLM(model='llama3.2') như cũ khi chạy cục bộ
     _GLOBAL_LLM = OllamaLLM(
         model="llama3.2",
         num_gpu=99,
