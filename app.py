@@ -674,21 +674,65 @@ div[data-testid="stChatInput"] textarea:focus {
     border-color: #00703c !important;
 }
 
-/* Tương thích di động */
-@media (max-width: 640px) {
-    .header-right-spacer { display: none; }
-    .vlute-logo-img { width: 50px; height: 50px; }
-    .vlute-portal-title { font-size: 1.05rem !important; }
-    .chat-row-user { padding-left: 12px !important; }
-    div[data-testid="stChatMessageContent"], .user-bubble { max-width: 95% !important; }
+/* Sửa nút 3 gạch phản hồi tức thì sau 1 chạm */
+button[data-testid="stExpandSidebarButton"],
+[data-testid="stExpandSidebarButton"],
+[data-testid="collapsedControl"] {
+    touch-action: manipulation !important;
+    -webkit-tap-highlight-color: transparent !important;
+    z-index: 99999 !important;
 }
 
-/* Ẩn wrapper iframe nền */
-iframe[height="0"], div:has(> iframe[height="0"]) {
-    display: none !important;
-    height: 0 !important;
-    margin: 0 !important;
-    padding: 0 !important;
+@media (max-width: 768px) {
+    /* 1. Sidebar chiếm 85% chiều rộng màn hình, không bị tràn hay quá hẹp */
+    section[data-testid="stSidebar"] {
+        width: 85vw !important;
+        min-width: 85vw !important;
+        max-width: 85vw !important;
+    }
+    
+    /* 2. Thu gọn Header trên điện thoại để tiết kiệm diện tích cuộn */
+    .vlute-portal-header {
+        min-height: 85px !important;
+        max-height: 95px !important;
+        padding: 8px 12px !important;
+    }
+    .header-right-spacer {
+        display: none !important;
+    }
+    .vlute-logo-img {
+        width: 48px !important;
+        height: 48px !important;
+    }
+    .vlute-portal-title {
+        font-size: 0.95rem !important;
+        line-height: 1.25 !important;
+    }
+    .vlute-portal-subtitle {
+        font-size: 0.75rem !important;
+    }
+
+    /* 3. Tối ưu bong bóng chat hiển thị rộng rãi, vừa vặn khung hình */
+    div[data-testid="stChatMessageContent"], .user-bubble {
+        max-width: 92% !important;
+        font-size: 0.92rem !important;
+        padding: 10px 14px !important;
+    }
+    .chat-row-user {
+        padding-left: 0px !important;
+    }
+
+    /* 4. Tinh gọn 4 nút gợi ý nhanh: chữ nhỏ gọn, viền mỏng để không chiếm hết màn hình */
+    div[data-testid="stHorizontalBlock"] button {
+        font-size: 0.78rem !important;
+        padding: 6px 10px !important;
+        border-radius: 12px !important;
+        line-height: 1.3 !important;
+    }
+    .quick-prompt-title {
+        font-size: 0.8rem !important;
+        margin-bottom: 4px !important;
+    }
 }
 
 .rag-status-badge {
@@ -706,31 +750,6 @@ iframe[height="0"], div:has(> iframe[height="0"]) {
 }
 </style>
 """, unsafe_allow_html=True)
-
-# ==========================================
-# HOẠT ẢNH RÊ CHUỘT VÀO FRAMEWORK TỰ ĐỘNG KÉO RA
-# ==========================================
-st.components.v1.html("""
-<script>
-(function() {
-    function setupHoverExpand() {
-        try {
-            const pDoc = window.parent.document;
-            if (!pDoc) return;
-            const expandBtn = pDoc.querySelector('button[data-testid="stExpandSidebarButton"]');
-            if (expandBtn && !expandBtn.dataset.hoverBound) {
-                expandBtn.dataset.hoverBound = "true";
-                expandBtn.addEventListener('mouseenter', function() {
-                    expandBtn.click();
-                });
-            }
-        } catch(e) {}
-    }
-    setupHoverExpand();
-    setInterval(setupHoverExpand, 400);
-})();
-</script>
-""", height=0, width=0)
 
 THINKING_HTML = """
 <div class="thinking-track">
