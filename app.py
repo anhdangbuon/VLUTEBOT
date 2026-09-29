@@ -932,6 +932,35 @@ def execute_rag_pipeline(query: str):
 
     return raw_answer, sources, len(docs)
 
+def normalize_query_intent(query: str) -> str:
+    """Chuẩn hóa câu hỏi của sinh viên về truy vấn chuẩn để tối đa hóa tỷ lệ trúng Response Cache (RAM)."""
+    if not query:
+        return ""
+    
+    q_clean = query.strip()
+    q_lower = q_clean.lower()
+
+    # 1. Nhóm học bổng khuyến khích: chứa "học bổng", "kkht", "khen thưởng" (và không có "vượt khó", "nghèo")
+    if any(k in q_lower for k in ["học bổng", "kkht", "khen thưởng"]) and not any(k in q_lower for k in ["vượt khó", "nghèo"]):
+        return "Tiêu chuẩn và điều kiện xét cấp học bổng khuyến khích học tập là gì?"
+
+    # 2. Nhóm hoàn học phí: chứa "hoàn trả", "hoàn tiền", "học phí thừa", "rút tiền học phí"
+    if any(k in q_lower for k in ["hoàn trả", "hoàn tiền", "học phí thừa", "rút tiền học phí"]):
+        return "Quy trình làm thủ tục hoàn trả học phí thừa cho sinh viên gồm những bước nào?"
+
+    # 3. Nhóm miễn giảm học phí: chứa "miễn giảm", "giảm học phí", "chính sách học phí"
+    if any(k in q_lower for k in ["miễn giảm", "giảm học phí", "chính sách học phí"]):
+        return "Đối tượng sinh viên nào được xét miễn giảm học phí theo quy định của trường?"
+
+    # 4. Nhóm tín chỉ CTXH: chứa "công tác xã hội", "ctxh", "tín chỉ ctxh"
+    if any(k in q_lower for k in ["công tác xã hội", "ctxh", "tín chỉ ctxh"]):
+        return "Sinh viên cần hoàn thành bao nhiêu tín chỉ Công tác xã hội để đủ điều kiện xét tốt nghiệp?"
+
+    # 5. Các câu hỏi khác: làm sạch dấu câu cuối câu và khoảng trắng thừa
+    normalized = re.sub(r"[\?\.\,\!\;\:\_]+$", "", q_clean).strip()
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized if normalized else q_clean
+
 # ==========================================
 # 2. TINH GỌN LỜI CHÀO MỞ ĐẦU
 # ==========================================
@@ -1160,7 +1189,8 @@ if user_query:
             status_placeholder.markdown(THINKING_HTML, unsafe_allow_html=True)
 
             try:
-                raw_text, sources_to_save, num_docs = execute_rag_pipeline(user_query)
+                canonical_query = normalize_query_intent(user_query)
+                raw_text, sources_to_save, num_docs = execute_rag_pipeline(canonical_query)
 
                 # Nếu gặp phản hồi hạn ngạch 429, xóa cache để lần hỏi sau thử lại API
                 if raw_text and "hạn ngạch" in raw_text:
@@ -1226,3 +1256,39 @@ if user_query:
         "sources": sources_to_save
     })
     st.rerun()
+
+# ==========================================
+# 6. TỰ ĐỘNG LÀM ẤM BỘ NHỚ ĐỆM (CACHE PRE-WARMING)
+# ==========================================
+def _prewarm_cache_background():
+    """Khởi chạy ngầm nạp sẵn câu trả lời cho 4 câu hỏi gợi ý phổ biến vào RAM (@st.cache_data)."""
+    suggested_queries = [
+        "Tiêu chuẩn và điều kiện xét cấp học bổng khuyến khích học tập là gì?",
+        "Quy trình làm thủ tục hoàn trả học phí thừa cho sinh viên gồm những bước nào?",
+        "Đối tượng sinh viên nào được xét miễn giảm học phí theo quy định của trường?",
+        "Sinh viên cần hoàn thành bao nhiêu tín chỉ Công tác xã hội để đủ điều kiện xét tốt nghiệp?"
+    ]
+    for q in suggested_queries:
+        try:
+            execute_rag_pipeline(q)
+        except Exception:
+            pass
+
+try:
+    import threading
+    if "_cache_prewarmed" not in st.session_state:
+        st.session_state["_cache_prewarmed"] = True
+        try:
+            from streamlit.runtime.scriptrunner import add_script_run_ctx
+        except Exception:
+            add_script_run_ctx = None
+
+        _prewarm_thread = threading.Thread(target=_prewarm_cache_background, daemon=True)
+        if add_script_run_ctx:
+            try:
+                add_script_run_ctx(_prewarm_thread)
+            except Exception:
+                pass
+        _prewarm_thread.start()
+except Exception:
+    pass
