@@ -305,11 +305,17 @@ def get_google_api_key():
     return api_key
 
 def get_embedding_model():
+    """Luôn sử dụng mô hình SentenceTransformer để khớp 100% với dữ liệu ChromaDB đã lưu."""
     global _GLOBAL_EMBEDDINGS
     if _GLOBAL_EMBEDDINGS is not None:
         return _GLOBAL_EMBEDDINGS
-    
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    device = "cpu"  # Streamlit Cloud chỉ dùng CPU
+    try:
+        torch.set_num_threads(2)
+    except Exception:
+        pass
+
     _GLOBAL_EMBEDDINGS = SentenceTransformerEmbeddings(
         model_name="bkai-foundation-models/vietnamese-bi-encoder",
         model_kwargs={"device": device},
