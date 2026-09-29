@@ -1142,34 +1142,35 @@ if user_query:
                     context_str = "\n\n".join(context_parts)
                     formatted_prompt = qa_chain.prompt.format(context=context_str, input=user_query)
 
-                    # Stream phản hồi an toàn với khối try...except
-                    def stream_generator():
-                        has_started = False
-                        try:
-                            if hasattr(qa_chain.llm, "stream"):
-                                for chunk in qa_chain.llm.stream(formatted_prompt):
-                                    if not has_started:
-                                        status_placeholder.markdown(f"""
-                                        <div class="rag-status-badge">
-                                            <span>✓</span> <span>Đã đối soát thành công <b>{len(docs)}</b> đoạn trích quy chế liên quan</span>
-                                        </div>
-                                        """, unsafe_allow_html=True)
-                                        has_started = True
-                                    content = getattr(chunk, "content", str(chunk))
-                                    yield content
-                            else:
-                                raw = qa_chain.llm.invoke(formatted_prompt)
-                                raw_text = getattr(raw, "content", str(raw))
-                                if not has_started:
-                                    status_placeholder.empty()
-                                    has_started = True
-                                yield raw_text
-                        except Exception as stream_err:
-                            status_placeholder.empty()
-                            yield f"\n\n⚠️ *Lỗi khi kết nối mô hình ngôn ngữ: {stream_err}*. Vui lòng kiểm tra lại cấu hình API key hoặc thử lại sau."
+                    # Gọi invoke an toàn có vòng lặp retry tự động khi gặp 503 UNAVAILABLE
+                    import time
 
-                    full_answer = st.write_stream(stream_generator())
-                    # Đảm bảo full_answer luôn là kiểu str trước khi lưu vào session_state hoặc xử lý tiếp:
+                    raw_text = ""
+                    max_attempts = 3
+                    for attempt in range(max_attempts):
+                        try:
+                            response_obj = qa_chain.llm.invoke(formatted_prompt)
+                            raw_text = getattr(response_obj, "content", str(response_obj))
+                            break
+                        except Exception as api_err:
+                            if "503" in str(api_err) and attempt < max_attempts - 1:
+                                time.sleep(2)
+                                continue
+                            raise api_err
+
+                    status_placeholder.markdown(f"""
+                    <div class="rag-status-badge">
+                        <span>✓</span> <span>Đã đối soát thành công <b>{len(docs)}</b> đoạn trích quy chế liên quan</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    def word_generator(text):
+                        words = text.split(" ")
+                        for idx, w in enumerate(words):
+                            yield w + (" " if idx < len(words) - 1 else "")
+                            time.sleep(0.015)
+
+                    full_answer = st.write_stream(word_generator(raw_text))
                     if not isinstance(full_answer, str):
                         full_answer = str(full_answer)
                     answer_to_save = full_answer
