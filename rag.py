@@ -9,7 +9,7 @@ from langchain_ollama import OllamaLLM
 DB_PATH = "chroma_db"
 
 # =======================================================
-# DANH MỤC VĂN BẢN QUY CHẾ CHÍNH THỨC CỦA TRƯỜNG ĐH SPKT VĨNH LONG
+# DANH MỤC VĂN BẢN QUY CHẾ CHÍNH THỨC CỦA TRƯỜNG ĐẠI HỌC CÔNG NGHỆ KỸ THUẬT VĨNH LONG (VLUTE)
 # =======================================================
 DOC_CATALOG = {
     "xet_cap_hoc_bong.pdf": {
@@ -53,10 +53,10 @@ DOC_CATALOG = {
         "keywords": ["công tác xã hội", "ctxh", "tín chỉ công tác xã hội", "tình nguyện", "mùa hè xanh", "tiếp sức mùa thi", "hiến máu", "hoạt động xã hội"]
     },
     "quy_tac_ung_xu.pdf": {
-        "title": "Quy tắc ứng xử của cán bộ, giảng viên & người học VLUTE",
+        "title": "Quy tắc ứng xử của cán bộ, giảng viên & người học",
         "short_title": "Quy tắc Ứng xử Học đường",
         "category": "ung_xu",
-        "dept": "Trường ĐH Sư phạm Kỹ thuật Vĩnh Long",
+        "dept": "Trường ĐH Công nghệ Kỹ thuật Vĩnh Long",
         "hotline": "(0270) 3822 141",
         "keywords": ["ứng xử", "giao tiếp", "trang phục", "thái độ", "văn hóa học đường", "tác phong"]
     },
@@ -122,14 +122,24 @@ def extract_article_info(content: str):
     if m:
         num = m.group(1)
         name = m.group(2).strip().strip(":")
+        name = re.sub(r"[\*\_\`\#\:\.\,\;]+$", "", name).strip()
         if name and len(name) > 3 and not name.lower().startswith("khoản"):
+            if len(name) > 40:
+                name = name[:40].rsplit(" ", 1)[0]
             return f"Điều {num}: {name}"
         return f"Điều {num}"
     
     # Kiểm tra xem có phải Chương không
-    m_chuong = re.search(r"Chương\s+([IVXLCDM\d]+)[\.\:]?\s*([^\n\.\;]{0,50})", content, re.IGNORECASE)
+    m_chuong = re.search(r"Chương\s+([IVXLCDM\d]+)[\.\:]?\s*([^\n\.\;]{0,40})", content, re.IGNORECASE)
     if m_chuong:
-        return f"Chương {m_chuong.group(1)}"
+        c_num = m_chuong.group(1)
+        c_name = m_chuong.group(2).strip().strip(":")
+        c_name = re.sub(r"[\*\_\`\#\:\.\,\;]+$", "", c_name).strip()
+        if c_name and len(c_name) > 3:
+            if len(c_name) > 30:
+                c_name = c_name[:30].rsplit(" ", 1)[0]
+            return f"Chương {c_num}: {c_name}"
+        return f"Chương {c_num}"
         
     return None
 
@@ -144,34 +154,62 @@ class SmartRAGChain:
         Truy xuất thông minh:
         1. Phân loại chủ đề câu hỏi (Query Routing).
         2. Loại trừ triệt để các văn bản nghị quyết hành chính không liên quan.
-        3. Ưu tiên đúng tài liệu chuyên môn.
+        3. Phân biệt rõ Học bổng khuyến khích học tập (Điều 17, 18) và Học bổng vượt khó (Điều 32).
+        4. Ưu tiên đúng tài liệu chuyên môn.
         """
         q_lower = query.lower()
         
+        # Nhận diện nếu câu hỏi hỏi về Học bổng khuyến khích học tập (KKHT)
+        is_kkht = any(kw in q_lower for kw in ["khuyến khích", "kkht", "tiêu chuẩn học bổng", "điều kiện xét học bổng", "xét học bổng", "học bổng học tập", "mức học bổng", "học bổng"]) and not any(kw in q_lower for kw in ["vượt khó", "nghèo", "khó khăn", "tài trợ", "doanh nghiệp"])
+
+        # Mở rộng từ khóa truy vấn khi hỏi về học bổng KKHT
+        search_query = query
+        if is_kkht:
+            search_query += " học bổng KKHT Điều 17 Điều 18 điều kiện xét cấp học bổng điểm TBC rèn luyện 17 tín chỉ Mức 1 Mức 2 Mức 3 Mức 4 Xuất sắc Giỏi Khá"
+
         # 1. Xác định nhóm tài liệu mục tiêu
         target_files = []
         for filename, meta in DOC_CATALOG.items():
             if any(kw in q_lower for kw in meta["keywords"]):
                 target_files.append(filename)
                 
-        # 2. Truy xuất tài liệu từ Chroma
-        # Lấy số lượng ứng viên lớn hơn (k*2) để lọc sau đó
-        candidate_docs = self.vector_db.similarity_search(query, k=k * 3)
+        # 2. Truy xuất tài liệu từ Chroma (giới hạn index search k=3 đến 5 tối ưu tốc độ)
+        fetch_k = max(3, k + 2)
+        candidate_docs = self.vector_db.similarity_search(search_query, k=fetch_k)
         
-        # 3. Lọc bỏ các tài liệu nghị quyết nhà nước / cán bộ viên chức nếu câu hỏi là về sinh viên
+        # 3. Lọc bỏ các tài liệu nghị quyết và lọc học bổng vượt khó nếu là câu hỏi KKHT
         filtered = []
         for doc in candidate_docs:
             source = os.path.basename(doc.metadata.get("source", ""))
+            content = doc.page_content.lower()
             
-            # Nếu câu hỏi không hỏi đích danh về Nghị quyết, bỏ qua 3 file nghị quyết
+            # Bỏ 3 file nghị quyết nhà nước
             if source in ["nghi_quyet_71.pdf", "nghi_quyet_72.pdf", "nghi_quyet_153.pdf"]:
                 if not any(nq in q_lower for nq in ["nghị quyết", "nghi quyet", "bộ chính trị", "chính phủ"]):
                     continue
+            
+            # Nếu hỏi học bổng KKHT thì LOẠI BỎ triệt để các chunk về Học bổng vượt khó (Điều 30-33)
+            if is_kkht and any(vk in content for vk in ["học bổng vượt khó", "điều 30.", "điều 31.", "điều 32.", "điều 33.", "sinh viên có hoàn cảnh đặc biệt", "sinh viên có hoàn cảnh khó khăn"]):
+                continue
                     
             filtered.append(doc)
             
-        # 4. Nếu có target_files rõ ràng, ưu tiên các chunk thuộc target_files lên đầu
-        if target_files:
+        # 4. Ưu tiên các chunk chuyên biệt
+        if is_kkht:
+            # Ưu tiên chunk có điều kiện cốt lõi (17 tín chỉ, Điểm TBC, rèn luyện) lên vị trí số 1
+            priority_docs = []
+            secondary_docs = []
+            other_docs = []
+            for d in filtered:
+                c = d.page_content.lower()
+                if "17 tín chỉ" in c or "điểm tbc" in c or "điều 17." in c:
+                    priority_docs.append(d)
+                elif any(cond in c for cond in ["điều 17", "điều 18", "điều 19", "mức 1", "mức 2", "loại học bổng"]):
+                    secondary_docs.append(d)
+                else:
+                    other_docs.append(d)
+            final_docs = priority_docs + secondary_docs + other_docs
+        elif target_files:
             priority_docs = [d for d in filtered if os.path.basename(d.metadata.get("source", "")) in target_files]
             other_docs = [d for d in filtered if os.path.basename(d.metadata.get("source", "")) not in target_files]
             final_docs = priority_docs + other_docs
@@ -182,23 +220,18 @@ class SmartRAGChain:
         return final_docs[:k]
 
     def invoke(self, inputs):
+        if isinstance(inputs, str):
+            inputs = {"input": inputs}
         query = inputs.get("input", "").strip()
         
-        # BƯỚC 1: Kiểm tra chống Hallucination chủ động cho các câu hỏi ngoài phạm vi
+        # BƯỚC 1: Kiểm tra ngoài phạm vi để tránh suy đoán sai
         out_of_scope = check_out_of_scope(query)
         if out_of_scope:
             refusal_text = (
-                f"👋 **Chào bạn sinh viên VLUTE,**\n\n"
-                f"Hiện tại trong các tài liệu quy chế được nạp vào hệ thống, "
-                f"**chưa có văn bản quy định chi tiết về: {out_of_scope['topic']}**.\n\n"
-                f"ℹ️ *Giải thích:* {out_of_scope['advice']}\n\n"
-                f"⚠️ **Nguyên tắc RAG chống suy đoán (Anti-Hallucination):** Lucas tuyệt đối không suy đoán hoặc mượn số liệu từ văn bản khác để đảm bảo tính chuẩn xác cho bạn.\n\n"
-                f"💡 **Các nội dung bạn có thể tra cứu có dữ liệu đầy đủ tại trường:**\n"
-                f"• 🏆 **Học bổng:** Tiêu chuẩn xét học bổng khuyến khích học tập (QĐ 201)\n"
-                f"• 💰 **Học phí:** Quy trình hoàn trả học phí thừa (QT-SV-04) & Miễn giảm học phí (QĐ 904)\n"
-                f"• 🤝 **Công tác xã hội:** Quy định tích lũy tín chỉ Công tác xã hội (QĐ 55)\n"
-                f"• 📋 **Khen thưởng & Kỷ luật:** Quy chế công tác sinh viên (QĐ 1079)\n\n"
-                f"📞 Để được hỗ trợ cụ thể về vấn đề này, bạn vui lòng liên hệ trực tiếp **{out_of_scope['dept_name']}**: {out_of_scope['dept_contact']}."
+                f"Chào bạn nhé! Về nội dung **{out_of_scope['topic']}**, hiện tại trong các văn bản quy chế đã nạp vào hệ thống chưa có quy định chi tiết.\n\n"
+                f"ℹ️ *Gợi ý cho bạn:* {out_of_scope['advice']}\n\n"
+                f"💡 Để đảm bảo quyền lợi và sự chuẩn xác cho bạn, mình không tự suy đoán khi chưa có văn bản ban hành chính thức.\n\n"
+                f"📞 Bạn vui lòng liên hệ trực tiếp **{out_of_scope['dept_name']}** ({out_of_scope['dept_contact']}) để được thầy cô hướng dẫn thủ tục chính xác nhất nhé!"
             )
             return {
                 "answer": refusal_text,
@@ -210,12 +243,12 @@ class SmartRAGChain:
         # BƯỚC 2: Truy xuất tài liệu phù hợp (Query Routing & Filtering)
         docs = self.filter_documents(query, k=3)
         
-        # BƯỚC 3: Nếu không tìm thấy đoạn trích nào hoặc ngữ cảnh rỗng
+        # BƯỚC 3: Nếu không tìm thấy đoạn trích nào phù hợp
         if not docs:
             fallback_text = (
-                "⚠️ **Lucas chưa tìm thấy thông tin đủ phù hợp trong kho tài liệu quy chế hiện có để giải đáp câu hỏi này.**\n\n"
-                "Lucas không muốn tự suy đoán để tránh cung cấp thông tin sai lệch cho sinh viên. "
-                "Bạn có thể thử đặt lại câu hỏi ngắn gọn hơn hoặc hỏi về các chủ đề: *học bổng, học phí, công tác xã hội, khen thưởng kỷ luật sinh viên*."
+                "Chào bạn, mình chưa tìm thấy thông tin phù hợp trong các văn bản quy chế hiện có để giải đáp câu hỏi này.\n\n"
+                "Để tránh cung cấp thông tin sai lệch cho bạn, mình không tự suy đoán. "
+                "Bạn có thể thử đặt lại câu hỏi ngắn gọn hơn hoặc hỏi về các chủ đề: *học bổng, hoàn trả học phí, miễn giảm học phí, công tác xã hội, khen thưởng kỷ luật sinh viên* nhé!"
             )
             return {
                 "answer": fallback_text,
@@ -223,7 +256,7 @@ class SmartRAGChain:
                 "is_out_of_scope": True
             }
 
-        # BƯỚC 4: Chuẩn bị context và đưa vào LLM với quy tắc chống hallucination nghiêm ngặt
+        # BƯỚC 4: Chuẩn bị context và đưa vào LLM với văn phong tự nhiên, chuẩn xác
         context_parts = []
         for i, doc in enumerate(docs, 1):
             src_file = os.path.basename(doc.metadata.get("source", "Tài liệu"))
@@ -243,38 +276,118 @@ class SmartRAGChain:
             "context": docs
         }
 
-def get_rag_chain():
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    embedding_model = SentenceTransformerEmbeddings(
-        model_name="bkai-foundation-models/vietnamese-bi-encoder",
-        model_kwargs={"device": device}
-    )
-    
-    vector_db = Chroma(persist_directory=DB_PATH, embedding_function=embedding_model)
+    def as_retriever(self, search_kwargs=None):
+        """Hỗ trợ giao diện retriever chuẩn với tham số giới hạn k=3 mặc định."""
+        kwargs = search_kwargs or {"k": 3}
+        return self.vector_db.as_retriever(search_kwargs=kwargs)
 
-    llm = OllamaLLM(
+# =======================================================
+# BỘ NHỚ ĐỆM SINGLETON (MODULE-LEVEL CACHE) TĂNG TỐC KHỞI ĐỘNG < 1 GIÂY
+# =======================================================
+_GLOBAL_EMBEDDINGS = None
+_GLOBAL_VECTOR_DB = None
+_GLOBAL_LLM = None
+_GLOBAL_CHAIN = None
+
+def get_embedding_model():
+    """Nạp mô hình Embedding tối ưu: Hỗ trợ Google Cloud nếu có API Key hoặc mô hình local nạp offline siêu tốc."""
+    global _GLOBAL_EMBEDDINGS
+    if _GLOBAL_EMBEDDINGS is not None:
+        return _GLOBAL_EMBEDDINGS
+
+    # 1. Hỗ trợ Google Generative AI Embeddings nếu có API Key (tính toán cloud nhẹ máy)
+    google_api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    if google_api_key:
+        try:
+            from langchain_google_genai import GoogleGenerativeAIEmbeddings
+            _GLOBAL_EMBEDDINGS = GoogleGenerativeAIEmbeddings(
+                model="models/embedding-001",
+                google_api_key=google_api_key
+            )
+            return _GLOBAL_EMBEDDINGS
+        except Exception:
+            pass
+
+    # 2. Tối ưu nạp offline nhanh cho Vietnamese Bi-Encoder cục bộ
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    try:
+        torch.set_num_threads(min(8, os.cpu_count() or 4))
+    except Exception:
+        pass
+
+    try:
+        _GLOBAL_EMBEDDINGS = SentenceTransformerEmbeddings(
+            model_name="bkai-foundation-models/vietnamese-bi-encoder",
+            model_kwargs={"device": device, "local_files_only": True},
+            encode_kwargs={"normalize_embeddings": True}
+        )
+    except Exception:
+        _GLOBAL_EMBEDDINGS = SentenceTransformerEmbeddings(
+            model_name="bkai-foundation-models/vietnamese-bi-encoder",
+            model_kwargs={"device": device},
+            encode_kwargs={"normalize_embeddings": True}
+        )
+    return _GLOBAL_EMBEDDINGS
+
+def get_vector_db():
+    """Khởi tạo kết nối ChromaDB với persist_directory có sẵn, tuyệt đối không quét lại file PDF/Word."""
+    global _GLOBAL_VECTOR_DB
+    if _GLOBAL_VECTOR_DB is not None:
+        return _GLOBAL_VECTOR_DB
+    
+    embedding_model = get_embedding_model()
+    _GLOBAL_VECTOR_DB = Chroma(
+        persist_directory=DB_PATH,
+        embedding_function=embedding_model
+    )
+    return _GLOBAL_VECTOR_DB
+
+def get_llm():
+    """Khởi tạo mô hình LLM Ollama với cấu hình tối ưu."""
+    global _GLOBAL_LLM
+    if _GLOBAL_LLM is not None:
+        return _GLOBAL_LLM
+    
+    _GLOBAL_LLM = OllamaLLM(
         model="llama3.2",
         num_gpu=99,
-        temperature=0.05,  # Giảm temperature xuống cực thấp để triệt tiêu hoàn toàn tính ngẫu nhiên
+        temperature=0.05,
         repeat_penalty=1.2,
         stop=["<|eot_id|>", "<|end_of_text|>", "\n\n\n"]
     )
+    return _GLOBAL_LLM
 
-    # Prompt tuân thủ 6 quy tắc chống hallucination theo đề xuất của ChatGPT
+def get_rag_chain():
+    """Khởi tạo hoặc trả về chain RAG đã được lưu trong bộ nhớ đệm (singleton cache)."""
+    global _GLOBAL_CHAIN
+    if _GLOBAL_CHAIN is not None:
+        return _GLOBAL_CHAIN
+
+    vector_db = get_vector_db()
+    llm = get_llm()
+
+    # Prompt chuẩn hóa: tự nhiên, xưng 'mình' gọi 'bạn', ngắn gọn 3-6 dòng, không mở đầu máy móc
     system_prompt = (
-        "Bạn là Lucas, trợ lý AI tư vấn Quy chế Đào tạo và Quy định Sinh viên của Trường Đại học Sư phạm Kỹ thuật Vĩnh Long (VLUTE).\n\n"
-        "QUY TẮC BẮT BUỘC KHI TRẢ LỜI (ANTI-HALLUCINATION):\n"
-        "1. CHỈ sử dụng thông tin có căn cứ xác thực trong phần 'NGỮ CẢNH QUY CHẾ' bên dưới.\n"
-        "2. TUYỆT ĐỐI KHÔNG tự suy đoán, không bịa đặt số liệu (tỷ lệ %, số tiền, số tín chỉ, mốc thời gian).\n"
-        "3. TUYỆT ĐỐI KHÔNG lấy số liệu từ các văn bản không liên quan (như quy định dành cho giáo viên, viên chức) để áp đặt vào câu trả lời cho sinh viên.\n"
-        "4. Nếu trong ngữ cảnh KHÔNG có câu trả lời rõ ràng hoặc thông tin không liên quan trực tiếp, hãy trả lời trung thực: "
-        "'Văn bản quy chế hiện có chưa đề cập chi tiết đến nội dung này.'\n"
-        "5. Nếu câu hỏi có nhiều ý mà ngữ cảnh chỉ có một phần, chỉ trả lời phần có dữ liệu và nói rõ phần còn lại chưa có văn bản quy định.\n"
-        "6. Trình bày dạng gạch đầu dòng rõ ràng, mạch lạc, ngắn gọn; có nêu rõ tên Điều/Khoản nếu có trong ngữ cảnh.\n\n"
-        "NGỮ CẢNH QUY CHẾ:\n{context}\n\n"
-        "CÂU HỎI CỦA SINH VIÊN: {input}\n\n"
-        "CÂU TRẢ LỜI BẰNG TIẾNG VIỆT (CHUẨN XÁC, CÓ TRÍCH DẪN):"
+        "Bạn là Lucas, trợ lý tư vấn Quy chế Đào tạo và Quy định Sinh viên của Trường Đại học Công nghệ Kỹ thuật Vĩnh Long (VLUTE - tiền thân là Trường Đại học Sư phạm Kỹ thuật Vĩnh Long).\n\n"
+        "VĂN PHONG VÀ CÁCH XƯNG HÔ (TỰ NHIÊN NHƯ CON NGƯỜI):\n"
+        "- Xưng hô: Xưng 'mình' hoặc 'Lucas', gọi người hỏi là 'bạn'. Giọng văn nhiệt tình, gần gũi, thân thiện như một người bạn hoặc cán bộ hỗ trợ học vụ.\n"
+        "- TUYỆT ĐỐI KHÔNG mở đầu bằng các câu máy móc như: 'Dựa vào ngữ cảnh quy chế...', 'Theo tài liệu được cung cấp...', 'Tôi là hệ thống AI...', 'Để trả lời câu hỏi của bạn...'.\n"
+        "- Đi thẳng vào nội dung trả lời một cách gãy gọn, rõ ràng (khoảng 3 - 6 dòng cốt lõi, dùng gạch đầu dòng dễ nhìn).\n\n"
+        "QUY TẮC PHÂN BIỆT RÕ CÁC LOẠI HỌC BỔNG (RẤT QUAN TRỌNG):\n"
+        "- Phân biệt rõ Học bổng khuyến khích học tập (dựa trên kết quả học tập và rèn luyện: Điểm TBC học kỳ từ 2.5 trở lên, Điểm rèn luyện từ Khá trở lên, đăng ký tối thiểu 17 tín chỉ; chia làm các loại Xuất sắc, Giỏi, Khá theo Điều 17, Điều 18 QĐ 201) với Học bổng tài trợ / vượt khó (Điều 32 dành riêng cho sinh viên hộ nghèo, khó khăn có ý chí vươn lên).\n"
+        "- Khi sinh viên hỏi về 'Học bổng khuyến khích học tập' hoặc 'tiêu chuẩn xét học bổng': TUYỆT ĐỐI KHÔNG nhầm sang Học bổng vượt khó (Điều 32). Phải nêu đúng các điều kiện của Học bổng khuyến khích học tập (Điều 17) và các mức cấp (Điều 18).\n\n"
+        "QUY TẮC CHÍNH XÁC VĂN BẢN (CHỐNG SUY DIỄN / KHÔNG BỊA ĐẶT):\n"
+        "1. CHỈ sử dụng thông tin CÓ THỰC trong phần tài liệu bên dưới để trả lời đúng trọng tâm câu hỏi. Không lan man sang các điều khoản không liên quan.\n"
+        "2. TUYỆT ĐỐI KHÔNG tự suy đoán hoặc bịa số liệu (số tiền, tỷ lệ %, số tín chỉ, mốc thời gian).\n"
+        "3. Tuyệt đối KHÔNG tự sáng tác hay bịa tên Điều/Khoản. Chỉ nêu tên Điều/Khoản khi trong tài liệu có ghi rõ.\n"
+        "4. Nếu trong tài liệu không có câu trả lời rõ ràng, hãy trả lời ngắn gọn: 'Hiện tại trong các văn bản quy chế quy định, mình chưa tìm thấy thông tin chi tiết về nội dung này bạn nhé.'\n\n"
+        "TÀI LIỆU QUY CHẾ THAM KHẢO:\n{context}\n\n"
+        "CÂU HỎI CỦA BẠN: {input}\n\n"
+        "CÂU TRẢ LỜI CỦA LUCAS (TỰ NHIÊN, NGẮN GỌN, CHUẨN XÁC):"
     )
 
     prompt = ChatPromptTemplate.from_template(system_prompt)
-    return SmartRAGChain(vector_db, llm, prompt)
+    _GLOBAL_CHAIN = SmartRAGChain(vector_db, llm, prompt)
+    return _GLOBAL_CHAIN

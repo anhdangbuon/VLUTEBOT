@@ -79,6 +79,7 @@ st.markdown("""
 /* Chữ nằm chính GIỮA HOÀN HẢO */
 .header-center-text {
     flex: 1;
+    min-width: 0;
     text-align: center;
     display: flex;
     flex-direction: column;
@@ -88,17 +89,19 @@ st.markdown("""
 }
 
 .vlute-brand-top {
-    font-size: 0.78rem;
+    font-size: 0.76rem;
     font-weight: 700;
-    letter-spacing: 1px;
+    letter-spacing: 0.8px;
     text-transform: uppercase;
     color: #a7f3d0;
     margin-bottom: 4px;
     text-align: center;
+    word-break: keep-all;
+    white-space: normal;
 }
 
 .vlute-portal-title {
-    font-size: 1.38rem;
+    font-size: 1.35rem;
     font-weight: 800;
     margin: 0;
     color: #ffffff;
@@ -108,15 +111,19 @@ st.markdown("""
     gap: 8px;
     letter-spacing: 0.3px;
     text-align: center;
+    word-break: keep-all;
+    white-space: normal;
 }
 
 .vlute-portal-subtitle {
-    font-size: 0.88rem;
+    font-size: 0.92rem;
     color: #ecfdf5;
-    margin-top: 5px;
+    margin-top: 4px;
     margin-bottom: 0px;
-    font-weight: 400;
+    font-weight: 600;
     text-align: center;
+    word-break: keep-all;
+    white-space: normal;
 }
 
 /* Khoảng trống bên phải để cân bằng đối xứng, giữ chữ nằm chính giữa 100% */
@@ -432,6 +439,64 @@ section[data-testid="stSidebar"] hr {
     font-size: 0.85rem !important;
 }
 
+/* Khối liên kết Dịch vụ tiện ích & Truy cập nhanh */
+.sidebar-links-card {
+    background-color: #1e282c;
+    border: 1px solid #374850;
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-top: 10px;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.sidebar-links-card:hover {
+    border-color: #00a65a !important;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35) !important;
+}
+
+.sidebar-section-title {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: #00a65a;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.sidebar-link-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+}
+
+.sidebar-link-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: #141b1e;
+    border: 1px solid #2b3b42;
+    border-radius: 6px;
+    padding: 7px 8px;
+    font-size: 0.76rem;
+    color: #cbd5e1 !important;
+    text-decoration: none !important;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sidebar-link-item:hover {
+    background: #00a65a !important;
+    border-color: #00a65a !important;
+    color: #ffffff !important;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0, 166, 90, 0.35);
+}
+
 /* Nút bấm ở sidebar có hiệu ứng nhấc nổi khi hover */
 section[data-testid="stSidebar"] .stButton > button {
     border-radius: 8px !important;
@@ -508,14 +573,38 @@ div[data-testid="stChatMessageContent"] {
     background-color: #00703c !important;
     border: 2px solid #00502b !important;
     border-radius: 24px !important;
-    padding: 13px 22px !important;
-    max-width: 82% !important;
+    padding: 14px 22px !important;
+    max-width: 84% !important;
     width: fit-content !important;
     color: #ffffff !important;
     box-sizing: border-box !important;
-    line-height: 1.6 !important;
+    line-height: 1.65 !important;
     margin-left: 0px !important;
     box-shadow: 0 4px 14px rgba(0, 112, 60, 0.2) !important;
+    word-break: normal !important;
+    overflow-wrap: break-word !important;
+}
+
+div[data-testid="stChatMessageContent"] ul {
+    margin: 8px 0 8px 0 !important;
+    padding-left: 22px !important;
+}
+
+div[data-testid="stChatMessageContent"] li {
+    margin-bottom: 7px !important;
+    line-height: 1.6 !important;
+    word-break: normal !important;
+    color: #ffffff !important;
+}
+
+div[data-testid="stChatMessageContent"] li:last-child {
+    margin-bottom: 0px !important;
+}
+
+div[data-testid="stChatMessageContent"] p,
+div[data-testid="stChatMessageContent"] strong,
+div[data-testid="stChatMessageContent"] b {
+    color: #ffffff !important;
 }
 
 /* 6. Khung tin nhắn Sinh viên (User) - Màu XANH DƯƠNG SINH VIÊN (Ảnh 3), bo tròn 24px */
@@ -534,9 +623,10 @@ div[data-testid="stChatMessageContent"] {
     color: #ffffff !important;
     border-radius: 24px !important;
     padding: 12px 22px !important;
-    max-width: 82%;
+    max-width: 84%;
     width: fit-content;
-    word-break: break-word !important;
+    word-break: normal !important;
+    overflow-wrap: break-word !important;
     font-size: 1rem !important;
     line-height: 1.6 !important;
     box-shadow: 0 4px 14px rgba(0, 115, 183, 0.2) !important;
@@ -853,13 +943,19 @@ st.markdown(f"""
     </div>
     <div class="header-center-text">
         <div class="vlute-brand-top">
-            VINH LONG UNIVERSITY OF TECHNOLOGY AND EDUCATION
+            VINH LONG UNIVERSITY OF TECHNOLOGY AND ENGINEERING (VLUTE)
         </div>
         <div class="vlute-portal-title">
-            <span>🎓 LUCAS – TRỢ LÝ QUY CHẾ & HỌC VỤ VLUTE</span>
+            <span>🎓 LUCAS – TRỢ LÝ QUY CHẾ & HỌC VỤ</span>
         </div>
         <div class="vlute-portal-subtitle">
-            Hệ thống AI tra cứu Quy chế Đào tạo & Quy định Sinh viên dựa trên văn bản chính thức của Nhà trường
+            <span style="white-space: nowrap;">Trường Đại học Công nghệ Kỹ thuật Vĩnh Long</span>
+        </div>
+        <div style="font-size: 0.8rem; color: #a7f3d0; margin-top: 2px; font-style: italic;">
+            (Tiền thân: Trường Đại học Sư phạm Kỹ thuật Vĩnh Long)
+        </div>
+        <div style="font-size: 0.84rem; color: #ecfdf5; margin-top: 3px; font-weight: 400; word-break: keep-all;">
+            <span style="white-space: nowrap;">Hệ thống tra cứu Quy chế Đào tạo</span> & <span style="white-space: nowrap;">Học vụ Sinh viên</span>
         </div>
     </div>
     <div class="header-right-spacer"></div>
@@ -867,20 +963,20 @@ st.markdown(f"""
 
 <div class="vlute-nav-ribbon">
     <div class="vlute-nav-badge">
-        <span>🚀 Trợ lý AI Lucas (RAG)</span>
+        <span>🟢 Tra cứu học vụ</span>
     </div>
     <div class="vlute-nav-badge general">
-        <span>📑 Dữ liệu Văn bản Chính thức</span>
+        <span>🟠 Quy chế chính thức</span>
     </div>
     <div class="vlute-nav-badge student">
-        <span>🛡️ Chống Ảo giác (Anti-Hallucination)</span>
+        <span>🔵 Hỗ trợ 24/7</span>
     </div>
 </div>
 
 <div class="vlute-alert-box">
-    <span>📢</span>
-    <div>
-        <strong>Kênh tra cứu quy chế chính thức:</strong> Hệ thống đối soát trực tiếp với 10 văn bản quy chế ban hành của Trường ĐH SPKT Vĩnh Long. Để đảm bảo độ chuẩn xác tuyệt đối, Lucas chỉ cung cấp thông tin có căn cứ xác thực từ văn bản quy định.
+    <span>💡</span>
+    <div style="line-height: 1.5; word-break: keep-all;">
+        <strong>Góc hỗ trợ học vụ:</strong> Thông tin tra cứu trực tiếp từ các văn bản quy chế của <span style="white-space: nowrap;"><b>Trường ĐH Công nghệ Kỹ thuật Vĩnh Long</b></span> <i>(tiền thân Trường ĐH SPKT Vĩnh Long)</i>.
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -895,18 +991,18 @@ with st.sidebar:
         <div style="display: flex; justify-content: center; align-items: center; width: 100%; margin-bottom: 10px; margin-top: 2px;">
             <img src="data:image/png;base64,{LOGO_B64}" style="width: 105px; height: 105px; object-fit: contain; filter: drop-shadow(0 4px 10px rgba(0,0,0,0.5));" alt="Logo VLUTE" />
         </div>
-        <div style="text-align: center; color: #ffffff; font-weight: 800; font-size: 1.05rem; letter-spacing: 0.5px; margin-bottom: 4px;">
-            TRƯỜNG ĐH SPKT VĨNH LONG
+        <div style="text-align: center; color: #ffffff; font-weight: 800; font-size: 0.95rem; letter-spacing: 0.3px; margin-bottom: 4px; line-height: 1.35;">
+            TRƯỜNG ĐẠI HỌC<br><span style="white-space: nowrap; color: #ffffff;">CNKT VĨNH LONG</span>
         </div>
-        <div style="text-align: center; color: #00a65a; font-weight: 700; font-size: 0.84rem; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 10px;">
+        <div style="text-align: center; color: #00a65a; font-weight: 700; font-size: 0.78rem; letter-spacing: 0.8px; text-transform: uppercase; margin-bottom: 10px;">
             QUẢN LÝ ĐÀO TẠO & HỌC VỤ
         </div>
         """, unsafe_allow_html=True)
     
-    # Địa chỉ nằm NGAY DƯỚI LOGO theo đúng yêu cầu
+    # Địa chỉ cập nhật theo thông tin chính thức mới nhất
     st.markdown("""
-    <div style="text-align: center; color: #94a3b8; font-size: 0.8rem; margin-bottom: 16px; padding: 6px 10px; background: rgba(0, 0, 0, 0.25); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 6px; display: flex; align-items: center; justify-content: center; gap: 5px;">
-        <span>📍</span> <span>73 Nguyễn Huệ, Phường 2, TP. Vĩnh Long, Vĩnh Long</span>
+    <div style="text-align: center; color: #cbd5e1; font-size: 0.76rem; margin-bottom: 14px; padding: 7px 10px; background: rgba(0, 0, 0, 0.35); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; line-height: 1.45; word-break: keep-all;">
+        <span>📍</span> <span>Số 73 Nguyễn Huệ, Phường Long Châu, Tỉnh Vĩnh Long</span>
     </div>
     """, unsafe_allow_html=True)
     
@@ -926,13 +1022,42 @@ with st.sidebar:
             ☎️ <code>(0270) 3862 436</code><br>
             ✉️ <i>ctsv@vlute.edu.vn</i>
         </div>
-        <div>
+        <div style="margin-bottom: 8px;">
             <b style="color: #a7f3d0;">• Phòng Kế hoạch - Tài chính:</b><br>
             ☎️ <code>(0270) 3822 141</code><br>
             ✉️ <i>khtc@vlute.edu.vn</i>
         </div>
+        <div style="margin-top: 8px; padding-top: 8px; border-top: 1px dashed #374850; font-size: 0.78rem;">
+            🌐 <b>Website:</b> <a href="https://vlute.edu.vn" target="_blank" style="color: #a7f3d0; text-decoration: none;">vlute.edu.vn</a><br>
+            ✉️ <b>Email chung:</b> <i>spktvl@vlute.edu.vn</i>
+        </div>
     </div>
     """, unsafe_allow_html=True)
+
+    # Khối Dịch vụ tiện ích & Truy cập nhanh viết không thụt lề để triệt tiêu lỗi hiển thị code thô
+    SIDEBAR_NAV_HTML = """<div class="sidebar-links-card">
+<div class="sidebar-section-title">⚡ DỊCH VỤ TIỆN ÍCH</div>
+<div class="sidebar-link-grid">
+<a href="https://vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Cổng thông tin My VLUTE">🌐 My VLUTE</a>
+<a href="https://tuyensinh.vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Thông tin tuyển sinh">🎯 Tuyển sinh</a>
+<a href="http://cgtdt-dsa.vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Công tác sinh viên">👥 Phòng CTSV</a>
+<a href="http://pdt.vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Phòng Đào tạo">📋 Phòng ĐT</a>
+</div>
+<div class="sidebar-section-title" style="margin-top: 12px;">🚀 TRUY CẬP NHANH</div>
+<div class="sidebar-link-grid">
+<a href="https://daotao.vlute.edu.vn/sinh-vien" target="_blank" class="sidebar-link-item" title="Đăng ký học phần">📝 ĐK Học phần</a>
+<a href="https://htql.vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Hệ thống quản lý">🖥️ Hệ thống QL</a>
+<a href="http://elearning.vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Học trực tuyến E-Learning">💻 E-Learning</a>
+<a href="https://thanhtoan.vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Cổng thanh toán Trực tuyến">💳 Thanh toán</a>
+</div>
+</div>
+<div style="margin-top: 12px; padding: 10px 12px; background: rgba(0, 0, 0, 0.25); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; font-size: 0.74rem; color: #94a3b8; text-align: center; line-height: 1.5;">
+<div style="color: #cbd5e1; font-weight: 700;">© Trường ĐH Công nghệ Kỹ thuật Vĩnh Long</div>
+<div style="font-size: 0.68rem; color: #a7f3d0; margin-top: 2px;">(Tiền thân: Trường ĐH Sư phạm Kỹ thuật Vĩnh Long)</div>
+<div style="font-size: 0.68rem; color: #64748b; margin-top: 2px;">Vinh Long University of Technology and Engineering (VLUTE)</div>
+<div style="margin-top: 5px; color: #94a3b8; font-size: 0.72rem;">☎️ 0270 3822 141 &nbsp;|&nbsp; 📠 Fax: 02703 821 003</div>
+</div>"""
+    st.markdown(SIDEBAR_NAV_HTML, unsafe_allow_html=True)
     
     st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
     if st.button("🗑️ Làm mới cuộc trò chuyện", use_container_width=True):
@@ -940,93 +1065,107 @@ with st.sidebar:
         st.session_state.quick_prompt = None
         st.rerun()
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def load_chain():
+    """Nạp chuỗi RAG Lucas một lần duy nhất vào bộ nhớ cache toàn cục (Singleton)."""
     return get_rag_chain()
 
 try:
-    qa_chain = load_chain()
+    if "qa_chain" not in st.session_state:
+        st.session_state.qa_chain = load_chain()
+    qa_chain = st.session_state.qa_chain
 except Exception as e:
     st.error(f"Lỗi khởi tạo hệ thống: {e}")
     st.stop()
 
 # Khởi tạo tin nhắn chào ban đầu
+WELCOME_CONTENT = (
+    "👋 **Xin chào! Mình là Lucas** – Trợ lý ảo hỗ trợ tra cứu Quy chế Đào tạo & Quy định Sinh viên của **Trường Đại học Công nghệ Kỹ thuật Vĩnh Long** (VLUTE - *tiền thân là Trường ĐH Sư phạm Kỹ thuật Vĩnh Long*).\n\n"
+    "📚 Mình giải đáp dựa trên các văn bản quy định chính thức của Nhà trường và luôn kèm theo căn cứ điều khoản để bạn dễ dàng đối chiếu.\n\n"
+    "💡 **Bạn có thể hỏi mình về:**\n\n"
+    "- 🏆 **Học bổng:** Tiêu chuẩn xét học bổng khuyến khích *(QĐ 201)*\n"
+    "- 💰 **Học phí:** Quy trình hoàn trả học phí thừa *(QT-SV-04)* & Miễn giảm học phí *(QĐ 904)*\n"
+    "- 🤝 **Công tác xã hội:** Tích lũy tín chỉ CTXH xét tốt nghiệp *(QĐ 55)*\n"
+    "- 📋 **Quy chế sinh viên:** Quyền lợi, nghĩa vụ, khen thưởng & kỷ luật *(QĐ 1079)*"
+)
+
 if "messages" not in st.session_state or len(st.session_state.messages) == 0:
     st.session_state.messages = [
         {
             "role": "assistant",
-            "content": (
-                "👋 **Chào bạn sinh viên VLUTE! Mình là Lucas**, trợ lý AI thuộc hệ thống **VLUTEBOT** - "
-                "chuyên hỗ trợ tra cứu và giải đáp **Quy chế Đào tạo & Quy định Sinh viên** của **Trường Đại học Sư phạm Kỹ thuật Vĩnh Long**.\n\n"
-                "🎯 **Lucas có thể hỗ trợ bạn đối soát thông tin từ các văn bản chính thức:**\n"
-                "• 🏆 **Học bổng & Khen thưởng:** Tiêu chuẩn xét học bổng khuyến khích (QĐ 201)\n"
-                "• 💰 **Học phí & Chính sách:** Miễn giảm học phí (QĐ 904) & Hoàn trả học phí thừa (QT-SV-04)\n"
-                "• 🤝 **Tín chỉ Công tác xã hội:** Tiêu chí tích lũy 5 tín chỉ CTXH để tốt nghiệp (QĐ 55)\n"
-                "• 📋 **Quy chế Công tác sinh viên:** Quyền lợi, nghĩa vụ và kỷ luật sinh viên (QĐ 1079)\n\n"
-                "💡 *Bạn hãy chọn các câu hỏi gợi ý nhanh bên dưới hoặc gõ trực tiếp nội dung cần tra cứu nhé!*"
-            ),
+            "content": WELCOME_CONTENT,
             "sources": []
         }
     ]
+elif len(st.session_state.messages) == 1 and st.session_state.messages[0]["role"] == "assistant":
+    st.session_state.messages[0]["content"] = WELCOME_CONTENT
 
 # Biến lưu trữ câu hỏi từ nút bấm gợi ý
 if "quick_prompt" not in st.session_state:
     st.session_state.quick_prompt = None
 
+def clean_snippet_text(text: str) -> str:
+    """Làm sạch đoạn trích quy chế, loại bỏ các ký tự rác, dấu sao, lỗi chính tả từ quét PDF."""
+    if not text:
+        return ""
+    # 1. Bỏ các ký tự đặc biệt, dấu chấm, phẩy, sao, ngoặc kép vô nghĩa ở đầu
+    cleaned = re.sub(r"^[\s\.\,\;\"\'\:\-\_\|\*\#\`\(\)]+", "", text)
+    # 2. Bỏ các cụm chữ hoa quét PDF lỗi bảng như 'BI UNG HOC PHAN THU NH LON, 8 x'
+    cleaned = re.sub(r"^[A-Z0-9\s]{4,35}[\,\.\:\;]\s*", "", cleaned)
+    # 3. Chuẩn hóa khoảng trắng
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
 def render_sources(sources_list):
-    """Hiển thị các Thẻ Nguồn Văn Bản (Source Cards) chính thức, khoa học và minh bạch."""
+    """Hiển thị căn cứ quy chế trích dẫn thu gọn trong st.expander sạch đẹp, không lỗi markdown."""
     if not sources_list:
         return
     
-    cards_html = []
-    seen = set()
+    grouped = {}
     for item in sources_list:
         file_name = item.get("file", "")
-        page = item.get("page", 1)
-        article = item.get("article", "")
-        key = f"{file_name}_{page}_{article}"
-        if key in seen:
-            continue
-        seen.add(key)
-        
         doc_info = DOC_CATALOG.get(file_name, {})
         title = item.get("title") or doc_info.get("title", file_name)
-        dept = item.get("dept") or doc_info.get("dept", "ĐH SPKT Vĩnh Long")
-        snippet = item.get("snippet", "").strip()
-        if len(snippet) > 220:
-            snippet = snippet[:220] + "..."
-            
-        loc_str = f"📄 <b>Trang:</b> {page}"
-        if article:
-            loc_str += f" | 📑 <b>{article}</b>"
-            
-        safe_snippet = html.escape(snippet)
-        card = f"""
-        <div class="rag-source-card">
-            <div class="rag-card-header">
-                <div class="rag-card-title">📜 {title}</div>
-                <div class="rag-card-badge">{dept}</div>
-            </div>
-            <div class="rag-card-meta">
-                <span>{loc_str}</span>
-            </div>
-            <div class="rag-card-excerpt">
-                💬 "{safe_snippet}"
-            </div>
-        </div>
-        """
-        cards_html.append(card)
+        dept = item.get("dept") or doc_info.get("dept", "ĐH Công nghệ Kỹ thuật Vĩnh Long")
         
-    if cards_html:
-        full_html = f"""
-        <div class="rag-sources-wrap">
-            <div class="rag-sources-header">
-                <span>📌</span> <span>CĂN CỨ VĂN BẢN QUY CHẾ ĐÃ ĐỐI SOÁT:</span>
-            </div>
-            {"".join(cards_html)}
-        </div>
-        """
-        st.markdown(full_html, unsafe_allow_html=True)
+        if file_name not in grouped:
+            grouped[file_name] = {
+                "title": title,
+                "dept": dept,
+                "items": []
+            }
+        
+        page = item.get("page", 1)
+        article = item.get("article", "")
+        snippet = clean_snippet_text(item.get("snippet", ""))
+        
+        key = f"{page}_{article}"
+        if not any(f"{it.get('page')}_{it.get('article')}" == key for it in grouped[file_name]["items"]):
+            grouped[file_name]["items"].append({
+                "page": page,
+                "article": article,
+                "snippet": snippet
+            })
+
+    total_chunks = sum(len(g["items"]) for g in grouped.values())
+    expander_label = f"📌 Xem căn cứ văn bản & trích dẫn quy chế ({total_chunks} đoạn trích)"
+
+    with st.expander(expander_label, expanded=False):
+        for idx, (file_name, gdata) in enumerate(grouped.items(), 1):
+            st.markdown(f"📄 **{gdata['title']}** — *({gdata['dept']})*")
+            for sub in gdata["items"]:
+                loc_parts = [f"Trang {sub['page']}"]
+                if sub['article']:
+                    clean_art = sub['article'].replace("*", "").replace("`", "").strip()
+                    loc_parts.append(clean_art)
+                loc_label = " - ".join(loc_parts)
+                
+                snippet_text = sub['snippet']
+                if len(snippet_text) > 200:
+                    snippet_text = snippet_text[:200] + "..."
+                st.markdown(f"- 📍 **{loc_label}**: *\"{html.escape(snippet_text)}\"*")
+            if idx < len(grouped):
+                st.markdown("<hr style='margin: 8px 0; border-color: rgba(0, 112, 60, 0.2);'>", unsafe_allow_html=True)
 
 # ==========================================
 # PHÂN LOẠI CÂU HỎI VÀ TẠO FOOTER LIÊN HỆ PHÒNG BAN
@@ -1091,6 +1230,8 @@ for message in st.session_state.messages:
             st.markdown(message["content"])
             if message.get("sources"):
                 render_sources(message["sources"])
+            if message.get("contact"):
+                st.markdown(message["contact"])
 
 # ==========================================
 # KHỐI GỢI Ý CÂU HỎI NHANH (QUICK PROMPTS)
@@ -1115,7 +1256,7 @@ with col2:
 # ==========================================
 # KHUNG NHẬP CÂU HỎI & PHẢN HỒI (HỖ TRỢ CẢ GÕ VÀ BẤM NÚT)
 # ==========================================
-user_input_from_chat = st.chat_input("Nhập câu hỏi về quy chế, học bổng, học vụ VLUTE...")
+user_input_from_chat = st.chat_input("🔍 Hỏi Lucas về quy chế, học bổng, học phí, học vụ VLUTE...")
 
 user_query = None
 if user_input_from_chat:
@@ -1138,33 +1279,28 @@ if user_query:
         # TRƯỜNG HỢP 1: Chào hỏi xã giao -> Phản hồi siêu tốc không cần tra cứu vector
         if is_greeting(user_query):
             greeting_reply = (
-                "👋 **Chào bạn sinh viên VLUTE! Mình là Lucas** - Trợ lý AI tư vấn Quy chế Đào tạo & Quy định Sinh viên "
-                "của **Trường Đại học Sư phạm Kỹ thuật Vĩnh Long**.\n\n"
-                "Bạn cần Lucas hỗ trợ tra cứu quy định nào hôm nay? "
+                "👋 **Xin chào bạn! Mình là Lucas** - Trợ lý ảo tư vấn Quy chế Đào tạo & Quy định Sinh viên "
+                "của **Trường Đại học Công nghệ Kỹ thuật Vĩnh Long** (VLUTE - *tiền thân: Trường ĐH Sư phạm Kỹ thuật Vĩnh Long*).\n\n"
+                "Bạn cần mình hỗ trợ giải đáp quy định nào hôm nay? "
                 "*(Bạn có thể bấm vào các gợi ý câu hỏi nhanh ở trên hoặc gõ câu hỏi cụ thể nhé!)*"
             )
             st.markdown(greeting_reply)
             answer_to_save = greeting_reply
+            contact_to_save = ""
             sources_to_save = []
 
         # TRƯỜNG HỢP 2: Kiểm tra chủ động ngoài phạm vi (Active Anti-Hallucination)
         elif check_out_of_scope(user_query):
             out_info = check_out_of_scope(user_query)
             refusal_reply = (
-                f"👋 **Chào bạn sinh viên VLUTE,**\n\n"
-                f"Hiện tại trong các tài liệu quy chế được nạp vào hệ thống, "
-                f"**chưa có văn bản quy định chi tiết về: {out_info['topic']}**.\n\n"
-                f"ℹ️ *Giải thích:* {out_info['advice']}\n\n"
-                f"⚠️ **Nguyên tắc RAG chống suy đoán (Anti-Hallucination):** Lucas tuyệt đối không suy đoán hoặc mượn số liệu từ văn bản khác để đảm bảo tính chuẩn xác cho bạn.\n\n"
-                f"💡 **Các nội dung bạn có thể tra cứu có dữ liệu đầy đủ tại trường:**\n"
-                f"• 🏆 **Học bổng:** Tiêu chuẩn xét học bổng khuyến khích học tập (QĐ 201)\n"
-                f"• 💰 **Học phí:** Quy trình hoàn trả học phí thừa (QT-SV-04) & Miễn giảm học phí (QĐ 904)\n"
-                f"• 🤝 **Công tác xã hội:** Quy định tích lũy tín chỉ Công tác xã hội (QĐ 55)\n"
-                f"• 📋 **Khen thưởng & Kỷ luật:** Quy chế công tác sinh viên (QĐ 1079)\n\n"
-                f"📞 Để được hỗ trợ cụ thể về vấn đề này, bạn vui lòng liên hệ trực tiếp **{out_info['dept_name']}**: {out_info['dept_contact']}."
+                f"Chào bạn nhé! Về nội dung **{out_info['topic']}**, hiện tại trong các văn bản quy chế đã nạp vào hệ thống chưa có quy định chi tiết.\n\n"
+                f"ℹ️ *Gợi ý cho bạn:* {out_info['advice']}\n\n"
+                f"💡 Để đảm bảo quyền lợi và sự chuẩn xác cho bạn, mình không tự suy đoán khi chưa có văn bản ban hành chính thức.\n\n"
+                f"📞 Bạn vui lòng liên hệ trực tiếp **{out_info['dept_name']}** ({out_info['dept_contact']}) để được thầy cô hướng dẫn thủ tục chính xác nhất nhé!"
             )
             st.markdown(refusal_reply)
             answer_to_save = refusal_reply
+            contact_to_save = ""
             sources_to_save = []
 
         # TRƯỜNG HỢP 3: Câu hỏi quy chế học vụ hợp lệ -> Kích hoạt Smart RAG + Stream phản hồi
@@ -1178,12 +1314,13 @@ if user_query:
             if not docs:
                 status_placeholder.empty()
                 no_doc_msg = (
-                    "⚠️ **Lucas chưa tìm thấy văn bản quy chế trực tiếp tương ứng với câu hỏi này trong hệ thống.**\n\n"
-                    "Để tránh cung cấp thông tin sai lệch cho bạn, Lucas không tự ý suy đoán. "
-                    "Bạn vui lòng liên hệ trực tiếp **Phòng Đào tạo (A1.101)** hoặc **Phòng Công tác Sinh viên (A1.102)** để được hướng dẫn chi tiết nhé!"
+                    "Chào bạn, mình chưa tìm thấy thông tin phù hợp trong các văn bản quy chế hiện có để giải đáp câu hỏi này.\n\n"
+                    "Để tránh cung cấp thông tin sai lệch cho bạn, mình không tự suy đoán. "
+                    "Bạn có thể thử đặt lại câu hỏi ngắn gọn hơn hoặc hỏi về các chủ đề: *học bổng, hoàn trả học phí, miễn giảm học phí, công tác xã hội, khen thưởng kỷ luật sinh viên* nhé!"
                 )
                 st.markdown(no_doc_msg)
                 answer_to_save = no_doc_msg
+                contact_to_save = ""
                 sources_to_save = []
             else:
                 # Chuẩn bị context và prompt
@@ -1228,23 +1365,25 @@ if user_query:
                         yield chunk_text
 
                 raw_answer = st.write_stream(generate_response())
+                answer_to_save = raw_answer
 
-                # Tự động đính kèm thông tin liên hệ phòng ban
+                # 1. Hiển thị căn cứ quy chế trích dẫn ngay dưới câu trả lời
+                if sources_to_save:
+                    render_sources(sources_to_save)
+
+                # 2. Hiển thị thông tin liên hệ phòng ban ở cuối cùng
                 contact_footer = get_contact_footer(user_query, raw_answer)
                 if contact_footer:
                     st.markdown(contact_footer)
-                    answer_to_save = raw_answer + contact_footer
+                    contact_to_save = contact_footer
                 else:
-                    answer_to_save = raw_answer
-
-                # Hiển thị Source Cards
-                if sources_to_save:
-                    render_sources(sources_to_save)
+                    contact_to_save = ""
 
     # 3. Lưu câu trả lời cùng trích dẫn vào lịch sử
     st.session_state.messages.append({
         "role": "assistant",
         "content": answer_to_save,
+        "contact": contact_to_save,
         "sources": sources_to_save
     })
     st.rerun()

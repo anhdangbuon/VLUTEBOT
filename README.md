@@ -1,5 +1,5 @@
 # 🎓 VLUTEBOT - Trợ lý Lucas
-### Hệ thống AI Tra cứu Quy chế Đào tạo & Quy định Sinh viên - Trường ĐH Sư phạm Kỹ thuật Vĩnh Long
+### Hệ thống AI Tra cứu Quy chế Đào tạo & Quy định Sinh viên - Trường Đại học Công nghệ Kỹ thuật Vĩnh Long
 
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.40+-FF4B4B?style=flat&logo=streamlit)](https://streamlit.io/)
 [![LangChain](https://img.shields.io/badge/LangChain-1.4+-1C3C3C?style=flat&logo=langchain)](https://www.langchain.com/)
@@ -10,7 +10,7 @@
 ---
 
 ## 📌 Giới thiệu Dự án
-**VLUTEBOT (Trợ lý Lucas)** là ứng dụng hỏi đáp thông minh ứng dụng kỹ thuật **RAG (Retrieval-Augmented Generation)** tiên tiến, được thiết kế chuyên biệt cho sinh viên và cán bộ **Trường Đại học Sư phạm Kỹ thuật Vĩnh Long (VLUTE)**.
+**VLUTEBOT (Trợ lý Lucas)** là ứng dụng hỏi đáp thông minh ứng dụng kỹ thuật **RAG (Retrieval-Augmented Generation)** tiên tiến, được thiết kế chuyên biệt cho sinh viên và cán bộ **Trường Đại học Công nghệ Kỹ thuật Vĩnh Long (VLUTE - tiền thân: Trường ĐH Sư phạm Kỹ thuật Vĩnh Long)**.
 
 Hệ thống cho phép tra cứu chuẩn xác, tức thì các nội dung liên quan đến:
 - 🏆 **Học bổng & Khen thưởng:** Tiêu chuẩn và điều kiện xét cấp học bổng khuyến khích học tập (QĐ 201).
@@ -35,15 +35,16 @@ flowchart TD
     Routing --> ChromaSearch["4. Semantic Search (ChromaDB + Vietnamese-Bi-Encoder)"]
     ChromaSearch --> DocFilter["5. Lọc & Bóc tách Tên Điều/Khoản (extract_article_info)"]
     DocFilter --> PromptBuild["6. Ráp Strict Anti-Hallucination Prompt"]
-    PromptBuild --> OllamaStream["7. Stream câu trả lời (Ollama Llama 3.2 | temp=0.05)"]
-    OllamaStream --> SourceCards["8. Hiển thị Thẻ Nguồn Văn Bản (RAG Source Cards)"]
+    PromptBuild --> OllamaStream["7. Stream câu trả lời tự nhiên (Lucas - xưng 'mình' gọi 'bạn')"]
+    OllamaStream --> ExpanderSources["8. Căn cứ văn bản trích dẫn (st.expander mặc định thu gọn)"]
+    ExpanderSources --> ContactFooter["9. Đầu mối liên hệ phòng ban (Đào tạo / CTSV / KHTC)"]
 ```
 
 ### Các đột phá kỹ thuật chính:
-1. **Triệt tiêu hoàn toàn ảo giác (Zero Hallucination):** Cách ly toàn bộ các văn bản nghị quyết nhà nước (`nghi_quyet_*.pdf`) để tránh việc LLM nhặt nhầm số liệu tỷ lệ nhân viên áp đặt vào số tín chỉ của sinh viên.
-2. **Bộ chặn chủ động Out-of-Scope (`check_out_of_scope`):** Khi sinh viên hỏi về các quy định thuộc Quy chế Đào tạo tín chỉ chung (chưa có trong kho 10 PDF), bot từ chối suy đoán và cung cấp trực tiếp thông tin liên hệ của **Phòng Đào tạo (A1.101)**.
-3. **Thẻ Nguồn Văn Bản (Source Cards):** Hiển thị minh bạch tên văn bản pháp lý chính thức, số Quyết định, phòng ban phụ trách, số trang, tên Điều/Khoản và đoạn trích dẫn đối soát.
-4. **Giao diện chuẩn Cổng thông tin VLUTE:** Gam màu xanh lá (`#00703c`) kết hợp xanh dương sinh viên (`#0073b7`), logo nhận diện thương hiệu, sidebar trượt mở và nút điều hướng 3 gạch `☰`.
+1. **Triệt tiêu hoàn toàn ảo giác (Zero Hallucination):** Cách ly toàn bộ các văn bản nghị quyết nhà nước (`nghi_quyet_*.pdf`) ra khỏi Vector Database để đảm bảo dữ liệu tinh sạch 100%.
+2. **Bộ chặn chủ động Out-of-Scope (`check_out_of_scope`):** Khi sinh viên hỏi về các quy định thuộc Quy chế Đào tạo tín chỉ chung (chưa có trong kho PDF), bot giải thích lịch thiệp và hướng dẫn liên hệ trực tiếp **Phòng Đào tạo (A1.101)**.
+3. **Căn cứ văn bản trích dẫn thu gọn (`st.expander`):** Thu gọn toàn bộ trích dẫn vào expander, gom nhóm theo từng văn bản chính thức (QĐ 201, QĐ 904, QT-SV-04...), bấm chuột vào mới mở ra xem trang và điều khoản, tối ưu 60% không gian hiển thị trên điện thoại.
+4. **Giao diện chuẩn Cổng thông tin VLUTE:** Gam màu xanh lá (`#00703c`) kết hợp 3 nhãn thân thiện (🟢 Tra cứu học vụ | 🟠 Quy chế chính thức | 🔵 Hỗ trợ 24/7), logo nhận diện trường, sidebar trượt mở và nút điều hướng 3 gạch `☰`.
 
 ---
 
@@ -127,3 +128,26 @@ Sau khi khởi chạy thành công, truy cập trình duyệt tại: **`http://l
   - Điện thoại: `(0270) 3862 436` | Email: `ctsv@vlute.edu.vn`
 - 🏢 **Phòng Kế hoạch - Tài chính (Tầng trệt Tòa nhà Điều hành):**
   - Điện thoại: `(0270) 3822 141` | Email: `khtc@vlute.edu.vn`
+
+---
+
+## 🏛️ Thông tin Chung & Cổng Dịch vụ Trực tuyến
+
+- **Tên trường:** Trường Đại học Công nghệ Kỹ thuật Vĩnh Long *(tiền thân: Trường Đại học Sư phạm Kỹ thuật Vĩnh Long)*
+- **Tên tiếng Anh:** Vinh Long University of Technology and Engineering (VLUTE)
+- **Địa chỉ:** Số 73 Nguyễn Huệ, Phường Long Châu, Tỉnh Vĩnh Long
+- **Điện thoại:** `(0270) 3822 141` | **Fax:** `(0270) 3821 003`
+- **Email:** `spktvl@vlute.edu.vn` | **Website:** [vlute.edu.vn](https://vlute.edu.vn/)
+
+### Dịch vụ Tiện ích & Truy cập Nhanh
+- 🌐 **My VLUTE:** [vlute.edu.vn](https://vlute.edu.vn/)
+- 🎯 **Tuyển sinh:** [tuyensinh.vlute.edu.vn](https://tuyensinh.vlute.edu.vn/)
+- 👥 **Công tác Sinh viên:** [cgtdt-dsa.vlute.edu.vn](http://cgtdt-dsa.vlute.edu.vn/)
+- 📋 **Phòng Đào tạo:** [pdt.vlute.edu.vn](http://pdt.vlute.edu.vn/)
+- 📝 **Đăng ký Học phần:** [daotao.vlute.edu.vn/sinh-vien](https://daotao.vlute.edu.vn/sinh-vien)
+- 🖥️ **Hệ thống Quản lý:** [htql.vlute.edu.vn](https://htql.vlute.edu.vn/)
+- 💻 **E-Learning:** [elearning.vlute.edu.vn](http://elearning.vlute.edu.vn/)
+- 💳 **Cổng Thanh toán:** [thanhtoan.vlute.edu.vn](https://thanhtoan.vlute.edu.vn/)
+
+---
+*© Bản quyền thuộc về Trường Đại học Công nghệ Kỹ thuật Vĩnh Long (VLUTE - tiền thân: Trường ĐH Sư phạm Kỹ thuật Vĩnh Long) | Copyright belongs to Vinh Long University of Technology and Engineering.*
