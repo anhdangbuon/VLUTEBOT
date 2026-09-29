@@ -337,37 +337,30 @@ def get_vector_db():
     return _GLOBAL_VECTOR_DB
 
 def get_llm():
-    """Khởi tạo mô hình LLM: Sử dụng ChatGoogleGenerativeAI có cơ chế with_fallbacks chống lỗi 503/429, fallback về OllamaLLM(llama3.2)."""
+    """Khởi tạo mô hình LLM: Sử dụng ChatGoogleGenerativeAI (gemini-2.5-flash) có fallback sang gemini-1.5-flash, fallback về OllamaLLM(llama3.2)."""
     global _GLOBAL_LLM
     if _GLOBAL_LLM is not None:
         return _GLOBAL_LLM
 
-    # 1. Kiểm tra API Key từ môi trường hoặc Streamlit Secrets
     api_key = get_google_api_key()
     if api_key:
         try:
             from langchain_google_genai import ChatGoogleGenerativeAI
-            primary_llm = ChatGoogleGenerativeAI(
-                model="gemini-3.8-flash",
-                google_api_key=api_key,
-                temperature=0.1
-            )
-            fallback_llm1 = ChatGoogleGenerativeAI(
+            primary = ChatGoogleGenerativeAI(
                 model="gemini-2.5-flash",
                 google_api_key=api_key,
                 temperature=0.1
             )
-            fallback_llm2 = ChatGoogleGenerativeAI(
+            backup = ChatGoogleGenerativeAI(
                 model="gemini-1.5-flash",
                 google_api_key=api_key,
                 temperature=0.1
             )
-            _GLOBAL_LLM = primary_llm.with_fallbacks([fallback_llm1, fallback_llm2])
+            _GLOBAL_LLM = primary.with_fallbacks([backup])
             return _GLOBAL_LLM
         except Exception as e:
-            print(f"[Warning] Không thể khởi tạo ChatGoogleGenerativeAI: {e}. Fallback về Ollama.")
+            print(f"[Warning] Khởi tạo ChatGoogleGenerativeAI thất bại: {e}")
 
-    # 2. Fallback về OllamaLLM(model='llama3.2') như cũ khi chạy cục bộ
     _GLOBAL_LLM = OllamaLLM(
         model="llama3.2",
         num_gpu=99,
