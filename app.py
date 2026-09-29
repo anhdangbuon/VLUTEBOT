@@ -974,7 +974,9 @@ def is_greeting(query: str) -> bool:
 
 def get_contact_footer(query: str, answer: str) -> str:
     """Tự động đính kèm thông tin liên hệ phòng ban thích hợp theo nghiệp vụ."""
-    combined = (query + " " + answer).lower()
+    safe_query = str(query) if query is not None else ""
+    safe_answer = str(answer) if answer is not None else ""
+    combined = (safe_query + " " + safe_answer).lower()
     
     # 1. Nhóm Kế hoạch - Tài chính
     if any(k in combined for k in ["hoàn tiền", "hoàn trả học phí", "nộp tiền", "tài khoản ngân hàng", "biên lai", "học phí đóng trễ", "số tài khoản"]):
@@ -1141,7 +1143,7 @@ if user_query:
                     formatted_prompt = qa_chain.prompt.format(context=context_str, input=user_query)
 
                     # Stream phản hồi an toàn với khối try...except
-                    def generate_response():
+                    def stream_generator():
                         has_started = False
                         try:
                             if hasattr(qa_chain.llm, "stream"):
@@ -1153,11 +1155,11 @@ if user_query:
                                         </div>
                                         """, unsafe_allow_html=True)
                                         has_started = True
-                                    chunk_text = chunk if isinstance(chunk, str) else getattr(chunk, 'content', str(chunk))
-                                    yield chunk_text
+                                    content = getattr(chunk, "content", str(chunk))
+                                    yield content
                             else:
                                 raw = qa_chain.llm.invoke(formatted_prompt)
-                                raw_text = raw if isinstance(raw, str) else getattr(raw, 'content', str(raw))
+                                raw_text = getattr(raw, "content", str(raw))
                                 if not has_started:
                                     status_placeholder.empty()
                                     has_started = True
@@ -1166,15 +1168,18 @@ if user_query:
                             status_placeholder.empty()
                             yield f"\n\n⚠️ *Lỗi khi kết nối mô hình ngôn ngữ: {stream_err}*. Vui lòng kiểm tra lại cấu hình API key hoặc thử lại sau."
 
-                    raw_answer = st.write_stream(generate_response())
-                    answer_to_save = raw_answer
+                    full_answer = st.write_stream(stream_generator())
+                    # Đảm bảo full_answer luôn là kiểu str trước khi lưu vào session_state hoặc xử lý tiếp:
+                    if not isinstance(full_answer, str):
+                        full_answer = str(full_answer)
+                    answer_to_save = full_answer
 
                     # 1. Hiển thị căn cứ quy chế trích dẫn ngay dưới câu trả lời
                     if sources_to_save:
                         render_sources(sources_to_save)
 
                     # 2. Hiển thị thông tin liên hệ phòng ban ở cuối cùng
-                    contact_footer = get_contact_footer(user_query, raw_answer)
+                    contact_footer = get_contact_footer(user_query, full_answer)
                     if contact_footer:
                         st.markdown(contact_footer)
                         contact_to_save = contact_footer
