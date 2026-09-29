@@ -337,7 +337,7 @@ def get_vector_db():
     return _GLOBAL_VECTOR_DB
 
 def get_llm():
-    """Khởi tạo mô hình LLM: Sử dụng ChatGoogleGenerativeAI(gemini-1.5-flash) nếu có api_key, fallback về OllamaLLM(llama3.2)."""
+    """Khởi tạo mô hình LLM: Sử dụng ChatGoogleGenerativeAI(gemini-3.8-flash) nếu có api_key, fallback về OllamaLLM(llama3.2)."""
     global _GLOBAL_LLM
     if _GLOBAL_LLM is not None:
         return _GLOBAL_LLM
@@ -348,11 +348,10 @@ def get_llm():
         try:
             from langchain_google_genai import ChatGoogleGenerativeAI
             _GLOBAL_LLM = ChatGoogleGenerativeAI(
-            model="gemini-2.0-flash",
-            google_api_key=api_key,
-            temperature=0.1
-
-)
+                model="gemini-3.8-flash",
+                google_api_key=api_key,
+                temperature=0.1
+            )
             return _GLOBAL_LLM
         except Exception as e:
             print(f"[Warning] Không thể khởi tạo ChatGoogleGenerativeAI: {e}. Fallback về Ollama.")
