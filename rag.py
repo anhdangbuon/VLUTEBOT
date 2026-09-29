@@ -290,19 +290,24 @@ _GLOBAL_VECTOR_DB = None
 _GLOBAL_LLM = None
 _GLOBAL_CHAIN = None
 
-def get_google_api_key():
-    """Đọc khóa API từ biến môi trường hoặc Streamlit Secrets."""
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+def get_all_google_api_keys():
+    """Đọc danh sách khóa API (ngăn cách bởi dấu phẩy) từ biến môi trường hoặc Streamlit Secrets."""
+    keys_str = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or ""
     try:
         import streamlit as st
-        if not api_key and hasattr(st, "secrets"):
+        if hasattr(st, "secrets"):
             if "GEMINI_API_KEY" in st.secrets:
-                api_key = st.secrets["GEMINI_API_KEY"]
+                keys_str = st.secrets["GEMINI_API_KEY"]
             elif "GOOGLE_API_KEY" in st.secrets:
-                api_key = st.secrets["GOOGLE_API_KEY"]
+                keys_str = st.secrets["GOOGLE_API_KEY"]
     except Exception:
         pass
-    return api_key
+    return [k.strip() for k in str(keys_str).split(",") if k.strip()]
+
+def get_google_api_key():
+    """Đọc khóa API đầu tiên từ danh sách API keys."""
+    keys = get_all_google_api_keys()
+    return keys[0] if keys else None
 
 def get_embedding_model():
     """Luôn sử dụng mô hình SentenceTransformer để khớp 100% với dữ liệu ChromaDB đã lưu."""
@@ -337,21 +342,28 @@ def get_vector_db():
     return _GLOBAL_VECTOR_DB
 
 def get_llm():
-    """Khởi tạo mô hình LLM: Sử dụng ChatGoogleGenerativeAI (gemini-3.8-flash) với max_retries=4, fallback về OllamaLLM(llama3.2)."""
+    """Khởi tạo mô hình LLM: Sử dụng ChatGoogleGenerativeAI (gemini-3.8-flash) hỗ trợ đa API keys, fallback về OllamaLLM(llama3.2)."""
     global _GLOBAL_LLM
     if _GLOBAL_LLM is not None:
         return _GLOBAL_LLM
 
-    api_key = get_google_api_key()
-    if api_key:
+    api_keys = get_all_google_api_keys()
+    if api_keys:
         try:
             from langchain_google_genai import ChatGoogleGenerativeAI
-            _GLOBAL_LLM = ChatGoogleGenerativeAI(
-                model="gemini-3.8-flash",
-                google_api_key=api_key,
-                temperature=0.1,
-                max_retries=4
-            )
+            models = [
+                ChatGoogleGenerativeAI(
+                    model="gemini-3.8-flash",
+                    google_api_key=key,
+                    temperature=0.1,
+                    max_retries=4
+                )
+                for key in api_keys
+            ]
+            if len(models) == 1:
+                _GLOBAL_LLM = models[0]
+            else:
+                _GLOBAL_LLM = models[0].with_fallbacks(models[1:])
             return _GLOBAL_LLM
         except Exception as e:
             print(f"[Warning] Khởi tạo ChatGoogleGenerativeAI thất bại: {e}")

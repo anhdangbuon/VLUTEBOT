@@ -1153,8 +1153,12 @@ if user_query:
                             raw_text = getattr(response_obj, "content", str(response_obj))
                             break
                         except Exception as api_err:
-                            if "503" in str(api_err) and attempt < max_attempts - 1:
-                                time.sleep(2)
+                            err_str = str(api_err)
+                            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                                raw_text = "Hệ thống tra cứu đang nhận lượng truy cập cao trong ngày từ sinh viên khiến hạn ngạch tạm thời bị chạm mốc. Bạn vui lòng đợi khoảng 1 phút rồi bấm hỏi lại nhé!"
+                                break
+                            elif any(code in err_str for code in ["503", "UNAVAILABLE"]) and attempt < max_attempts - 1:
+                                time.sleep(2 * (attempt + 1))
                                 continue
                             raise api_err
 
