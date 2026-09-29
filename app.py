@@ -1,6 +1,7 @@
 import os
 import re
 import html
+import time
 import base64
 import streamlit as st
 from rag import get_rag_chain, DOC_CATALOG, extract_article_info, check_out_of_scope
@@ -871,6 +872,66 @@ except Exception as e:
     st.error(f"Lỗi khởi tạo hệ thống: {e}")
     st.stop()
 
+@st.cache_data(ttl=86400, show_spinner=False)
+def execute_rag_pipeline(query: str):
+    """Thực thi pipeline RAG và cache kết quả vào RAM để tái sử dụng cho các sinh viên hỏi trùng câu hỏi."""
+    # Lấy chuỗi RAG singleton
+    chain = get_rag_chain()
+    
+    # 1. Trích xuất tài liệu đối chiếu
+    docs = chain.filter_documents(query, k=3)
+    if not docs:
+        return "", [], None
+        
+    context_parts = []
+    sources = []
+    for i, doc in enumerate(docs, 1):
+        src_file = os.path.basename(doc.metadata.get("source", "Tài liệu"))
+        doc_meta = DOC_CATALOG.get(src_file, {})
+        title = doc_meta.get("title", src_file)
+        short_title = doc_meta.get("short_title", src_file)
+        dept = doc_meta.get("dept", "VLUTE")
+        page = doc.metadata.get("page", 1)
+        article = extract_article_info(doc.page_content)
+        
+        header_line = f"--- [TÀI LIỆU {i}: {title} | Trang {page}" + (f" | {article}" if article else "") + " ---"
+        context_parts.append(f"{header_line}\n{doc.page_content}")
+        
+        sources.append({
+            "file": src_file,
+            "title": title,
+            "short_title": short_title,
+            "dept": dept,
+            "page": page,
+            "article": article,
+            "snippet": doc.page_content.strip()
+        })
+
+    context_str = "\n\n".join(context_parts)
+    formatted_prompt = chain.prompt.format(context=context_str, input=query)
+
+    # 2. Gọi LLM có retry an toàn
+    import time
+    raw_answer = ""
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        try:
+            response_obj = chain.llm.invoke(formatted_prompt)
+            raw_answer = getattr(response_obj, "content", str(response_obj))
+            if raw_answer:
+                break
+        except Exception as api_err:
+            err_str = str(api_err)
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                raw_answer = "Hệ thống tra cứu đang nhận lượng truy cập cao trong ngày từ sinh viên khiến hạn ngạch tạm thời bị chạm mốc. Bạn vui lòng đợi khoảng 1 phút rồi bấm hỏi lại nhé!"
+                break
+            elif any(code in err_str for code in ["503", "UNAVAILABLE"]) and attempt < max_attempts - 1:
+                time.sleep(2 * (attempt + 1))
+                continue
+            raise api_err
+
+    return raw_answer, sources, len(docs)
+
 # ==========================================
 # 2. TINH GỌN LỜI CHÀO MỞ ĐẦU
 # ==========================================
@@ -1099,10 +1160,13 @@ if user_query:
             status_placeholder.markdown(THINKING_HTML, unsafe_allow_html=True)
 
             try:
-                # Lọc tài liệu theo Query Routing & Filtering
-                docs = qa_chain.filter_documents(user_query, k=3)
+                raw_text, sources_to_save, num_docs = execute_rag_pipeline(user_query)
 
-                if not docs:
+                # Nếu gặp phản hồi hạn ngạch 429, xóa cache để lần hỏi sau thử lại API
+                if raw_text and "hạn ngạch" in raw_text:
+                    execute_rag_pipeline.clear()
+
+                if not num_docs or not raw_text:
                     status_placeholder.empty()
                     no_doc_msg = (
                         "Hiện tại mình chưa tìm thấy thông tin phù hợp trong các văn bản quy chế để giải đáp câu hỏi này.\n\n"
@@ -1114,59 +1178,14 @@ if user_query:
                     contact_to_save = ""
                     sources_to_save = []
                 else:
-                    # Chuẩn bị context và prompt
-                    context_parts = []
-                    sources_to_save = []
-                    for i, doc in enumerate(docs, 1):
-                        src_file = os.path.basename(doc.metadata.get("source", "Tài liệu"))
-                        doc_meta = DOC_CATALOG.get(src_file, {})
-                        title = doc_meta.get("title", src_file)
-                        short_title = doc_meta.get("short_title", src_file)
-                        dept = doc_meta.get("dept", "VLUTE")
-                        page = doc.metadata.get("page", 1)
-                        article = extract_article_info(doc.page_content)
-                        
-                        header_line = f"--- [TÀI LIỆU {i}: {title} | Trang {page}" + (f" | {article}" if article else "") + " ---"
-                        context_parts.append(f"{header_line}\n{doc.page_content}")
-                        
-                        sources_to_save.append({
-                            "file": src_file,
-                            "title": title,
-                            "short_title": short_title,
-                            "dept": dept,
-                            "page": page,
-                            "article": article,
-                            "snippet": doc.page_content.strip()
-                        })
-
-                    context_str = "\n\n".join(context_parts)
-                    formatted_prompt = qa_chain.prompt.format(context=context_str, input=user_query)
-
-                    # Gọi invoke an toàn có vòng lặp retry tự động khi gặp 503 UNAVAILABLE
-                    import time
-
-                    raw_text = ""
-                    max_attempts = 3
-                    for attempt in range(max_attempts):
-                        try:
-                            response_obj = qa_chain.llm.invoke(formatted_prompt)
-                            raw_text = getattr(response_obj, "content", str(response_obj))
-                            break
-                        except Exception as api_err:
-                            err_str = str(api_err)
-                            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                                raw_text = "Hệ thống tra cứu đang nhận lượng truy cập cao trong ngày từ sinh viên khiến hạn ngạch tạm thời bị chạm mốc. Bạn vui lòng đợi khoảng 1 phút rồi bấm hỏi lại nhé!"
-                                break
-                            elif any(code in err_str for code in ["503", "UNAVAILABLE"]) and attempt < max_attempts - 1:
-                                time.sleep(2 * (attempt + 1))
-                                continue
-                            raise api_err
-
-                    status_placeholder.markdown(f"""
-                    <div class="rag-status-badge">
-                        <span>✓</span> <span>Đã đối soát thành công <b>{len(docs)}</b> đoạn trích quy chế liên quan</span>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    if "hạn ngạch" not in raw_text:
+                        status_placeholder.markdown(f"""
+                        <div class="rag-status-badge">
+                            <span>✓</span> <span>Đã đối soát thành công <b>{num_docs}</b> đoạn trích quy chế liên quan</span>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        status_placeholder.empty()
 
                     def word_generator(text):
                         words = text.split(" ")
@@ -1180,12 +1199,12 @@ if user_query:
                     answer_to_save = full_answer
 
                     # 1. Hiển thị căn cứ quy chế trích dẫn ngay dưới câu trả lời
-                    if sources_to_save:
+                    if sources_to_save and "hạn ngạch" not in raw_text:
                         render_sources(sources_to_save)
 
                     # 2. Hiển thị thông tin liên hệ phòng ban ở cuối cùng
                     contact_footer = get_contact_footer(user_query, full_answer)
-                    if contact_footer:
+                    if contact_footer and "hạn ngạch" not in raw_text:
                         st.markdown(contact_footer)
                         contact_to_save = contact_footer
                     else:
