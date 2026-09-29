@@ -348,9 +348,10 @@ def get_llm():
         try:
             from langchain_google_genai import ChatGoogleGenerativeAI
             _GLOBAL_LLM = ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash-001",
+            model="gemini-2.0-flash",
             google_api_key=api_key,
             temperature=0.1
+
 )
             return _GLOBAL_LLM
         except Exception as e:
