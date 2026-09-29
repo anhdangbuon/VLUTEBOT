@@ -305,45 +305,16 @@ def get_google_api_key():
     return api_key
 
 def get_embedding_model():
-    """Nạp mô hình Embedding tối ưu: Hỗ trợ Google Cloud nếu có API Key hoặc mô hình local nạp offline siêu tốc."""
     global _GLOBAL_EMBEDDINGS
     if _GLOBAL_EMBEDDINGS is not None:
         return _GLOBAL_EMBEDDINGS
-
-    # 1. Hỗ trợ Google Generative AI Embeddings nếu có API Key (tính toán cloud nhẹ máy)
-    google_api_key = get_google_api_key()
-    if google_api_key:
-        try:
-            from langchain_google_genai import GoogleGenerativeAIEmbeddings
-            _GLOBAL_EMBEDDINGS = GoogleGenerativeAIEmbeddings(
-                model="models/embedding-001",
-                google_api_key=google_api_key
-            )
-            return _GLOBAL_EMBEDDINGS
-        except Exception:
-            pass
-
-    # 2. Tối ưu nạp offline nhanh cho Vietnamese Bi-Encoder cục bộ
-    os.environ.setdefault("HF_HUB_OFFLINE", "1")
-    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+    
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    try:
-        torch.set_num_threads(min(8, os.cpu_count() or 4))
-    except Exception:
-        pass
-
-    try:
-        _GLOBAL_EMBEDDINGS = SentenceTransformerEmbeddings(
-            model_name="bkai-foundation-models/vietnamese-bi-encoder",
-            model_kwargs={"device": device, "local_files_only": True},
-            encode_kwargs={"normalize_embeddings": True}
-        )
-    except Exception:
-        _GLOBAL_EMBEDDINGS = SentenceTransformerEmbeddings(
-            model_name="bkai-foundation-models/vietnamese-bi-encoder",
-            model_kwargs={"device": device},
-            encode_kwargs={"normalize_embeddings": True}
-        )
+    _GLOBAL_EMBEDDINGS = SentenceTransformerEmbeddings(
+        model_name="bkai-foundation-models/vietnamese-bi-encoder",
+        model_kwargs={"device": device},
+        encode_kwargs={"normalize_embeddings": True}
+    )
     return _GLOBAL_EMBEDDINGS
 
 def get_vector_db():
