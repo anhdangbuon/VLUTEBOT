@@ -22,7 +22,7 @@ def get_base64_image(image_path):
     return None
 
 lucas_avatar_b64 = get_base64_image("lucas_avatar.png")
-avatar_img_html = f'''<div style="width: 66px; height: 66px; min-width: 66px; min-height: 66px; border-radius: 50%; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; vertical-align: middle; margin-right: 14px; border: 2.5px solid #2e7d32; box-shadow: 0 4px 10px rgba(0,0,0,0.3); background: #2e7d32;"><img src="data:image/png;base64,{lucas_avatar_b64}" style="width: 100%; height: 100%; object-fit: cover; transform: scale(1.16); display: block;"></div>''' if lucas_avatar_b64 else '🎓 '
+avatar_img_html = f'<img src="data:image/png;base64,{lucas_avatar_b64}" style="width: 56px; height: 56px; border-radius: 50%; vertical-align: middle; margin-right: 12px; object-fit: cover; box-shadow: 0 3px 8px rgba(0,0,0,0.25); display: inline-block;">' if lucas_avatar_b64 else '🎓 '
 
 BOT_AVATAR = "lucas_avatar.png" if os.path.exists("lucas_avatar.png") else "🎓"
 
@@ -462,38 +462,40 @@ div[data-testid="stChatMessage"]:not(:has([data-testid="chatAvatarIcon-user"])) 
     justify-content: flex-start !important;
 }
 
-/* Khung bọc avatar chat của Streamlit: ép tròn và giấu phần thừa */
-div[data-testid="stChatMessage"] div:has(> img),
-[data-testid="stChatMessageAvatarCustom"],
+/* Avatar Trợ lý Lucas */
 div[data-testid="stChatMessageAvatar"] {
-    width: 54px !important;
-    height: 54px !important;
-    min-width: 54px !important;
-    min-height: 54px !important;
+    flex-shrink: 0 !important;
+    width: 48px !important;
+    height: 48px !important;
+    min-width: 48px !important;
+    min-height: 48px !important;
+    margin-top: 2px !important;
     border-radius: 50% !important;
-    overflow: hidden !important;
-    border: 2px solid #2e7d32 !important;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.2) !important;
-    background: #2e7d32 !important;
+    background-color: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
     padding: 0 !important;
 }
 
-/* Ảnh bên trong avatar chat: phóng to scale 1.16 để cắt sạch 4 góc viền trắng */
+/* Cố định kích thước avatar bong bóng chat 48px, tròn trịa, không bị phóng to */
+div[data-testid="stChatMessage"] [data-testid="stChatMessageAvatarCustom"],
 div[data-testid="stChatMessage"] img {
-    width: 100% !important;
-    height: 100% !important;
-    min-width: 100% !important;
-    min-height: 100% !important;
+    width: 48px !important;
+    height: 48px !important;
+    min-width: 48px !important;
+    min-height: 48px !important;
+    max-width: 48px !important;
+    max-height: 48px !important;
+    border-radius: 50% !important;
     object-fit: cover !important;
-    transform: scale(1.16) !important;
-    border-radius: 0 !important;
+    transform: none !important;
     border: none !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    display: block !important;
+    background: transparent !important;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15) !important;
+    display: inline-block !important;
 }
 
 /* Khung tin nhắn của Lucas: Màu xanh lá VLUTE, MAX-WIDTH: 720px */
