@@ -693,6 +693,21 @@ div[data-testid="stHorizontalBlock"] button:hover {
     transform: translateY(-1px);
 }
 
+/* Đảm bảo nút gợi ý bên trong tin nhắn bot có chữ rõ nét, không bị đè màu trắng */
+div[data-testid="stChatMessageContent"] div[data-testid="stHorizontalBlock"] button,
+div[data-testid="stChatMessageContent"] div[data-testid="stHorizontalBlock"] button p,
+div[data-testid="stChatMessageContent"] div[data-testid="stHorizontalBlock"] button span {
+    color: #00703c !important;
+    font-size: 0.84rem !important;
+    font-weight: 600 !important;
+}
+
+div[data-testid="stChatMessageContent"] div[data-testid="stHorizontalBlock"] button:hover,
+div[data-testid="stChatMessageContent"] div[data-testid="stHorizontalBlock"] button:hover p,
+div[data-testid="stChatMessageContent"] div[data-testid="stHorizontalBlock"] button:hover span {
+    color: #ffffff !important;
+}
+
 /* Khung chat input */
 div[data-testid="stChatInput"] {
     border-radius: 12px !important;
@@ -995,8 +1010,8 @@ def normalize_query_intent(query: str) -> str:
     if any(k in q_lower for k in ["hoàn trả", "hoàn tiền", "học phí thừa", "rút tiền học phí"]):
         return "Quy trình làm thủ tục hoàn trả học phí thừa cho sinh viên gồm những bước nào?"
 
-    # 3. Nhóm miễn giảm học phí: chứa "miễn giảm", "giảm học phí", "chính sách học phí"
-    if any(k in q_lower for k in ["miễn giảm", "giảm học phí", "chính sách học phí"]):
+    # 3. Nhóm miễn giảm học phí / học phí chung chung: chứa "miễn giảm", "giảm học phí", "chính sách học phí" hoặc "học phí"
+    if (any(k in q_lower for k in ["miễn giảm", "giảm học phí", "chính sách học phí"]) or "học phí" in q_lower) and not any(k in q_lower for k in ["hồ sơ", "thủ tục", "giấy tờ"]):
         return "Đối tượng sinh viên nào được xét miễn giảm học phí theo quy định của trường?"
 
     # 4. Nhóm tín chỉ CTXH: chứa "công tác xã hội", "ctxh", "tín chỉ ctxh"
@@ -1144,10 +1159,47 @@ def get_contact_footer(query: str, answer: str) -> str:
         
     return ""
 
+def render_followup_suggestions(query_or_content: str, key_suffix: str = ""):
+    """Hiển thị hàng nút câu hỏi gợi ý liên quan theo chủ đề vừa tra cứu."""
+    text_check = (query_or_content or "").lower()
+
+    # Phân loại gợi ý động theo chủ đề vừa tra cứu:
+    # 1. Học phí
+    if any(k in text_check for k in ["học phí", "miễn giảm", "hoàn trả", "tiền học", "rút tiền"]):
+        prompts = [
+            ("📝 Hồ sơ xét miễn giảm học phí gồm những gì?", "Hồ sơ xét miễn giảm học phí gồm những gì?"),
+            ("💰 Quy trình hoàn trả học phí thừa?", "Quy trình làm thủ tục hoàn trả học phí thừa cho sinh viên gồm những bước nào?")
+        ]
+    # 2. Học bổng
+    elif any(k in text_check for k in ["học bổng", "kkht", "khen thưởng", "rèn luyện"]):
+        prompts = [
+            ("🎯 Điều kiện điểm rèn luyện xét học bổng?", "Điều kiện điểm rèn luyện để được xét cấp học bổng khuyến khích học tập là gì?"),
+            ("⚠️ Có nợ môn thì được xét học bổng không?", "Sinh viên có nợ môn hoặc nợ học phí thì có được xét học bổng khuyến khích học tập không?")
+        ]
+    # 3. Khác
+    else:
+        prompts = [
+            ("🤝 Bao nhiêu tín chỉ CTXH thì đủ tốt nghiệp?", "Sinh viên cần hoàn thành bao nhiêu tín chỉ Công tác xã hội để đủ điều kiện xét tốt nghiệp?"),
+            ("🏢 Địa chỉ liên hệ Phòng Đào tạo?", "Địa chỉ và thông tin liên hệ của Phòng Đào tạo trường VLUTE ở đâu?")
+        ]
+
+    st.markdown("<p style='font-size: 0.88rem; color: #e2e8f0; margin-top: 10px; margin-bottom: 6px;'>💡 <b>Gợi ý câu hỏi liên quan bạn có thể quan tâm:</b></p>", unsafe_allow_html=True)
+    cols = st.columns(len(prompts))
+    for idx, (label, target_q) in enumerate(prompts):
+        with cols[idx]:
+            if st.button(label, key=f"followup_{key_suffix}_{idx}", use_container_width=True):
+                st.session_state.quick_prompt = target_q
+                st.rerun()
+
 # ==========================================
 # HIỂN THỊ LỊCH SỬ TIN NHẮN
 # ==========================================
-for message in st.session_state.messages:
+last_assistant_idx = max(
+    (i for i, m in enumerate(st.session_state.messages) if m.get("role") == "assistant"),
+    default=-1
+)
+
+for idx, message in enumerate(st.session_state.messages):
     if message["role"] == "user":
         safe_content = html.escape(message["content"]).replace("\n", "<br>")
         st.markdown(
@@ -1162,25 +1214,33 @@ for message in st.session_state.messages:
             if message.get("contact"):
                 st.markdown(message["contact"])
 
+            # Hiển thị gợi ý câu hỏi liên quan tiếp theo ngay dưới trích dẫn cho câu trả lời mới nhất của Lucas
+            if idx > 0 and idx == last_assistant_idx:
+                q_text = message.get("query")
+                if not q_text and idx > 0 and st.session_state.messages[idx - 1].get("role") == "user":
+                    q_text = st.session_state.messages[idx - 1].get("content")
+                render_followup_suggestions(q_text or message.get("content", ""), key_suffix=str(idx))
+
 # ==========================================
-# KHỐI GỢI Ý CÂU HỎI NHANH
+# KHỐI GỢI Ý CÂU HỎI NHANH (KHI CHƯA BẮT ĐẦU HỎI)
 # ==========================================
-st.markdown('<div class="quick-prompt-title">💡 Gợi ý câu hỏi nhanh từ văn bản quy chế:</div>', unsafe_allow_html=True)
-col1, col2 = st.columns(2)
-with col1:
-    if st.button("🏆 Tiêu chuẩn xét học bổng khuyến khích?", use_container_width=True, key="btn_hb"):
-        st.session_state.quick_prompt = "Tiêu chuẩn và điều kiện xét cấp học bổng khuyến khích học tập là gì?"
-        st.rerun()
-    if st.button("💰 Quy trình hoàn trả học phí thừa?", use_container_width=True, key="btn_ht"):
-        st.session_state.quick_prompt = "Quy trình làm thủ tục hoàn trả học phí thừa cho sinh viên gồm những bước nào?"
-        st.rerun()
-with col2:
-    if st.button("🎁 Đối tượng được miễn giảm học phí?", use_container_width=True, key="btn_mg"):
-        st.session_state.quick_prompt = "Đối tượng sinh viên nào được xét miễn giảm học phí theo quy định của trường?"
-        st.rerun()
-    if st.button("🤝 Quy định tích lũy tín chỉ CTXH?", use_container_width=True, key="btn_ctxh"):
-        st.session_state.quick_prompt = "Sinh viên cần hoàn thành bao nhiêu tín chỉ Công tác xã hội để đủ điều kiện xét tốt nghiệp?"
-        st.rerun()
+if len(st.session_state.messages) <= 1:
+    st.markdown('<div class="quick-prompt-title">💡 Gợi ý câu hỏi nhanh từ văn bản quy chế:</div>', unsafe_allow_html=True)
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🏆 Tiêu chuẩn xét học bổng khuyến khích?", use_container_width=True, key="btn_hb"):
+            st.session_state.quick_prompt = "Tiêu chuẩn và điều kiện xét cấp học bổng khuyến khích học tập là gì?"
+            st.rerun()
+        if st.button("💰 Quy trình hoàn trả học phí thừa?", use_container_width=True, key="btn_ht"):
+            st.session_state.quick_prompt = "Quy trình làm thủ tục hoàn trả học phí thừa cho sinh viên gồm những bước nào?"
+            st.rerun()
+    with col2:
+        if st.button("🎁 Đối tượng được miễn giảm học phí?", use_container_width=True, key="btn_mg"):
+            st.session_state.quick_prompt = "Đối tượng sinh viên nào được xét miễn giảm học phí theo quy định của trường?"
+            st.rerun()
+        if st.button("🤝 Quy định tích lũy tín chỉ CTXH?", use_container_width=True, key="btn_ctxh"):
+            st.session_state.quick_prompt = "Sinh viên cần hoàn thành bao nhiêu tín chỉ Công tác xã hội để đủ điều kiện xét tốt nghiệp?"
+            st.rerun()
 
 # ==========================================
 # 5. KHUNG NHẬP CÂU HỎI (INPUT PLACEHOLDER)
@@ -1300,7 +1360,8 @@ if user_query:
         "role": "assistant",
         "content": answer_to_save,
         "contact": contact_to_save,
-        "sources": sources_to_save
+        "sources": sources_to_save,
+        "query": user_query
     })
     st.rerun()
 
