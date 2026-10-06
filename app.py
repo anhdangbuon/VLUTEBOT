@@ -595,6 +595,23 @@ div[data-testid="stChatMessageContent"] div[data-testid="stExpander"] code {
     border-radius: 4px !important;
 }
 
+div[data-testid="stChatMessageContent"] div[data-testid="stExpander"] blockquote {
+    background-color: #f1f5f9 !important;
+    border-left: 3.5px solid #00703c !important;
+    padding: 8px 12px !important;
+    margin: 6px 0 10px 0 !important;
+    border-radius: 4px !important;
+    font-size: 0.83rem !important;
+    color: #1e293b !important;
+    line-height: 1.5 !important;
+}
+
+div[data-testid="stChatMessageContent"] div[data-testid="stExpander"] blockquote p,
+div[data-testid="stChatMessageContent"] div[data-testid="stExpander"] blockquote span {
+    color: #1e293b !important;
+    margin-bottom: 0px !important;
+}
+
 /* 6. Hoạt ảnh xoay bánh răng khi tìm kiếm */
 .thinking-track {
     width: 100% !important;
@@ -836,10 +853,6 @@ st.markdown(f"""
         <span>🛡️ Trả lời có căn cứ</span>
     </div>
 </div>
-
-<div class="vlute-alert-box">
-    <span>💡 Lucas giải đáp dựa trên văn bản chính thức và luôn đính kèm nguồn điều khoản đối chiếu.</span>
-</div>
 """, unsafe_allow_html=True)
 
 # ==========================================
@@ -934,13 +947,15 @@ except Exception as e:
     st.error(f"Lỗi khởi tạo hệ thống: {e}")
     st.stop()
 
+_GLOBAL_ANSWER_CACHE = {}
+
 @st.cache_data(ttl=86400, show_spinner=False)
 def execute_rag_pipeline(query: str):
     """Thực thi pipeline RAG và cache kết quả vào RAM để tái sử dụng cho các sinh viên hỏi trùng câu hỏi."""
     # Lấy chuỗi RAG singleton
     chain = get_rag_chain()
     
-    # 1. Trích xuất tài liệu đối chiếu
+    # 1. Trích xuất tài liệu đối chiếu (n_results=3)
     docs = chain.filter_documents(query, k=3)
     if not docs:
         return "", [], None
@@ -992,7 +1007,70 @@ def execute_rag_pipeline(query: str):
                 continue
             raise api_err
 
+    _GLOBAL_ANSWER_CACHE[query] = (raw_answer, sources, len(docs))
     return raw_answer, sources, len(docs)
+
+def stream_rag_pipeline(query: str):
+    """
+    Tối ưu hóa hiệu năng và độ trễ phản hồi:
+    - Nếu câu hỏi đã có sẵn trong Cache RAM: Trả về kết quả tức thì (0.1s).
+    - Nếu câu hỏi mới: Gọi LLM dạng stream (generate_content_stream) và đẩy từng từ ra UI ngay khi API phản hồi.
+    """
+    if query in _GLOBAL_ANSWER_CACHE:
+        raw_text, sources, num_docs = _GLOBAL_ANSWER_CACHE[query]
+        def fast_word_stream():
+            words = raw_text.split(" ")
+            for idx, w in enumerate(words):
+                yield w + (" " if idx < len(words) - 1 else "")
+                time.sleep(0.006)
+        return fast_word_stream(), sources, num_docs, True
+
+    chain = get_rag_chain()
+    docs = chain.filter_documents(query, k=3)
+    if not docs:
+        return None, [], 0, False
+
+    context_parts = []
+    sources = []
+    for i, doc in enumerate(docs, 1):
+        src_file = os.path.basename(doc.metadata.get("source", "Tài liệu"))
+        doc_meta = DOC_CATALOG.get(src_file, {})
+        title = doc_meta.get("title", src_file)
+        short_title = doc_meta.get("short_title", src_file)
+        dept = doc_meta.get("dept", "VLUTE")
+        page = doc.metadata.get("page", 1)
+        article = extract_article_info(doc.page_content)
+        
+        header_line = f"--- [TÀI LIỆU {i}: {title} | Trang {page}" + (f" | {article}" if article else "") + " ---"
+        context_parts.append(f"{header_line}\n{doc.page_content}")
+        
+        sources.append({
+            "file": src_file,
+            "title": title,
+            "short_title": short_title,
+            "dept": dept,
+            "page": page,
+            "article": article,
+            "snippet": doc.page_content.strip()
+        })
+
+    context_str = "\n\n".join(context_parts)
+    formatted_prompt = chain.prompt.format(context=context_str, input=query)
+
+    def generate_content_stream():
+        try:
+            for chunk in chain.llm.stream(formatted_prompt):
+                chunk_text = getattr(chunk, "content", str(chunk))
+                if chunk_text:
+                    yield chunk_text
+        except Exception as stream_err:
+            err_str = str(stream_err)
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                yield "\n\nHệ thống tra cứu đang nhận lượng truy cập cao trong ngày từ sinh viên khiến hạn ngạch tạm thời bị chạm mốc. Bạn vui lòng đợi khoảng 1 phút rồi bấm hỏi lại nhé!"
+            else:
+                yield f"\n\n*(Lỗi kết nối mô hình: {err_str})*"
+
+    return generate_content_stream(), sources, len(docs), False
 
 def normalize_query_intent(query: str) -> str:
     """Chuẩn hóa câu hỏi của sinh viên về truy vấn chuẩn để tối đa hóa tỷ lệ trúng Response Cache (RAM)."""
@@ -1028,8 +1106,7 @@ def normalize_query_intent(query: str) -> str:
 # ==========================================
 WELCOME_CONTENT = (
     "👋 **Xin chào! Mình là Lucas** – trợ lý hỗ trợ tra cứu Quy chế Đào tạo & Quy định sinh viên VLUTE.\n\n"
-    "Bạn có thể chọn nhanh các câu hỏi bên dưới hoặc tra cứu về:\n\n"
-    "🏆 **Học bổng** &nbsp;&nbsp;&nbsp; 💰 **Học phí** &nbsp;&nbsp;&nbsp; 🎓 **Đào tạo** &nbsp;&nbsp;&nbsp; ⚠️ **Học vụ**"
+    "Bạn có thể chọn nhanh các câu hỏi bên dưới hoặc tra cứu về: Học bổng, học phí, đào tạo, học vụ..."
 )
 
 if "messages" not in st.session_state or len(st.session_state.messages) == 0:
@@ -1059,7 +1136,7 @@ def clean_snippet_text(text: str) -> str:
 # 3. ĐÍNH KÈM CĂN CỨ TRÍCH DẪN (SOURCE CARD)
 # ==========================================
 def render_sources(sources_list):
-    """Hiển thị căn cứ quy chế trích dẫn gọn gàng trong st.expander, sạch ký tự rác."""
+    """Hiển thị căn cứ quy chế trích dẫn gọn gàng trong st.expander, kèm trích dẫn nguyên văn đầy đủ."""
     if not sources_list:
         return
     
@@ -1090,7 +1167,7 @@ def render_sources(sources_list):
             })
 
     total_chunks = sum(len(g["items"]) for g in grouped.values())
-    expander_label = f"📚 CĂN CỨ VĂN BẢN TRÍCH DẪN ({total_chunks} đoạn trích đối chiếu)"
+    expander_label = f"📑 CĂN CỨ VĂN BẢN TRÍCH DẪN ({total_chunks} đoạn trích đối chiếu)"
 
     with st.expander(expander_label, expanded=False):
         for idx, (file_name, gdata) in enumerate(grouped.items(), 1):
@@ -1103,9 +1180,10 @@ def render_sources(sources_list):
                 loc_label = " - ".join(loc_parts)
                 
                 snippet_text = sub['snippet']
-                if len(snippet_text) > 220:
-                    snippet_text = snippet_text[:220] + "..."
-                st.markdown(f"- 📍 **{loc_label}**: *\"{html.escape(snippet_text)}\"*")
+                st.markdown(f"📍 **Vị trí: {loc_label}**")
+                # Hiển thị đầy đủ đoạn trích dẫn nguyên văn trong khối trích dẫn (Blockquote >)
+                quote_block = "\n> ".join(snippet_text.splitlines())
+                st.markdown(f"> {quote_block}")
             if idx < len(grouped):
                 st.markdown("<hr style='margin: 8px 0; border-color: rgba(0, 0, 0, 0.1);'>", unsafe_allow_html=True)
 
@@ -1297,13 +1375,9 @@ if user_query:
 
             try:
                 canonical_query = normalize_query_intent(user_query)
-                raw_text, sources_to_save, num_docs = execute_rag_pipeline(canonical_query)
+                stream_gen, sources_to_save, num_docs, is_cached = stream_rag_pipeline(canonical_query)
 
-                # Nếu gặp phản hồi hạn ngạch 429, xóa cache để lần hỏi sau thử lại API
-                if raw_text and "hạn ngạch" in raw_text:
-                    execute_rag_pipeline.clear()
-
-                if not num_docs or not raw_text:
+                if not num_docs or not stream_gen:
                     status_placeholder.empty()
                     no_doc_msg = (
                         "Hiện tại mình chưa tìm thấy thông tin phù hợp trong các văn bản quy chế để giải đáp câu hỏi này.\n\n"
@@ -1315,33 +1389,28 @@ if user_query:
                     contact_to_save = ""
                     sources_to_save = []
                 else:
-                    if "hạn ngạch" not in raw_text:
-                        status_placeholder.markdown(f"""
-                        <div class="rag-status-badge">
-                            <span>✓</span> <span>Đã đối soát thành công <b>{num_docs}</b> đoạn trích quy chế liên quan</span>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    else:
-                        status_placeholder.empty()
+                    status_placeholder.markdown(f"""
+                    <div class="rag-status-badge">
+                        <span>✓</span> <span>Đã đối soát thành công <b>{num_docs}</b> đoạn trích quy chế liên quan</span>
+                    </div>
+                    """, unsafe_allow_html=True)
 
-                    def word_generator(text):
-                        words = text.split(" ")
-                        for idx, w in enumerate(words):
-                            yield w + (" " if idx < len(words) - 1 else "")
-                            time.sleep(0.015)
-
-                    full_answer = st.write_stream(word_generator(raw_text))
+                    full_answer = st.write_stream(stream_gen)
                     if not isinstance(full_answer, str):
                         full_answer = str(full_answer)
                     answer_to_save = full_answer
 
+                    # Tự động lưu câu trả lời vào Cache nếu là câu hỏi mới thành công
+                    if not is_cached and "hạn ngạch" not in answer_to_save:
+                        _GLOBAL_ANSWER_CACHE[canonical_query] = (answer_to_save, sources_to_save, num_docs)
+
                     # 1. Hiển thị căn cứ quy chế trích dẫn ngay dưới câu trả lời
-                    if sources_to_save and "hạn ngạch" not in raw_text:
+                    if sources_to_save and "hạn ngạch" not in answer_to_save:
                         render_sources(sources_to_save)
 
                     # 2. Hiển thị thông tin liên hệ phòng ban ở cuối cùng
                     contact_footer = get_contact_footer(user_query, full_answer)
-                    if contact_footer and "hạn ngạch" not in raw_text:
+                    if contact_footer and "hạn ngạch" not in answer_to_save:
                         st.markdown(contact_footer)
                         contact_to_save = contact_footer
                     else:
@@ -1369,12 +1438,16 @@ if user_query:
 # 6. TỰ ĐỘNG LÀM ẤM BỘ NHỚ ĐỆM (CACHE PRE-WARMING)
 # ==========================================
 def _prewarm_cache_background():
-    """Khởi chạy ngầm nạp sẵn câu trả lời cho 4 câu hỏi gợi ý phổ biến vào RAM (@st.cache_data)."""
+    """Khởi chạy ngầm nạp sẵn câu trả lời cho các câu hỏi gợi ý phổ biến vào RAM (@st.cache_data và Cache)."""
     suggested_queries = [
         "Tiêu chuẩn và điều kiện xét cấp học bổng khuyến khích học tập là gì?",
         "Quy trình làm thủ tục hoàn trả học phí thừa cho sinh viên gồm những bước nào?",
         "Đối tượng sinh viên nào được xét miễn giảm học phí theo quy định của trường?",
-        "Sinh viên cần hoàn thành bao nhiêu tín chỉ Công tác xã hội để đủ điều kiện xét tốt nghiệp?"
+        "Sinh viên cần hoàn thành bao nhiêu tín chỉ Công tác xã hội để đủ điều kiện xét tốt nghiệp?",
+        "Hồ sơ xét miễn giảm học phí gồm những gì?",
+        "Điều kiện điểm rèn luyện để được xét cấp học bổng khuyến khích học tập là gì?",
+        "Sinh viên có nợ môn hoặc nợ học phí thì có được xét học bổng khuyến khích học tập không?",
+        "Địa chỉ và thông tin liên hệ của Phòng Đào tạo trường VLUTE ở đâu?"
     ]
     for q in suggested_queries:
         try:

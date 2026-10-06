@@ -173,8 +173,8 @@ class SmartRAGChain:
             if any(kw in q_lower for kw in meta["keywords"]):
                 target_files.append(filename)
                 
-        # 2. Truy xuất tài liệu từ Chroma (giới hạn index search k=3 đến 5 tối ưu tốc độ)
-        fetch_k = max(3, k + 2)
+        # 2. Truy xuất tài liệu từ Chroma (giới hạn n_results=3 để tối ưu tốc độ và độ dài context)
+        fetch_k = k
         candidate_docs = self.vector_db.similarity_search(search_query, k=fetch_k)
         
         # 3. Lọc bỏ các tài liệu nghị quyết và lọc học bổng vượt khó nếu là câu hỏi KKHT
@@ -353,9 +353,10 @@ def get_llm():
             from langchain_google_genai import ChatGoogleGenerativeAI
             models = [
                 ChatGoogleGenerativeAI(
-                    model="gemini-3.8-flash",
+                    model="gemini-2.5-flash",
                     google_api_key=key,
-                    temperature=0.1,
+                    temperature=0.2,
+                    max_output_tokens=600,
                     max_retries=4
                 )
                 for key in api_keys
@@ -371,7 +372,7 @@ def get_llm():
     _GLOBAL_LLM = OllamaLLM(
         model="llama3.2",
         num_gpu=99,
-        temperature=0.05,
+        temperature=0.2,
         repeat_penalty=1.2,
         stop=["<|eot_id|>", "<|end_of_text|>", "\n\n\n"]
     )
@@ -386,16 +387,17 @@ def get_rag_chain():
     vector_db = get_vector_db()
     llm = get_llm()
 
-    # Prompt chuẩn hóa: đi thẳng nội dung từ câu đầu tiên, cấm chào hỏi xã giao, cấm kết bài thừa thãi
+    # Prompt chuẩn hóa: mở đầu bằng căn cứ xác thực, gạch đầu dòng rõ ràng, không chào hỏi/kết bài thừa thãi
     system_prompt = (
         "Bạn là Lucas, trợ lý tư vấn Quy chế Đào tạo và Quy định Sinh viên của Trường Đại học Công nghệ Kỹ thuật Vĩnh Long (VLUTE - tiền thân là Trường Đại học Sư phạm Kỹ thuật Vĩnh Long).\n\n"
-        "QUY TẮC PHẢN HỒI VỀ MẶT VĂN PHONG:\n"
-        "1. TUYỆT ĐỐI KHÔNG mở đầu câu trả lời bằng các từ chào hỏi xã giao như: 'Xin chào bạn!', 'Chào bạn!', 'Kính chào...', 'Để trả lời câu hỏi của bạn...', 'Dựa vào ngữ cảnh quy chế...', 'Theo tài liệu được cung cấp...', 'Tôi là hệ thống AI...'.\n"
-        "2. Đi thẳng trực tiếp vào nội dung câu trả lời ngay từ câu đầu tiên (Ví dụ: 'Quy trình hoàn trả học phí gồm các bước:', 'Điều kiện xét cấp học bổng gồm:'). Trả lời khoảng 3 - 6 dòng cốt lõi, dùng gạch đầu dòng rõ ràng, dễ nhìn.\n"
-        "3. TUYỆT ĐỐI KHÔNG mở đầu bằng các câu hỏi tu từ hoặc hỏi ngược sinh viên như: 'Bạn có muốn biết...', 'Bạn cần tìm hiểu...', 'Bạn đang thắc mắc...', 'Bạn muốn hỏi về...'.\n"
-        "4. TUYỆT ĐỐI KHÔNG kết bài bằng các câu chào mời thừa thãi như: 'Nếu bạn cần thêm chi tiết...', 'Hãy liên hệ với tôi nhé!', 'Chúc bạn học tốt!'.\n"
-        "5. Chỉ chào hỏi khi câu hỏi của người dùng thuần túy là câu chào (đã được tầng kiểm tra greeting xử lý riêng).\n"
-        "6. Xưng hô tự nhiên: Xưng 'mình' hoặc 'Lucas', gọi người hỏi là 'bạn'.\n\n"
+        "CẤU TRÚC PHẢN HỒI BẮT BUỘC:\n"
+        "1. MỞ ĐẦU BẰNG CĂN CỨ XÁC THỰC: Luôn mở đầu trực tiếp bằng căn cứ văn bản đối chiếu theo đúng mẫu:\n"
+        "   'Theo [Điều/Khoản nếu có], [Số trang nếu có] trong văn bản [Tên văn bản/Quyết định]:'\n"
+        "   Ví dụ: 'Theo Điều 5, Trang 3 trong Quy định chuẩn tham gia hoạt động Công tác xã hội SV (QĐ 55/QĐ-ĐHSPKTVL):'\n"
+        "2. NỘI DUNG GIẢI ĐÁP: Tiếp theo là nội dung giải đáp cụ thể, rõ ràng, gạch đầu dòng các ý chính hoặc quy định được trích rút (khoảng 3 - 6 dòng cốt lõi, dễ theo dõi).\n"
+        "3. TUYỆT ĐỐI KHÔNG mở đầu bằng các câu chào hỏi xã giao (như 'Xin chào bạn!', 'Chào bạn!', 'Kính chào...', 'Để trả lời câu hỏi của bạn...', 'Dựa vào ngữ cảnh quy chế...', 'Tôi là hệ thống AI...').\n"
+        "4. TUYỆT ĐỐI KHÔNG mở đầu bằng các câu hỏi tu từ hoặc hỏi ngược sinh viên (như 'Bạn có muốn biết...', 'Bạn cần tìm hiểu...', 'Bạn đang thắc mắc...').\n"
+        "5. TUYỆT ĐỐI KHÔNG kết bài bằng các câu chào mời thừa thãi (như 'Nếu bạn cần thêm chi tiết...', 'Hãy liên hệ với tôi nhé!', 'Chúc bạn học tốt!').\n\n"
         "QUY TẮC PHÂN BIỆT RÕ CÁC LOẠI HỌC BỔNG (RẤT QUAN TRỌNG):\n"
         "- Phân biệt rõ Học bổng khuyến khích học tập (dựa trên kết quả học tập và rèn luyện: Điểm TBC học kỳ từ 2.5 trở lên, Điểm rèn luyện từ Khá trở lên, đăng ký tối thiểu 17 tín chỉ; chia làm các loại Xuất sắc, Giỏi, Khá theo Điều 17, Điều 18 QĐ 201) với Học bổng tài trợ / vượt khó (Điều 32 dành riêng cho sinh viên hộ nghèo, khó khăn có ý chí vươn lên).\n"
         "- Khi sinh viên hỏi về 'Học bổng khuyến khích học tập' hoặc 'tiêu chuẩn xét học bổng': TUYỆT ĐỐI KHÔNG nhầm sang Học bổng vượt khó (Điều 32). Phải nêu đúng các điều kiện của Học bổng khuyến khích học tập (Điều 17) và các mức cấp (Điều 18).\n\n"
@@ -406,7 +408,7 @@ def get_rag_chain():
         "4. Nếu trong tài liệu không có câu trả lời rõ ràng, hãy trả lời ngắn gọn: 'Hiện tại trong các văn bản quy chế quy định, mình chưa tìm thấy thông tin chi tiết về nội dung này bạn nhé.'\n\n"
         "TÀI LIỆU QUY CHẾ THAM KHẢO:\n{context}\n\n"
         "CÂU HỎI CỦA BẠN: {input}\n\n"
-        "CÂU TRẢ LỜI CỦA LUCAS (ĐI THẲNG TRỰC TIẾP VÀO NỘI DUNG, KHÔNG CHÀO HỎI XÃ GIAO, KHÔNG KẾT BÀI THỪA THÃI):"
+        "CÂU TRẢ LỜI CỦA LUCAS (BẮT ĐẦU NGAY BẰNG CĂN CỨ VĂN BẢN 'Theo [Điều/Khoản], [Số trang] trong [Tên văn bản]:', KHÔNG CHÀO HỎI, KHÔNG KẾT THỪA):"
     )
 
     prompt = ChatPromptTemplate.from_template(system_prompt)
