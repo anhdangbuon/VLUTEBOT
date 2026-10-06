@@ -15,7 +15,16 @@ st.set_page_config(
 # ==========================================
 # CẤU HÌNH NHẬN DIỆN THƯƠNG HIỆU VLUTE
 # ==========================================
-BOT_AVATAR = "🎓"
+def get_base64_image(image_path):
+    if os.path.exists(image_path):
+        with open(image_path, "rb") as img_file:
+            return base64.b64encode(img_file.read()).decode()
+    return None
+
+lucas_avatar_b64 = get_base64_image("lucas_avatar.png")
+avatar_img_html = f'<img src="data:image/png;base64,{lucas_avatar_b64}" style="width: 32px; height: 32px; border-radius: 50%; vertical-align: middle; margin-right: 8px; object-fit: cover;" alt="Lucas Avatar">' if lucas_avatar_b64 else '🎓 '
+
+BOT_AVATAR = "lucas_avatar.png" if os.path.exists("lucas_avatar.png") else "🎓"
 
 # Nạp logo trường dạng base64 để hiển thị tức thì, sắc nét
 @st.cache_data
@@ -462,12 +471,20 @@ div[data-testid="stChatMessageAvatar"] {
     min-height: 38px !important;
     margin-top: 2px !important;
     border-radius: 50% !important;
+    overflow: hidden !important;
     background-color: #00703c !important;
     border: 2px solid #004d28 !important;
     box-shadow: 0 2px 6px rgba(0, 112, 60, 0.25) !important;
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
+}
+
+div[data-testid="stChatMessageAvatar"] img {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+    border-radius: 50% !important;
 }
 
 /* Khung tin nhắn của Lucas: Màu xanh lá VLUTE, MAX-WIDTH: 720px */
@@ -773,7 +790,7 @@ st.markdown(f"""
     </div>
     <div class="header-center-text">
         <div class="vlute-portal-title">
-            🎓 LUCAS – TRỢ LÝ QUY CHẾ & HỌC VỤ VLUTE
+            {avatar_img_html}LUCAS – TRỢ LÝ QUY CHẾ & HỌC VỤ VLUTE
         </div>
         <div class="vlute-portal-subtitle">
             Hệ thống tra cứu từ văn bản chính thức của Nhà trường
@@ -1127,7 +1144,7 @@ for message in st.session_state.messages:
             unsafe_allow_html=True
         )
     else:
-        with st.chat_message("assistant", avatar=BOT_AVATAR):
+        with st.chat_message("assistant", avatar="lucas_avatar.png" if os.path.exists("lucas_avatar.png") else "🎓"):
             st.markdown(message["content"])
             if message.get("sources"):
                 render_sources(message["sources"])
@@ -1176,7 +1193,7 @@ if user_query:
     )
 
     # 2. Xử lý phản hồi từ Lucas
-    with st.chat_message("assistant", avatar=BOT_AVATAR):
+    with st.chat_message("assistant", avatar="lucas_avatar.png" if os.path.exists("lucas_avatar.png") else "🎓"):
         # TRƯỜNG HỢP 1: Chào hỏi xã giao -> Phản hồi tức thì, không lặp lại câu chào dài dòng
         if is_greeting(user_query):
             greeting_reply = (
