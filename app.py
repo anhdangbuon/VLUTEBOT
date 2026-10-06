@@ -22,7 +22,7 @@ def get_base64_image(image_path):
     return None
 
 lucas_avatar_b64 = get_base64_image("lucas_avatar.png")
-avatar_img_html = f'<img src="data:image/png;base64,{lucas_avatar_b64}" style="width: 48px; height: 48px; border-radius: 50%; vertical-align: middle; margin-right: 12px; object-fit: cover; box-shadow: 0 2px 6px rgba(0,0,0,0.2);">' if lucas_avatar_b64 else '🎓 '
+avatar_img_html = f'<img src="data:image/png;base64,{lucas_avatar_b64}" style="width: 58px; height: 58px; border-radius: 50%; vertical-align: middle; margin-right: 12px; object-fit: cover; image-rendering: -webkit-optimize-contrast; box-shadow: 0 2px 8px rgba(0,0,0,0.25); background: white; padding: 2px;">' if lucas_avatar_b64 else '🎓 '
 
 BOT_AVATAR = "lucas_avatar.png" if os.path.exists("lucas_avatar.png") else "🎓"
 
@@ -465,27 +465,31 @@ div[data-testid="stChatMessage"]:not(:has([data-testid="chatAvatarIcon-user"])) 
 /* Avatar Trợ lý Lucas */
 div[data-testid="stChatMessageAvatar"] {
     flex-shrink: 0 !important;
-    width: 44px !important;
-    height: 44px !important;
-    min-width: 44px !important;
-    min-height: 44px !important;
+    width: 50px !important;
+    height: 50px !important;
+    min-width: 50px !important;
+    min-height: 50px !important;
     margin-top: 2px !important;
     border-radius: 50% !important;
     overflow: hidden !important;
-    background-color: #00703c !important;
-    border: 2px solid #004d28 !important;
+    background-color: #ffffff !important;
+    border: 2px solid #00703c !important;
     box-shadow: 0 2px 6px rgba(0, 112, 60, 0.25) !important;
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
 }
 
-/* Tăng kích cỡ avatar tin nhắn của chatbot */
+/* Tăng kích thước avatar tin nhắn bot và giữ độ sắc nét */
 [data-testid="stChatMessageAvatarCustom"],
 div[data-testid="stChatMessage"] img {
-    width: 44px !important;
-    height: 44px !important;
+    width: 50px !important;
+    height: 50px !important;
     border-radius: 50% !important;
+    object-fit: cover !important;
+    image-rendering: -webkit-optimize-contrast !important;
+    background: white !important;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.15) !important;
 }
 
 div[data-testid="stChatMessageAvatar"] img {
@@ -493,6 +497,7 @@ div[data-testid="stChatMessageAvatar"] img {
     height: 100% !important;
     object-fit: cover !important;
     border-radius: 50% !important;
+    image-rendering: -webkit-optimize-contrast !important;
 }
 
 /* Khung tin nhắn của Lucas: Màu xanh lá VLUTE, MAX-WIDTH: 720px */
