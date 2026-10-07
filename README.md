@@ -117,37 +117,3 @@ python ingest.py
 streamlit run app.py
 ```
 Sau khi khởi chạy thành công, truy cập trình duyệt tại: **`http://localhost:8501`**
-
----
-
-## 📞 Đầu mối Liên hệ Hỗ trợ tại VLUTE
-
-- 🏢 **Phòng Đào tạo (A1.101 - Tòa nhà Điều hành):**
-  - Điện thoại: `(0270) 3822 141` | Email: `daotao@vlute.edu.vn`
-- 🏢 **Phòng Công tác Sinh viên (A1.102 - Tầng trệt Tòa nhà Điều hành):**
-  - Điện thoại: `(0270) 3862 436` | Email: `ctsv@vlute.edu.vn`
-- 🏢 **Phòng Kế hoạch - Tài chính (Tầng trệt Tòa nhà Điều hành):**
-  - Điện thoại: `(0270) 3822 141` | Email: `khtc@vlute.edu.vn`
-
----
-
-## 🏛️ Thông tin Chung & Cổng Dịch vụ Trực tuyến
-
-- **Tên trường:** Trường Đại học Công nghệ Kỹ thuật Vĩnh Long *(tiền thân: Trường Đại học Sư phạm Kỹ thuật Vĩnh Long)*
-- **Tên tiếng Anh:** Vinh Long University of Technology and Engineering (VLUTE)
-- **Địa chỉ:** Số 73 Nguyễn Huệ, Phường Long Châu, Tỉnh Vĩnh Long
-- **Điện thoại:** `(0270) 3822 141` | **Fax:** `(0270) 3821 003`
-- **Email:** `spktvl@vlute.edu.vn` | **Website:** [vlute.edu.vn](https://vlute.edu.vn/)
-
-### Dịch vụ Tiện ích & Truy cập Nhanh
-- 🌐 **My VLUTE:** [vlute.edu.vn](https://vlute.edu.vn/)
-- 🎯 **Tuyển sinh:** [tuyensinh.vlute.edu.vn](https://tuyensinh.vlute.edu.vn/)
-- 👥 **Công tác Sinh viên:** [cgtdt-dsa.vlute.edu.vn](http://cgtdt-dsa.vlute.edu.vn/)
-- 📋 **Phòng Đào tạo:** [pdt.vlute.edu.vn](http://pdt.vlute.edu.vn/)
-- 📝 **Đăng ký Học phần:** [daotao.vlute.edu.vn/sinh-vien](https://daotao.vlute.edu.vn/sinh-vien)
-- 🖥️ **Hệ thống Quản lý:** [htql.vlute.edu.vn](https://htql.vlute.edu.vn/)
-- 💻 **E-Learning:** [elearning.vlute.edu.vn](http://elearning.vlute.edu.vn/)
-- 💳 **Cổng Thanh toán:** [thanhtoan.vlute.edu.vn](https://thanhtoan.vlute.edu.vn/)
-
----
-*© Bản quyền thuộc về Trường Đại học Công nghệ Kỹ thuật Vĩnh Long (VLUTE - tiền thân: Trường ĐH Sư phạm Kỹ thuật Vĩnh Long) | Copyright belongs to Vinh Long University of Technology and Engineering.*
