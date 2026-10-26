@@ -4,7 +4,7 @@ import html
 import time
 import base64
 import streamlit as st
-from rag import get_rag_chain, DOC_CATALOG, extract_article_info, check_out_of_scope
+from rag import get_rag_chain, DOC_CATALOG, extract_article_info, REFUSAL_MESSAGE, is_fast_bailout_query
 
 st.set_page_config(
     page_title="VLUTEBOT - Trợ lý Lucas", 
@@ -952,33 +952,35 @@ _GLOBAL_ANSWER_CACHE = {}
 @st.cache_data(ttl=86400, show_spinner=False)
 def execute_rag_pipeline(query: str):
     """Thực thi pipeline RAG và cache kết quả vào RAM để tái sử dụng cho các sinh viên hỏi trùng câu hỏi."""
+    if is_fast_bailout_query(query):
+        return REFUSAL_MESSAGE, [], 0
+
     # Lấy chuỗi RAG singleton
     chain = get_rag_chain()
     
-    # 1. Trích xuất tài liệu đối chiếu (n_results=3)
-    docs = chain.filter_documents(query, k=3)
+    # 1. Trích xuất tài liệu đối chiếu động (k=5)
+    docs = chain.filter_documents(query, k=5)
     if not docs:
-        return "", [], None
+        return REFUSAL_MESSAGE, [], 0
         
     context_parts = []
     sources = []
-    for i, doc in enumerate(docs, 1):
+    for doc in docs:
         src_file = os.path.basename(doc.metadata.get("source", "Tài liệu"))
-        doc_meta = DOC_CATALOG.get(src_file, {})
-        title = doc_meta.get("title", src_file)
-        short_title = doc_meta.get("short_title", src_file)
-        dept = doc_meta.get("dept", "VLUTE")
+        title = doc.metadata.get("title", src_file)
+        year = doc.metadata.get("year", "Chưa rõ")
+        code = doc.metadata.get("doc_code", "")
         page = doc.metadata.get("page", 1)
         article = extract_article_info(doc.page_content)
         
-        header_line = f"--- [TÀI LIỆU {i}: {title} | Trang {page}" + (f" | {article}" if article else "") + " ---"
+        header_line = f"--- [VĂN BẢN: {doc.metadata.get('title', src_file)} | Năm ban hành: {doc.metadata.get('year', 'Chưa rõ')} | Số hiệu: {doc.metadata.get('doc_code', '')} | Trang {page}] ---"
         context_parts.append(f"{header_line}\n{doc.page_content}")
         
         sources.append({
             "file": src_file,
             "title": title,
-            "short_title": short_title,
-            "dept": dept,
+            "short_title": title,
+            "dept": "VLUTE",
             "page": page,
             "article": article,
             "snippet": doc.page_content.strip()
@@ -1025,30 +1027,32 @@ def stream_rag_pipeline(query: str):
                 time.sleep(0.006)
         return fast_word_stream(), sources, num_docs, True
 
+    if is_fast_bailout_query(query):
+        return None, [], 0, False
+
     chain = get_rag_chain()
-    docs = chain.filter_documents(query, k=3)
+    docs = chain.filter_documents(query, k=5)
     if not docs:
         return None, [], 0, False
 
     context_parts = []
     sources = []
-    for i, doc in enumerate(docs, 1):
+    for doc in docs:
         src_file = os.path.basename(doc.metadata.get("source", "Tài liệu"))
-        doc_meta = DOC_CATALOG.get(src_file, {})
-        title = doc_meta.get("title", src_file)
-        short_title = doc_meta.get("short_title", src_file)
-        dept = doc_meta.get("dept", "VLUTE")
+        title = doc.metadata.get("title", src_file)
+        year = doc.metadata.get("year", "Chưa rõ")
+        code = doc.metadata.get("doc_code", "")
         page = doc.metadata.get("page", 1)
         article = extract_article_info(doc.page_content)
         
-        header_line = f"--- [TÀI LIỆU {i}: {title} | Trang {page}" + (f" | {article}" if article else "") + " ---"
+        header_line = f"--- [VĂN BẢN: {doc.metadata.get('title', src_file)} | Năm ban hành: {doc.metadata.get('year', 'Chưa rõ')} | Số hiệu: {doc.metadata.get('doc_code', '')} | Trang {page}] ---"
         context_parts.append(f"{header_line}\n{doc.page_content}")
         
         sources.append({
             "file": src_file,
             "title": title,
-            "short_title": short_title,
-            "dept": dept,
+            "short_title": title,
+            "dept": "VLUTE",
             "page": page,
             "article": article,
             "snippet": doc.page_content.strip()
@@ -1080,16 +1084,31 @@ def normalize_query_intent(query: str) -> str:
     q_clean = query.strip()
     q_lower = q_clean.lower()
 
-    # 1. Nhóm học bổng khuyến khích: chứa "học bổng", "kkht", "khen thưởng" (và không có "vượt khó", "nghèo")
-    if any(k in q_lower for k in ["học bổng", "kkht", "khen thưởng"]) and not any(k in q_lower for k in ["vượt khó", "nghèo"]):
+    # Nếu câu hỏi có chứa mốc năm cụ thể (VD: 2024, 2025, 2026...), giữ nguyên câu hỏi gốc để LLM đối soát mốc thời gian
+    if re.search(r"\b20\d{2}\b", q_lower):
+        normalized = re.sub(r"[\?\.\,\!\;\:\_]+$", "", q_clean).strip()
+        normalized = re.sub(r"\s+", " ", normalized)
+        return normalized if normalized else q_clean
+
+    # 1. Nhóm học bổng khuyến khích chung: chỉ chuẩn hóa khi không hỏi xoáy vào điều kiện con (điểm rèn luyện, nợ môn, nợ học phí, số tín chỉ...)
+    if (
+        any(k in q_lower for k in ["học bổng", "kkht", "khen thưởng"])
+        and not any(
+            k in q_lower
+            for k in ["vượt khó", "nghèo", "điểm rèn luyện", "rèn luyện", "nợ môn", "rớt môn", "học phí", "bao nhiêu tín chỉ", "mức học bổng", "bao nhiêu tiền", "quy trình", "hồ sơ"]
+        )
+    ):
         return "Tiêu chuẩn và điều kiện xét cấp học bổng khuyến khích học tập là gì?"
 
-    # 2. Nhóm hoàn học phí: chứa "hoàn trả", "hoàn tiền", "học phí thừa", "rút tiền học phí"
-    if any(k in q_lower for k in ["hoàn trả", "hoàn tiền", "học phí thừa", "rút tiền học phí"]):
+    # 2. Nhóm hoàn học phí: chứa "hoàn trả", "hoàn phí", "học phí thừa", "rút tiền", "nộp thừa", "hoàn tiền", "trả lại học phí", "trả học phí"
+    if any(k in q_lower for k in ["hoàn trả", "hoàn phí", "học phí thừa", "rút tiền", "nộp thừa", "hoàn tiền", "trả lại học phí", "trả học phí"]):
         return "Quy trình làm thủ tục hoàn trả học phí thừa cho sinh viên gồm những bước nào?"
 
     # 3. Nhóm miễn giảm học phí / học phí chung chung: chứa "miễn giảm", "giảm học phí", "chính sách học phí" hoặc "học phí"
-    if (any(k in q_lower for k in ["miễn giảm", "giảm học phí", "chính sách học phí"]) or "học phí" in q_lower) and not any(k in q_lower for k in ["hồ sơ", "thủ tục", "giấy tờ"]):
+    if (
+        (any(k in q_lower for k in ["miễn giảm", "giảm học phí", "chính sách học phí"]) or "học phí" in q_lower)
+        and not any(k in q_lower for k in ["hồ sơ", "thủ tục", "giấy tờ", "học bổng", "kkht", "nợ học phí"])
+    ):
         return "Đối tượng sinh viên nào được xét miễn giảm học phí theo quy định của trường?"
 
     # 4. Nhóm tín chỉ CTXH: chứa "công tác xã hội", "ctxh", "tín chỉ ctxh"
@@ -1114,11 +1133,13 @@ if "messages" not in st.session_state or len(st.session_state.messages) == 0:
         {
             "role": "assistant",
             "content": WELCOME_CONTENT,
-            "sources": []
+            "sources": [],
+            "is_refusal": True
         }
     ]
 elif len(st.session_state.messages) == 1 and st.session_state.messages[0]["role"] == "assistant":
     st.session_state.messages[0]["content"] = WELCOME_CONTENT
+    st.session_state.messages[0]["is_refusal"] = True
 
 if "quick_prompt" not in st.session_state:
     st.session_state.quick_prompt = None
@@ -1136,56 +1157,58 @@ def clean_snippet_text(text: str) -> str:
 # 3. ĐÍNH KÈM CĂN CỨ TRÍCH DẪN (SOURCE CARD)
 # ==========================================
 def render_sources(sources_list):
-    """Hiển thị căn cứ quy chế trích dẫn gọn gàng trong st.expander, kèm trích dẫn nguyên văn đầy đủ."""
-    if not sources_list:
-        return
-    
-    grouped = {}
-    for item in sources_list:
-        file_name = item.get("file", "")
-        doc_info = DOC_CATALOG.get(file_name, {})
-        title = item.get("title") or doc_info.get("title", file_name)
-        dept = item.get("dept") or doc_info.get("dept", "ĐH Công nghệ Kỹ thuật Vĩnh Long")
-        
-        if file_name not in grouped:
-            grouped[file_name] = {
-                "title": title,
-                "dept": dept,
-                "items": []
-            }
-        
-        page = item.get("page", 1)
-        article = item.get("article", "")
-        snippet = clean_snippet_text(item.get("snippet", ""))
-        
-        key = f"{page}_{article}"
-        if not any(f"{it.get('page')}_{it.get('article')}" == key for it in grouped[file_name]["items"]):
-            grouped[file_name]["items"].append({
-                "page": page,
-                "article": article,
-                "snippet": snippet
-            })
-
-    total_chunks = sum(len(g["items"]) for g in grouped.values())
-    expander_label = f"📑 CĂN CỨ VĂN BẢN TRÍCH DẪN ({total_chunks} đoạn trích đối chiếu)"
-
-    with st.expander(expander_label, expanded=False):
-        for idx, (file_name, gdata) in enumerate(grouped.items(), 1):
-            st.markdown(f"📄 **{gdata['title']}** — *({gdata['dept']})*")
-            for sub in gdata["items"]:
-                loc_parts = [f"Trang {sub['page']}"]
-                if sub['article']:
-                    clean_art = sub['article'].replace("*", "").replace("`", "").strip()
-                    loc_parts.append(clean_art)
-                loc_label = " - ".join(loc_parts)
-                
-                snippet_text = sub['snippet']
-                st.markdown(f"📍 **Vị trí: {loc_label}**")
-                # Hiển thị đầy đủ đoạn trích dẫn nguyên văn trong khối trích dẫn (Blockquote >)
-                quote_block = "\n> ".join(snippet_text.splitlines())
-                st.markdown(f"> {quote_block}")
-            if idx < len(grouped):
-                st.markdown("<hr style='margin: 8px 0; border-color: rgba(0, 0, 0, 0.1);'>", unsafe_allow_html=True)
+    """
+    (Đã loại bỏ khối st.expander Căn cứ văn bản trích dẫn theo yêu cầu)
+    """
+    return
+    # if not sources_list:
+    #     return
+    # 
+    # grouped = {}
+    # for item in sources_list:
+    #     file_name = item.get("file", "")
+    #     doc_info = DOC_CATALOG.get(file_name, {})
+    #     title = item.get("title") or doc_info.get("title", file_name)
+    #     dept = item.get("dept") or doc_info.get("dept", "ĐH Công nghệ Kỹ thuật Vĩnh Long")
+    #     
+    #     if file_name not in grouped:
+    #         grouped[file_name] = {
+    #             "title": title,
+    #             "dept": dept,
+    #             "items": []
+    #         }
+    #     
+    #     page = item.get("page", 1)
+    #     article = item.get("article", "")
+    #     snippet = clean_snippet_text(item.get("snippet", ""))
+    #     
+    #     key = f"{page}_{article}"
+    #     if not any(f"{it.get('page')}_{it.get('article')}" == key for it in grouped[file_name]["items"]):
+    #         grouped[file_name]["items"].append({
+    #             "page": page,
+    #             "article": article,
+    #             "snippet": snippet
+    #         })
+    # 
+    # total_chunks = sum(len(g["items"]) for g in grouped.values())
+    # expander_label = f"📑 CĂN CỨ VĂN BẢN TRÍCH DẪN ({total_chunks} đoạn trích đối chiếu)"
+    # 
+    # with st.expander(expander_label, expanded=False):
+    #     for idx, (file_name, gdata) in enumerate(grouped.items(), 1):
+    #         st.markdown(f"📄 **{gdata['title']}** — *({gdata['dept']})*")
+    #         for sub in gdata["items"]:
+    #             loc_parts = [f"Trang {sub['page']}"]
+    #             if sub['article']:
+    #                 clean_art = sub['article'].replace("*", "").replace("`", "").strip()
+    #                 loc_parts.append(clean_art)
+    #             loc_label = " - ".join(loc_parts)
+    #             
+    #             snippet_text = sub['snippet']
+    #             st.markdown(f"📍 **Vị trí: {loc_label}**")
+    #             quote_block = "\n> ".join(snippet_text.splitlines())
+    #             st.markdown(f"> {quote_block}")
+    #         if idx < len(grouped):
+    #             st.markdown("<hr style='margin: 8px 0; border-color: rgba(0, 0, 0, 0.1);'>", unsafe_allow_html=True)
 
 # ==========================================
 # PHÂN LOẠI CÂU HỎI VÀ ĐẦU MỐI LIÊN HỆ
@@ -1202,8 +1225,22 @@ def is_greeting(query: str) -> bool:
             return True
     return False
 
+def is_refusal_answer(text: str) -> bool:
+    """Kiểm tra xem phản hồi của mô hình có phải là câu từ chối ngoài phạm vi dữ liệu hay không."""
+    t = (text or "").lower()
+    refusal_keywords = [
+        "không được đề cập",
+        "ngoài phạm vi dữ liệu",
+        "chưa có thông tin quy định",
+        "không có thông tin quy định",
+        "trong tài liệu tham khảo"
+    ]
+    return any(kw in t for kw in refusal_keywords)
+
 def get_contact_footer(query: str, answer: str) -> str:
-    """Tự động đính kèm thông tin liên hệ phòng ban thích hợp theo nghiệp vụ."""
+    """Tự động đính kèm thông tin liên hệ phòng ban thích hợp theo nghiệp vụ (chỉ áp dụng cho câu hỏi trong phạm vi)."""
+    if is_refusal_answer(answer):
+        return ""
     safe_query = str(query) if query is not None else ""
     safe_answer = str(answer) if answer is not None else ""
     combined = (safe_query + " " + safe_answer).lower()
@@ -1239,6 +1276,8 @@ def get_contact_footer(query: str, answer: str) -> str:
 
 def render_followup_suggestions(query_or_content: str, key_suffix: str = ""):
     """Hiển thị hàng nút câu hỏi gợi ý liên quan theo chủ đề vừa tra cứu."""
+    if is_refusal_answer(query_or_content):
+        return
     text_check = (query_or_content or "").lower()
 
     # Phân loại gợi ý động theo chủ đề vừa tra cứu:
@@ -1286,18 +1325,28 @@ for idx, message in enumerate(st.session_state.messages):
         )
     else:
         with st.chat_message("assistant", avatar="lucas_avatar.png" if os.path.exists("lucas_avatar.png") else "🎓"):
-            st.markdown(message["content"])
-            if message.get("sources"):
-                render_sources(message["sources"])
-            if message.get("contact"):
-                st.markdown(message["contact"])
+            msg_content = message.get("content", "")
+            msg_is_refusal = message.get("is_refusal", is_refusal_answer(msg_content) or idx == 0)
 
-            # Hiển thị gợi ý câu hỏi liên quan tiếp theo ngay dưới trích dẫn cho câu trả lời mới nhất của Lucas
-            if idx > 0 and idx == last_assistant_idx:
-                q_text = message.get("query")
-                if not q_text and idx > 0 and st.session_state.messages[idx - 1].get("role") == "user":
-                    q_text = st.session_state.messages[idx - 1].get("content")
-                render_followup_suggestions(q_text or message.get("content", ""), key_suffix=str(idx))
+            if not msg_is_refusal and not is_refusal_answer(msg_content):
+                st.markdown(
+                    """<div style="display: inline-flex; align-items: center; background: #e8f5e9; color: #2e7d32; font-size: 13px; font-weight: 600; padding: 4px 12px; border-radius: 16px; margin-bottom: 8px;">
+                    ✅ Đã đối soát thành công - Được trích từ quy chế liên quan
+                    </div>""",
+                    unsafe_allow_html=True
+                )
+
+            st.markdown(msg_content)
+            if not msg_is_refusal and not is_refusal_answer(msg_content):
+                if message.get("contact"):
+                    st.markdown(message["contact"])
+
+                # Hiển thị gợi ý câu hỏi liên quan tiếp theo ngay dưới câu trả lời cho phản hồi mới nhất của Lucas
+                if idx > 0 and idx == last_assistant_idx:
+                    q_text = message.get("query")
+                    if not q_text and idx > 0 and st.session_state.messages[idx - 1].get("role") == "user":
+                        q_text = st.session_state.messages[idx - 1].get("content")
+                    render_followup_suggestions(q_text or msg_content, key_suffix=str(idx))
 
 # ==========================================
 # KHỐI GỢI Ý CÂU HỎI NHANH (KHI CHƯA BẮT ĐẦU HỎI)
@@ -1353,22 +1402,9 @@ if user_query:
             answer_to_save = greeting_reply
             contact_to_save = ""
             sources_to_save = []
+            is_refusal_to_save = True
 
-        # TRƯỜNG HỢP 2: Kiểm tra chủ động ngoài phạm vi (Active Anti-Hallucination)
-        elif check_out_of_scope(user_query):
-            out_info = check_out_of_scope(user_query)
-            refusal_reply = (
-                f"Về nội dung **{out_info['topic']}**, hiện tại trong các văn bản quy chế đã nạp vào hệ thống chưa có quy định chi tiết.\n\n"
-                f"ℹ️ *Gợi ý cho bạn:* {out_info['advice']}\n\n"
-                f"💡 Để đảm bảo chuẩn xác, mình không tự suy đoán khi chưa có văn bản ban hành chính thức.\n\n"
-                f"📞 Bạn vui lòng liên hệ trực tiếp **{out_info['dept_name']}** ({out_info['dept_contact']}) để được hỗ trợ chính xác nhất nhé!"
-            )
-            st.markdown(refusal_reply)
-            answer_to_save = refusal_reply
-            contact_to_save = ""
-            sources_to_save = []
-
-        # TRƯỜNG HỢP 3: Câu hỏi quy chế học vụ hợp lệ -> Kích hoạt Smart RAG + Stream an toàn
+        # TRƯỜNG HỢP 2: Chuyển thẳng câu hỏi tới RAG chain để xử lý tự nhiên
         else:
             status_placeholder = st.empty()
             status_placeholder.markdown(THINKING_HTML, unsafe_allow_html=True)
@@ -1379,42 +1415,45 @@ if user_query:
 
                 if not num_docs or not stream_gen:
                     status_placeholder.empty()
-                    no_doc_msg = (
-                        "Hiện tại mình chưa tìm thấy thông tin phù hợp trong các văn bản quy chế để giải đáp câu hỏi này.\n\n"
-                        "Để tránh cung cấp thông tin sai lệch, mình không tự suy đoán. "
-                        "Bạn có thể thử đặt lại câu hỏi ngắn gọn hơn hoặc hỏi về các chủ đề: *học bổng, hoàn trả học phí, miễn giảm học phí, công tác xã hội, khen thưởng kỷ luật sinh viên* nhé!"
-                    )
+                    no_doc_msg = REFUSAL_MESSAGE
                     st.markdown(no_doc_msg)
                     answer_to_save = no_doc_msg
                     contact_to_save = ""
                     sources_to_save = []
+                    is_refusal_to_save = True
                 else:
-                    status_placeholder.markdown(f"""
-                    <div class="rag-status-badge">
-                        <span>✓</span> <span>Đã đối soát thành công <b>{num_docs}</b> đoạn trích quy chế liên quan</span>
-                    </div>
-                    """, unsafe_allow_html=True)
-
+                    status_placeholder.empty()
                     full_answer = st.write_stream(stream_gen)
                     if not isinstance(full_answer, str):
                         full_answer = str(full_answer)
                     answer_to_save = full_answer
 
-                    # Tự động lưu câu trả lời vào Cache nếu là câu hỏi mới thành công
-                    if not is_cached and "hạn ngạch" not in answer_to_save:
-                        _GLOBAL_ANSWER_CACHE[canonical_query] = (answer_to_save, sources_to_save, num_docs)
-
-                    # 1. Hiển thị căn cứ quy chế trích dẫn ngay dưới câu trả lời
-                    if sources_to_save and "hạn ngạch" not in answer_to_save:
-                        render_sources(sources_to_save)
-
-                    # 2. Hiển thị thông tin liên hệ phòng ban ở cuối cùng
-                    contact_footer = get_contact_footer(user_query, full_answer)
-                    if contact_footer and "hạn ngạch" not in answer_to_save:
-                        st.markdown(contact_footer)
-                        contact_to_save = contact_footer
-                    else:
+                    # Kiểm tra nếu câu trả lời là ngoài phạm vi / từ chối
+                    if is_refusal_answer(answer_to_save):
+                        status_placeholder.empty()
+                        sources_to_save = []
                         contact_to_save = ""
+                        is_refusal_to_save = True
+                    else:
+                        status_placeholder.markdown(
+                            """<div style="display: inline-flex; align-items: center; background: #e8f5e9; color: #2e7d32; font-size: 13px; font-weight: 600; padding: 4px 12px; border-radius: 16px; margin-bottom: 8px;">
+                            ✅ Đã đối soát thành công - Được trích từ quy chế liên quan
+                            </div>""",
+                            unsafe_allow_html=True
+                        )
+                        is_refusal_to_save = False
+
+                        # Tự động lưu câu trả lời vào Cache nếu là câu hỏi mới thành công
+                        if not is_cached and "hạn ngạch" not in answer_to_save:
+                            _GLOBAL_ANSWER_CACHE[canonical_query] = (answer_to_save, sources_to_save, num_docs)
+
+                        # Hiển thị thông tin liên hệ phòng ban ở cuối cùng
+                        contact_footer = get_contact_footer(user_query, full_answer)
+                        if contact_footer and "hạn ngạch" not in answer_to_save:
+                            st.markdown(contact_footer)
+                            contact_to_save = contact_footer
+                        else:
+                            contact_to_save = ""
 
             except Exception as rag_err:
                 status_placeholder.empty()
@@ -1423,14 +1462,16 @@ if user_query:
                 answer_to_save = err_msg
                 contact_to_save = ""
                 sources_to_save = []
+                is_refusal_to_save = True
 
-    # 3. Lưu câu trả lời cùng trích dẫn vào lịch sử
+    # 3. Lưu câu trả lời cùng trích dẫn và cờ is_refusal vào lịch sử
     st.session_state.messages.append({
         "role": "assistant",
         "content": answer_to_save,
         "contact": contact_to_save,
         "sources": sources_to_save,
-        "query": user_query
+        "query": user_query,
+        "is_refusal": is_refusal_to_save
     })
     st.rerun()
 

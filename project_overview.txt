@@ -1,0 +1,104 @@
+================================================================================
+BÁO CÁO TỔNG QUAN CẤU TRÚC DỰ ÁN VLUTEBOT
+Thời gian xuất báo cáo: 2026-10-25 15:00:07
+================================================================================
+
+1. CÂY THƯ MỤC DỰ ÁN (Đã bỏ qua: .venv, __pycache__, .git, chroma_db)
+--------------------------------------------------------------------------------
+📁 VLUTEBOT/ (D:\VLUTEBOT)
+├── 📂 .streamlit/
+│   └── 📄 config.toml [0.22 KB (222 bytes)]
+├── 📂 .vscode/
+│   ├── 📄 launch.json [0.38 KB (390 bytes)]
+│   └── 📄 settings.json [0.14 KB (139 bytes)]
+├── 📂 data/
+│   ├── 📄 nghi_quyet_153.pdf [1.13 MB (1156.7 KB)]
+│   ├── 📄 nghi_quyet_71.pdf [342.13 KB (350342 bytes)]
+│   ├── 📄 nghi_quyet_72.pdf [450.94 KB (461761 bytes)]
+│   ├── 📄 quy_che_an_toan_thong_tin.pdf [555.09 KB (568417 bytes)]
+│   ├── 📄 quy_dinh_cong_tac_sinh_vien.pdf [573.94 KB (587711 bytes)]
+│   ├── 📄 quy_dinh_mien_giam_hoc_phi.pdf [412.23 KB (422119 bytes)]
+│   ├── 📄 quy_tac_ung_xu.pdf [408.51 KB (418318 bytes)]
+│   ├── 📄 quy_trinh_hoan_tra_hoc_phi.pdf [278.58 KB (285267 bytes)]
+│   ├── 📄 tin_chi_cong_tac_xa_hoi.pdf [529.84 KB (542555 bytes)]
+│   └── 📄 xet_cap_hoc_bong.pdf [570.42 KB (584105 bytes)]
+├── 📄 .gitattributes [0.06 KB (66 bytes)]
+├── 📄 .gitignore [0.27 KB (277 bytes)]
+├── 📄 app.py [56.73 KB (58095 bytes)]
+├── 📄 crop_avatar.py [0.93 KB (950 bytes)]
+├── 📄 ingest.py [5.60 KB (5734 bytes)]
+├── 📄 logo_vlute.png [114.28 KB (117024 bytes)]
+├── 📄 lucas_avatar.png [2.58 MB (2640.7 KB)]
+├── 📄 rag.py [21.96 KB (22486 bytes)]
+├── 📄 README.md [9.02 KB (9240 bytes)]
+├── 📄 requirements.txt [0.29 KB (299 bytes)]
+├── 📄 scan_project.py [5.96 KB (6101 bytes)]
+├── 📄 test_local.py [0.38 KB (384 bytes)]
+└── 📄 test_pdf.py [0.77 KB (786 bytes)]
+
+2. CHI TIẾT THƯ MỤC DỮ LIỆU (data/)
+--------------------------------------------------------------------------------
+Tổng số file trong data/: 10
+--------------------------------------------------------------------------------
+STT   | Tên file chính xác                     | Định dạng  | Dung lượng
+--------------------------------------------------------------------------------
+1     | nghi_quyet_153.pdf                     | .pdf       | 1.13 MB (1156.7 KB)
+2     | nghi_quyet_71.pdf                      | .pdf       | 342.13 KB (350342 bytes)
+3     | nghi_quyet_72.pdf                      | .pdf       | 450.94 KB (461761 bytes)
+4     | quy_che_an_toan_thong_tin.pdf          | .pdf       | 555.09 KB (568417 bytes)
+5     | quy_dinh_cong_tac_sinh_vien.pdf        | .pdf       | 573.94 KB (587711 bytes)
+6     | quy_dinh_mien_giam_hoc_phi.pdf         | .pdf       | 412.23 KB (422119 bytes)
+7     | quy_tac_ung_xu.pdf                     | .pdf       | 408.51 KB (418318 bytes)
+8     | quy_trinh_hoan_tra_hoc_phi.pdf         | .pdf       | 278.58 KB (285267 bytes)
+9     | tin_chi_cong_tac_xa_hoi.pdf            | .pdf       | 529.84 KB (542555 bytes)
+10    | xet_cap_hoc_bong.pdf                   | .pdf       | 570.42 KB (584105 bytes)
+--------------------------------------------------------------------------------
+Tổng dung lượng thư mục data/: 5.15 MB (5278.4 KB)
+
+3. PHÂN TÍCH CÁC FILE MÃ NGUỒN CHÍNH (rag.py, app.py, ingest.py)
+================================================================================
+📄 File: rag.py
+   - Dung lượng     : 21.96 KB (22486 bytes)
+   - Tổng số dòng   : 424 dòng (Dòng có nội dung: 380 dòng)
+   - Các Class chính (1):
+       + class SmartRAGChain (Dòng 152) -> Methods: __init__(), filter_documents(), invoke(), as_retriever()
+   - Các Hàm (Functions) cấp module (8):
+       + def check_out_of_scope() (Dòng 118)
+       + def extract_article_info() (Dòng 126)
+       + def get_all_google_api_keys() (Dòng 295)
+       + def get_google_api_key() (Dòng 309)
+       + def get_embedding_model() (Dòng 313)
+       + def get_vector_db() (Dòng 332)
+       + def get_llm() (Dòng 345)
+       + def get_rag_chain() (Dòng 383)
+================================================================================
+📄 File: app.py
+   - Dung lượng     : 56.73 KB (58095 bytes)
+   - Tổng số dòng   : 1486 dòng (Dòng có nội dung: 1328 dòng)
+   - Các Class chính (0):
+       + (Không có class)
+   - Các Hàm (Functions) cấp module (12):
+       + def get_base64_image() (Dòng 18)
+       + def load_logo_base64() (Dòng 31)
+       + def load_chain() (Dòng 938)
+       + def execute_rag_pipeline() (Dòng 953)
+       + def stream_rag_pipeline() (Dòng 1014)
+       + def normalize_query_intent() (Dòng 1077)
+       + def clean_snippet_text() (Dòng 1134)
+       + def render_sources() (Dòng 1146)
+       + def is_greeting() (Dòng 1205)
+       + def get_contact_footer() (Dòng 1215)
+       + def render_followup_suggestions() (Dòng 1250)
+       + def _prewarm_cache_background() (Dòng 1451)
+================================================================================
+📄 File: ingest.py
+   - Dung lượng     : 5.60 KB (5734 bytes)
+   - Tổng số dòng   : 150 dòng (Dòng có nội dung: 126 dòng)
+   - Các Class chính (0):
+       + (Không có class)
+   - Các Hàm (Functions) cấp module (4):
+       + def clean_text() (Dòng 25)
+       + def extract_clean_text_from_pdf() (Dòng 52)
+       + def load_documents() (Dòng 89)
+       + def create_vector_db() (Dòng 117)
+================================================================================
