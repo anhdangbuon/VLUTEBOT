@@ -9,110 +9,150 @@
       "query": "Những đối tượng sinh viên nào được hưởng chính sách miễn, giảm học phí theo quy định hiện hành?"
     },
     {
-      "label": "🤝 Bao nhiêu ngày CTXH thì đủ tốt nghiệp?",
-      "query": "Sinh viên hệ đại học chính quy cần tích lũy tối thiểu bao nhiêu ngày công tác xã hội để được xét tốt nghiệp?"
+      "label": "🩸 Hiến máu & Mùa hè xanh đổi bao nhiêu ngày CTXH?",
+      "query": "Tham gia hiến máu tình nguyện hoặc chiến dịch Mùa hè xanh được quy đổi thành bao nhiêu ngày CTXH?"
     },
     {
-      "label": "💰 Thủ tục hoàn trả học phí nộp thừa?",
-      "query": "Sinh viên nộp thừa học phí muốn nhận lại thì cần làm những bước nào và nộp đơn ở đâu?"
+      "label": "🎓 Điều kiện ngày CTXH để làm khóa luận & tốt nghiệp?",
+      "query": "Sinh viên cần hoàn thành tối thiểu bao nhiêu ngày CTXH để đăng ký học phần tốt nghiệp và xét tốt nghiệp?"
     }
   ],
   "categories": {
     "hoc_bong": {
-      "name": "Học bổng & Khen thưởng",
-      "keywords": ["học bổng", "kkht", "khen thưởng", "rèn luyện", "nợ môn", "rớt môn", "xuất sắc", "loại giỏi", "spkt"],
+      "name": "🎓 Học bổng & Khen thưởng",
+      "keywords": [
+        "học bổng",
+        "kkht",
+        "spkt",
+        "khen thưởng",
+        "nợ môn",
+        "rớt môn",
+        "vượt khó",
+        "xuất sắc",
+        "mức 1",
+        "mức 2",
+        "mức 3",
+        "mức 4"
+      ],
       "prompts": [
         {
           "label": "🏆 Điều kiện xét học bổng khuyến khích?",
           "query": "Sinh viên cần đạt bao nhiêu tín chỉ và điểm rèn luyện thế nào để được xét học bổng khuyến khích học tập?"
         },
         {
-          "label": "⚠️ Nợ môn có được xét học bổng không?",
+          "label": "🎓 Công thức tính tiền học bổng Mức 1–4?",
+          "query": "Mức tiền học bổng KKHT Mức 1 (SPKT), Mức 2, Mức 3 và Mức 4 tại Điều 18 được tính cụ thể như thế nào?"
+        },
+        {
+          "label": "⚠️ Nợ môn hoặc nợ học phí có được xét học bổng?",
           "query": "Sinh viên có môn bị điểm dưới C hoặc nợ học phí thì có được tham gia xét học bổng không?"
         },
         {
-          "label": "🎖️ Tiêu chuẩn học bổng loại Giỏi (Mức 3)?",
-          "query": "Tiêu chuẩn về điểm trung bình học tập và điểm rèn luyện của học bổng loại Giỏi được quy định cụ thể ra sao?"
-        },
-        {
-          "label": "🎓 Học bổng Sư phạm kỹ thuật (Mức 1)?",
-          "query": "Điều kiện để sinh viên đăng ký xét học bổng Sư phạm kỹ thuật (Mức 1) là gì?"
+          "label": "💛 Quy định xét học bổng vượt khó?",
+          "query": "Điều kiện xét học bổng vượt khó dành cho sinh viên có hoàn cảnh gia đình khó khăn quy định ở Chương VI như thế nào?"
         }
       ]
     },
     "hoc_phi": {
-      "name": "Học phí & Chế độ chính sách",
-      "keywords": ["học phí", "miễn giảm", "hoàn trả", "tiền học", "rút tiền", "trợ cấp", "chi phí học tập", "dân tộc", "hộ nghèo"],
+      "name": "💰 Học phí & Miễn giảm",
+      "keywords": [
+        "học phí",
+        "miễn giảm",
+        "miễn, giảm",
+        "hoàn trả",
+        "học phí thừa",
+        "trợ cấp",
+        "chi phí học tập",
+        "dân tộc",
+        "hộ nghèo",
+        "bm-kh-10"
+      ],
       "prompts": [
         {
           "label": "🎁 Đối tượng được miễn giảm học phí?",
           "query": "Những đối tượng sinh viên nào được hưởng chính sách miễn, giảm học phí theo quy định hiện hành?"
         },
         {
-          "label": "📝 Hồ sơ miễn giảm học phí gồm những gì?",
-          "query": "Hồ sơ xin miễn giảm học phí gồm những giấy tờ gì và thời hạn nộp đầu năm học là bao lâu?"
+          "label": "📝 Hồ sơ miễn giảm học phí & nơi nộp?",
+          "query": "Hồ sơ xin miễn giảm học phí cần chuẩn bị những giấy tờ gì và nộp ở đâu, trong thời hạn bao lâu?"
         },
         {
-          "label": "💰 Thủ tục hoàn trả học phí nộp thừa?",
-          "query": "Sinh viên nộp thừa học phí muốn nhận lại thì cần làm những bước nào và nộp đơn ở đâu?"
+          "label": "💵 Hỗ trợ chi phí học tập SV dân tộc hộ nghèo?",
+          "query": "Mức hỗ trợ chi phí học tập đối với sinh viên dân tộc thiểu số thuộc hộ nghèo hoặc cận nghèo là bao nhiêu?"
         },
         {
-          "label": "💵 Hỗ trợ chi phí học tập cho SV dân tộc?",
-          "query": "Mức hỗ trợ chi phí học tập đối với sinh viên dân tộc thiểu số thuộc hộ nghèo/cận nghèo là bao nhiêu?"
+          "label": "💰 Thủ tục & biểu mẫu hoàn trả học phí thừa?",
+          "query": "Quy trình hoàn trả học phí thừa QT-SV-04 gồm những đợt nào, dùng mẫu đơn gì và thời gian chuyển khoản bao lâu?"
         }
       ]
     },
-    "ctxh": {
-      "name": "Chuẩn tốt nghiệp & Công tác xã hội",
-      "keywords": ["công tác xã hội", "ctxh", "tín chỉ công tác xã hội", "ngày ctxh", "hiến máu", "mùa hè xanh", "tốt nghiệp"],
+    "ctxh_ren_luyen": {
+      "name": "🤝 Công tác xã hội & Rèn luyện",
+      "keywords": [
+        "công tác xã hội",
+        "ctxh",
+        "hiến máu",
+        "mùa hè xanh",
+        "tiếp sức",
+        "rèn luyện",
+        "ban cán sự",
+        "trừ ngày",
+        "hội thảo",
+        "tình nguyện"
+      ],
       "prompts": [
         {
-          "label": "🤝 Bao nhiêu ngày CTXH thì đủ tốt nghiệp?",
-          "query": "Sinh viên hệ đại học chính quy cần tích lũy tối thiểu bao nhiêu ngày công tác xã hội để được xét tốt nghiệp?"
-        },
-        {
-          "label": "📌 Đạt bao nhiêu ngày CTXH mới được làm khóa luận?",
-          "query": "Sinh viên cần hoàn thành tối thiểu bao nhiêu phần trăm số ngày CTXH mới được đăng ký các học phần tốt nghiệp?"
-        },
-        {
-          "label": "🩸 Hiến máu tình nguyện được quy đổi thế nào?",
+          "label": "🩸 Hiến máu & Mùa hè xanh đổi bao nhiêu ngày CTXH?",
           "query": "Tham gia hiến máu tình nguyện hoặc chiến dịch Mùa hè xanh được quy đổi thành bao nhiêu ngày CTXH?"
-        }
-      ]
-    },
-    "ky_luat_hoc_vu": {
-      "name": "Quy chế thi cử, Kỷ luật & Ban cán sự",
-      "keywords": ["kỷ luật", "khiển trách", "cảnh cáo", "đình chỉ", "buộc thôi học", "thi cử", "gian lận", "ban cán sự", "lớp trưởng"],
-      "prompts": [
-        {
-          "label": "❌ Vi phạm thi cử mức nào bị đình chỉ?",
-          "query": "Sinh viên mang tài liệu vào phòng thi hoặc nhờ người thi hộ sẽ bị xử lý kỷ luật ở mức nào?"
         },
         {
-          "label": "⏳ Thời gian chấm dứt hiệu lực kỷ luật?",
-          "query": "Sinh viên bị kỷ luật khiển trách hoặc cảnh cáo sau bao lâu sẽ được chấm dứt hiệu lực quyết định?"
+          "label": "📅 Phân bổ 12 ngày CTXH theo từng năm học?",
+          "query": "12 ngày công tác xã hội của sinh viên đại học chính quy được phân bổ cụ thể từ năm nhất đến năm tư như thế nào?"
         },
         {
-          "label": "⭐ Quyền lợi của Ban cán sự lớp?",
+          "label": "⚠️ Bỏ không đi hoặc vắng họp bị trừ bao nhiêu ngày CTXH?",
+          "query": "Sinh viên đăng ký tham gia hoạt động CTXH mà không đi hoặc vắng họp chi đoàn bị trừ bao nhiêu ngày CTXH?"
+        },
+        {
+          "label": "⭐ Quyền lợi cộng điểm rèn luyện của Ban cán sự lớp?",
           "query": "Nhiệm vụ và quyền lợi ưu tiên (cộng điểm rèn luyện) của Ban cán sự lớp được quy định như thế nào?"
         }
       ]
     },
-    "cntt_lien_he": {
-      "name": "Tài khoản, CNTT & Phòng ban",
-      "keywords": ["mật khẩu", "cntt", "công nghệ thông tin", "email", "e-learning", "wifi", "địa chỉ", "liên hệ", "phòng ban", "hotline", "ở đâu"],
+    "hoc_vu_tot_nghiep": {
+      "name": "📋 Học vụ & Tốt nghiệp",
+      "keywords": [
+        "tốt nghiệp",
+        "khóa luận",
+        "kỷ luật",
+        "khiển trách",
+        "cảnh cáo",
+        "đình chỉ",
+        "thi cử",
+        "thi hộ",
+        "ứng xử",
+        "trang phục",
+        "mật khẩu",
+        "an toàn thông tin",
+        "usb",
+        "email"
+      ],
       "prompts": [
         {
-          "label": "🔑 Quy định đặt mật khẩu cổng thông tin?",
-          "query": "Quy định về độ phức tạp của mật khẩu tài khoản email và cổng thông tin sinh viên như thế nào?"
+          "label": "📌 Cần bao nhiêu ngày CTXH để làm khóa luận & tốt nghiệp?",
+          "query": "Sinh viên cần đạt tối thiểu bao nhiêu ngày CTXH mới được đăng ký học phần tốt nghiệp và xét công nhận tốt nghiệp?"
         },
         {
-          "label": "🏢 Địa chỉ các phòng ban liên hệ ở đâu?",
-          "query": "Vị trí phòng làm việc và số điện thoại của Phòng Đào tạo, Phòng CTSV và Phòng KHTC ở đâu?"
+          "label": "❌ Khung xử lý kỷ luật thi hộ & gian lận thi cử?",
+          "query": "Theo Phụ lục khung xử lý kỷ luật QĐ 1079, sinh viên thi hộ hoặc nhờ người thi hộ và mang tài liệu vào phòng thi bị xử lý thế nào?"
         },
         {
-          "label": "💻 Cần cấp lại mật khẩu E-Learning gặp ai?",
-          "query": "Sinh viên bị quên mật khẩu tài khoản E-Learning hoặc email sinh viên thì liên hệ đơn vị nào để được hỗ trợ?"
+          "label": "⏳ Thời gian chấm dứt hiệu lực kỷ luật & trang phục đến trường?",
+          "query": "Sinh viên bị kỷ luật khiển trách hoặc cảnh cáo sau bao lâu được chấm dứt hiệu lực, và quy định trang phục đến trường thế nào?"
+        },
+        {
+          "label": "🔐 Quy định mật khẩu, email & quét virus USB (QĐ 979)?",
+          "query": "Sinh viên được cấp email tên miền gì, bao lâu phải đổi mật khẩu định kỳ và quy định dùng USB/thiết bị lưu trữ ngoài ra sao?"
         }
       ]
     }

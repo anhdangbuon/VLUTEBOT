@@ -6,12 +6,16 @@ if hasattr(sys.stdout, "reconfigure"):
     except Exception:
         pass
 import re
+import math
 import json
 import time
+import unicodedata
 from pathlib import Path
 import torch
 import streamlit as st
+from rank_bm25 import BM25Okapi
 from langchain_chroma import Chroma
+from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -22,7 +26,10 @@ DEPT_FILE = Path(__file__).parent / "departments.json"
 DB_PATH = str(Path(__file__).parent / "chroma_db")
 
 # Hằng số phản hồi từ chối duy nhất cho câu hỏi ngoài phạm vi dữ liệu
-REFUSAL_MESSAGE = "• Nội dung này không được đề cập trong các văn bản quy định trước đây hoặc nằm ngoài phạm vi dữ liệu quy chế của Nhà trường."
+REFUSAL_MESSAGE = "Nội dung này không được đề cập trong các văn bản quy định trước đây hoặc nằm ngoài phạm vi dữ liệu quy chế của Nhà trường."
+
+# Danh sách tệp nghị quyết bị loại khỏi phạm vi tra cứu theo chính sách hệ thống
+EXCLUDED_SOURCE_FILES = {"nghi_quyet_71.pdf", "nghi_quyet_72.pdf", "nghi_quyet_153.pdf"}
 
 # Ngưỡng tương đồng Cosine tối thiểu (Cosine Similarity nằm trong đoạn [0, 1])
 SIMILARITY_THRESHOLD = 0.38
@@ -176,299 +183,289 @@ class SmartRAGChain:
         self.vector_db = vector_db
         self.llm = llm
         self.prompt = prompt
+        self.last_retrieval_debug = {}
 
-    def filter_documents(self, query: str, k: int = 6):
-        """
-        Truy xuất động (Dynamic RAG) trên ChromaDB với k=6 (lấy tập ứng viên 15 đoạn trích),
-        lọc theo độ tương đồng Cosine thực tế (SIMILARITY_THRESHOLD = 0.38) kết hợp định tuyến
-        tệp PDF nguồn (filter={"source": ...}) cho 5 nhóm quy chế trong prompts.json.
-        """
-        if not query or not str(query).strip():
-            return []
-
-        q_lower = query.lower()
-
-        # Chặn triệt để các câu hỏi nhắc trực tiếp đến các nghị quyết nằm trong EXCLUDED_FILES hoặc ngoài phạm vi rõ rệt
-        excluded_query_patterns = [
+    @staticmethod
+    def _is_excluded_resolution_query(q_lower: str) -> bool:
+        """Kiểm tra câu hỏi có nhắc trực tiếp tới các nghị quyết nằm trong danh sách loại trừ không."""
+        excluded_patterns = [
             "nghị quyết 153", "nghi quyet 153", "153/nq-cp", "153/nq",
             "nghị quyết 71", "nghi quyet 71", "71/nq-cp", "71/nq",
             "nghị quyết 72", "nghi quyet 72", "72/nq-cp", "72/nq",
             "hội nhập quốc tế",
-            "vé tháng xe buýt", "điểm chuẩn trúng tuyển", "ký túc xá giá phòng"
         ]
-        if any(pat in q_lower for pat in excluded_query_patterns):
+        return any(pat in q_lower for pat in excluded_patterns)
+
+    @staticmethod
+    def _looks_like_table_or_split_page(text: str, page_chunk_count: int) -> bool:
+        """Nhận diện tự động trang bảng biểu/phụ lục thưa hoặc đoạn trích vắt trang (không hardcode PDF)."""
+        if page_chunk_count <= 2:
+            return True
+        if "|" in text or len(text) < 420:
+            return True
+        return bool(re.search(r"(?i)\b(phụ lục|biểu mẫu|bảng\s+\d|như sau\s*:)", text))
+
+    def filter_documents(self, query: str, k: int = 6):
+        """
+        Truy xuất Hybrid Search tổng quát:
+        Dense Vector (ChromaDB) + Lexical BM25 (rank_bm25) + Reciprocal Rank Fusion (RRF)
+        + Mở rộng tự động trang liền kề cho bảng biểu/phụ lục vắt trang + Dual Refusal Gate.
+        """
+        q_clean = (query or "").strip()
+        q_lower = q_clean.lower()
+        if not q_lower:
+            self.last_retrieval_debug = {"reason": "empty_query", "accepted": False}
             return []
 
-        # 1. Nhận diện 5 nhóm câu hỏi quy chế trọng tâm (đồng bộ 100% với prompts.json)
-        is_hoan_phi = any(
-            kw in q_lower
-            for kw in ["hoàn trả", "hoàn phí", "học phí thừa", "rút tiền", "nộp thừa", "hoàn tiền", "trả lại học phí", "trả học phí"]
-        )
-        is_ho_tro_chi_phi = any(
-            kw in q_lower
-            for kw in ["hỗ trợ chi phí", "chi phí học tập", "dân tộc thiểu số", "dân tộc", "trợ cấp xã hội"]
-        )
-        is_mien_giam = (
-            not is_ho_tro_chi_phi
-            and any(
-                kw in q_lower
-                for kw in ["miễn giảm", "miễn, giảm", "hồ sơ miễn giảm", "đối tượng miễn giảm", "giảm học phí", "miễn học phí"]
-            )
-        )
-        is_ctxh = any(
-            kw in q_lower
-            for kw in [
-                "công tác xã hội", "ctxh", "tín chỉ công tác xã hội", "ngày công tác xã hội",
-                "ngày ctxh", "hiến máu", "mùa hè xanh", "khóa luận", "học phần tốt nghiệp"
-            ]
-        )
-        is_ky_luat_bcs = any(
-            kw in q_lower
-            for kw in [
-                "kỷ luật", "khiển trách", "cảnh cáo", "đình chỉ", "buộc thôi học",
-                "thi cử", "phòng thi", "thi hộ", "gian lận", "chấm dứt hiệu lực",
-                "ban cán sự", "lớp trưởng",
-                "quyền của sinh viên", "không được làm", "khiếu nại",
-                "hội đồng khen thưởng", "cố vấn học tập", "giáo viên quản lý", "sinh hoạt công dân"
-            ]
-        )
-        is_ung_xu = any(
-            kw in q_lower
-            for kw in [
-                "quy tắc ứng xử", "ứng xử", "trang phục", "đồng phục",
-                "thẻ sinh viên", "quai hậu", "ăn vặt", "tài sản công", "cảnh quan"
-            ]
-        )
-        is_attt_mat_khau = any(
-            kw in q_lower
-            for kw in [
-                "mật khẩu", "an toàn thông tin", "an ninh mạng", "độ phức tạp",
-                "email", "@st.vlute.edu.vn", "sao lưu", "thiết bị lưu trữ",
-                "usb", "vpn", "phishing", "sự cố an toàn", "quản trị - thiết bị"
-            ]
-        )
-        is_hoc_bong_vuot_kho = any(
-            kw in q_lower
-            for kw in ["vượt khó", "hoàn cảnh khó khăn", "gia đình khó khăn"]
-        )
-        is_muc_hoc_bong = (
-            not is_hoc_bong_vuot_kho
-            and ("học bổng" in q_lower or "kkht" in q_lower or "spkt" in q_lower or "sư phạm kỹ thuật" in q_lower)
-            and not any(kw in q_lower for kw in ["nợ môn", "rớt môn", "nợ học phí", "dưới c"])
-            and any(
-                kw in q_lower
-                for kw in [
-                    "mức", "mức 1", "mức 2", "mức 3", "phân loại", "các mức",
-                    "mức nào", "loại nào", "loại học bổng", "xuất sắc", "giỏi", "khá",
-                    "spkt", "sư phạm kỹ thuật"
-                ]
-            )
-        )
-        is_hoc_bong_dieu17 = (
-            not is_hoc_bong_vuot_kho
-            and not is_muc_hoc_bong
-            and not is_hoan_phi
-            and not is_mien_giam
-            and not is_ho_tro_chi_phi
-            and any(
-                kw in q_lower
-                for kw in [
-                    "học bổng", "kkht", "điều kiện", "tiêu chuẩn", "điểm rèn luyện",
-                    "nợ môn", "rớt môn", "bao nhiêu tín chỉ", "nợ học phí", "dưới c"
-                ]
-            )
-            and any(kw in q_lower for kw in ["học bổng", "kkht", "nợ môn", "rớt môn", "nợ học phí", "dưới c"])
-        )
+        if self._is_excluded_resolution_query(q_lower):
+            self.last_retrieval_debug = {"reason": "excluded_resolution", "accepted": False}
+            return []
 
-        # Cấu hình định tuyến tệp nguồn (source), từ khóa truy xuất dự phòng và từ khóa ưu tiên
-        target_source = None
-        fallback_subquery = None
-        priority_kws = []
-        required_core_kws = []
-
-        if is_hoc_bong_vuot_kho:
-            target_source = "xet_cap_hoc_bong.pdf"
-            fallback_subquery = "Chương VI Điều 31 Điều 32 học bổng vượt khó hoàn cảnh khó khăn"
-            priority_kws = ["điều 31", "điều 32", "vượt khó", "chương vi"]
-            required_core_kws = ["điều 31", "điều 32", "chương vi"]
-        elif is_muc_hoc_bong:
-            target_source = "xet_cap_hoc_bong.pdf"
-            if "sư phạm kỹ thuật" in q_lower or "spkt" in q_lower or "mức 1" in q_lower:
-                fallback_subquery = "Điều 17 đăng ký tối thiểu 17 tín chỉ điểm TBC 3,2 trở lên rèn luyện Tốt Điều 18 Học bổng KKHT Mức 1 Đơn giá học phí 17 TC khối ngành VII hệ đại trà"
-                priority_kws = ["điều 17", "17 tín chỉ", "3,2", "rèn luyện từ tốt", "17 tc", "khối ngành vii", "đơn giá học phí", "mức 1", "điều 18"]
-                required_core_kws = ["17 tín chỉ", "3,2", "17 tc", "khối ngành vii"]
-            else:
-                fallback_subquery = "Điều 18 Mức 1 Mức 2 Mức 3 học bổng loại Xuất sắc loại Giỏi loại Khá"
-                priority_kws = ["điều 18", "mức 3", "mức 2", "mức 1", "loại giỏi"]
-                required_core_kws = ["điều 18"]
-        elif is_hoc_bong_dieu17:
-            target_source = "xet_cap_hoc_bong.pdf"
-            fallback_subquery = "Điều 17 đăng ký tối thiểu 17 tín chỉ Điểm TBC học kỳ chính trước thời điểm xét đạt từ 2,5 trở lên từ 3,2 trở lên xếp loại rèn luyện từ Khá trở lên"
-            priority_kws = ["điều 17", "17 tín chỉ", "2,5 trở lên", "3,2 trở lên", "rèn luyện từ khá", "dưới điểm c", "nhiệm vụ học phí"]
-            required_core_kws = ["17 tín chỉ", "2,5 trở lên", "rèn luyện từ khá"]
-        elif is_mien_giam:
-            target_source = "quy_dinh_mien_giam_hoc_phi.pdf"
-            if any(w in q_lower for w in ["hồ sơ", "giấy tờ", "thủ tục", "thời hạn"]):
-                fallback_subquery = "Điều 8 quy định về hồ sơ đơn đề nghị miễn giảm học phí"
-                priority_kws = ["điều 8", "đơn đề nghị", "điều 5", "điều 6", "điều 7"]
-                required_core_kws = ["điều 8", "đơn đề nghị"]
-            else:
-                fallback_subquery = "Điều 5 Điều 6 Điều 7 đối tượng được miễn học phí giảm học phí"
-                priority_kws = ["điều 5", "điều 6", "điều 7", "điều 8"]
-                required_core_kws = ["điều 5", "điều 6", "điều 7"]
-        elif is_ho_tro_chi_phi:
-            target_source = "quy_dinh_mien_giam_hoc_phi.pdf"
-            fallback_subquery = "Điều 11 Mức hỗ trợ số tháng hưởng hỗ trợ bằng 60% mức lương tối thiểu chung không quá 10 tháng"
-            priority_kws = ["60% mức lương", "điều 11", "điều 10", "điều 12"]
-            required_core_kws = ["điều 10", "điều 11", "60% mức lương"]
-        elif is_hoan_phi:
-            target_source = "quy_trinh_hoan_tra_hoc_phi.pdf"
-            fallback_subquery = "tháng 2 tháng 9 năm thứ ba 5.2.1 5.2.2 5.2.3 5.2.4 Phòng CTSV Phòng ĐT Phòng KH-TC hoàn trả học phí thừa"
-            priority_kws = ["5.2.1", "5.2.2", "5.2.3", "5.2.4", "tháng 2", "năm thứ ba", "bm-kh-10a"]
-            required_core_kws = ["5.2.2", "5.2.3"]
-        elif is_ctxh:
-            target_source = "tin_chi_cong_tac_xa_hoi.pdf"
-            fallback_subquery = "Điều 6 12 ngày 2/3 số ngày Điều 8 Hiến máu Mùa hè xanh"
-            priority_kws = ["điều 6", "12 ngày", "2/3 số ngày", "điều 8", "hiến máu"]
-            required_core_kws = ["điều 6", "12 ngày", "điều 8", "hiến máu"]
-        elif is_ky_luat_bcs:
-            target_source = "quy_dinh_cong_tac_sinh_vien.pdf"
-            fallback_subquery = f"{query} quyền của sinh viên kỷ luật đình chỉ chấm dứt hiệu lực Ban cán sự"
-            priority_kws = ["quyền của sinh viên", "kỷ luật", "đình chỉ", "chấm dứt hiệu lực", "ban cán sự", "không được làm"]
-            required_core_kws = priority_kws
-        elif is_ung_xu:
-            target_source = "quy_tac_ung_xu.pdf"
-            fallback_subquery = f"{query} quy tắc ứng xử trang phục thẻ sinh viên tài sản công ăn vặt"
-            priority_kws = ["ứng xử", "trang phục", "thẻ sinh viên", "tài sản", "ăn vặt", "cảnh quan"]
-            required_core_kws = priority_kws
-        elif is_attt_mat_khau:
-            target_source = "quy_che_an_toan_thong_tin.pdf"
-            fallback_subquery = f"{query} Điều 4 Điều 14 Điều 17 email @st.vlute.edu.vn tối thiểu 8 ký tự 06 tháng usb"
-            priority_kws = ["điều 4", "điều 14", "điều 17", "06 tháng", "@st.vlute.edu.vn", "quét virus", "quản trị"]
-            required_core_kws = ["điều 4", "điều 14", "điều 17", "@st.vlute.edu.vn", "06 tháng", "quét virus"]
-
-        # Tinh gọn search_query (không nhồi chuỗi dài làm loãng vector Cosine)
-        search_query = f"{query} {fallback_subquery}" if fallback_subquery else query
-
-        search_k = max(15, k)
+        # 1. Truy xuất Dense Vector từ ChromaDB
         try:
-            docs_with_scores = self.vector_db.similarity_search_with_relevance_scores(search_query, k=search_k)
+            dense_results = self.vector_db.similarity_search_with_relevance_scores(
+                q_clean, k=max(HYBRID_DENSE_CANDIDATES, k * 4)
+            )
         except Exception:
             global _GLOBAL_VECTOR_DB
             _GLOBAL_VECTOR_DB = None
             self.vector_db = get_vector_db()
-            docs_with_scores = self.vector_db.similarity_search_with_relevance_scores(search_query, k=search_k)
-
-        departments = load_departments_config()
-        for doc, _score in docs_with_scores:
-            ensure_doc_department_metadata(doc, departments)
-
-        # Nếu là câu hỏi ngoài 5 nhóm quy chế trên và điểm tương đồng cao nhất < 0.38 -> Từ chối ngay
-        if not docs_with_scores:
-            if not target_source:
-                return []
-        else:
-            top_score = float(docs_with_scores[0][1])
-            if top_score < SIMILARITY_THRESHOLD and not target_source:
-                return []
-
-        candidate_docs = []
-        for doc, rel_score in docs_with_scores:
-            if float(rel_score) < SIMILARITY_THRESHOLD:
-                continue
-            doc.metadata["similarity_score"] = float(rel_score)
-            candidate_docs.append(doc)
-
-        filtered = []
-        for doc in candidate_docs:
-            source = os.path.basename(doc.metadata.get("source", "")).lower()
-            title = str(doc.metadata.get("title", "")).lower()
-
-            if source in ["nghi_quyet_71.pdf", "nghi_quyet_72.pdf", "nghi_quyet_153.pdf"] or source.startswith("nghi_quyet_"):
-                continue
-
-            if is_hoan_phi and ("cong_tac_sinh_vien" in source or "công tác sinh viên" in title):
-                continue
-
-            filtered.append(doc)
-
-        # 2. Truy xuất dự phòng theo tệp nguồn (filter={"source": target_source}) nếu kết quả chưa có đoạn cốt lõi
-        if target_source and fallback_subquery:
-            check_kws = required_core_kws or priority_kws
-            same_source_filtered = [
-                d for d in filtered
-                if os.path.basename(d.metadata.get("source", "")).lower() == target_source
-            ]
-            if is_hoan_phi or is_ho_tro_chi_phi or is_hoc_bong_dieu17 or (is_muc_hoc_bong and ("mức 1" in q_lower or "spkt" in q_lower or "sư phạm kỹ thuật" in q_lower)):
-                has_core_chunk = all(
-                    any(pk in d.page_content.lower() for d in same_source_filtered)
-                    for pk in check_kws
-                )
-            else:
-                has_core_chunk = any(
-                    any(pk in d.page_content.lower() for pk in check_kws)
-                    for d in same_source_filtered
-                )
-            if not has_core_chunk:
-                try:
-                    fallback_k = 8 if (is_ho_tro_chi_phi or is_hoc_bong_dieu17 or is_muc_hoc_bong) else (5 if is_hoan_phi else 4)
-                    source_docs = self.vector_db.similarity_search(
-                        fallback_subquery,
-                        k=fallback_k,
-                        filter={"source": target_source}
-                    )
-                    existing_contents = {d.page_content for d in filtered}
-                    prepend_docs = []
-                    for s_doc in source_docs:
-                        ensure_doc_department_metadata(s_doc, departments)
-                        s_doc.metadata.setdefault("similarity_score", SIMILARITY_THRESHOLD)
-                        if s_doc.page_content not in existing_contents:
-                            prepend_docs.append(s_doc)
-                            existing_contents.add(s_doc.page_content)
-                    filtered = prepend_docs + filtered
-                except Exception:
-                    pass
-
-            # Nếu hỏi về nợ học phí xét học bổng, bổ sung thêm đoạn Điều 1 (Trang 4) từ xet_cap_hoc_bong.pdf
-            if is_hoc_bong_dieu17 and "học phí" in q_lower:
-                has_dieu1 = any("nhiệm vụ học phí" in d.page_content.lower() for d in filtered)
-                if not has_dieu1:
-                    try:
-                        dieu1_docs = self.vector_db.similarity_search(
-                            "Điều 1 phải hoàn thành nhiệm vụ học phí",
-                            k=2,
-                            filter={"source": "xet_cap_hoc_bong.pdf"}
-                        )
-                        existing_contents = {d.page_content for d in filtered}
-                        for d1 in dieu1_docs:
-                            ensure_doc_department_metadata(d1, departments)
-                            d1.metadata.setdefault("similarity_score", SIMILARITY_THRESHOLD)
-                            if d1.page_content not in existing_contents:
-                                filtered.insert(1 if filtered else 0, d1)
-                                existing_contents.add(d1.page_content)
-                    except Exception:
-                        pass
-
-        # 3. Sắp xếp ưu tiên các đoạn trích chứa điều khoản cốt lõi lên đầu
-        if target_source and priority_kws:
-            core_docs = [
-                d for d in filtered
-                if os.path.basename(d.metadata.get("source", "")).lower() == target_source
-                and any(pk in d.page_content.lower() for pk in priority_kws)
-            ]
-            core_docs.sort(
-                key=lambda d: sum(1 for pk in priority_kws if pk in d.page_content.lower()),
-                reverse=True
+            dense_results = self.vector_db.similarity_search_with_relevance_scores(
+                q_clean, k=max(HYBRID_DENSE_CANDIDATES, k * 4)
             )
-            same_source_docs = [
-                d for d in filtered
-                if d not in core_docs
-                and os.path.basename(d.metadata.get("source", "")).lower() == target_source
-            ]
-            other_docs = [d for d in filtered if d not in core_docs and d not in same_source_docs]
-            filtered = core_docs + same_source_docs + other_docs
 
-        return filtered[:k]
+        bm25_data = get_bm25_index()
+        docs_corpus = bm25_data["docs"]
+        unigram_sets = bm25_data["unigram_sets"]
+        meta_unigram_sets = bm25_data.get("meta_unigram_sets", [])
+        meta_bigram_sets = bm25_data.get("meta_bigram_sets", [])
+        raw_idf = bm25_data["raw_idf"]
+        page_map = bm25_data["page_map"]
+        doc_key_to_idx = bm25_data["doc_key_to_idx"]
+        bm25_engine = bm25_data["bm25"]
+        departments = load_departments_config()
+
+        dense_rank = {}
+        dense_score = {}
+        extra_dense_docs = []
+        max_dense_score = 0.0
+        rank_counter = 0
+
+        for doc, rel_score in dense_results:
+            src_name = os.path.basename(str(doc.metadata.get("source", ""))).lower()
+            if src_name in EXCLUDED_SOURCE_FILES or src_name.startswith("nghi_quyet_"):
+                continue
+            score_val = float(rel_score)
+            if score_val > max_dense_score:
+                max_dense_score = score_val
+            try:
+                page_num = int(doc.metadata.get("page", 1))
+            except Exception:
+                page_num = 1
+            doc_key = (src_name, page_num, doc.page_content.strip())
+            idx = doc_key_to_idx.get(doc_key)
+            if idx is not None:
+                if idx not in dense_rank:
+                    rank_counter += 1
+                    dense_rank[idx] = rank_counter
+                    dense_score[idx] = score_val
+            else:
+                ensure_doc_department_metadata(doc, departments)
+                doc.metadata["similarity_score"] = score_val
+                extra_dense_docs.append(doc)
+
+        # 2. Chấm điểm Lexical BM25 toàn corpus
+        q_tokens = tokenize_vietnamese_for_bm25(q_clean, include_bigrams=True)
+        bm25_rank = {}
+        bm25_score_map = {}
+        max_bm25_score = 0.0
+
+        if bm25_engine is not None and q_tokens:
+            raw_scores = bm25_engine.get_scores(q_tokens)
+            ranked_bm25 = sorted(
+                ((i, float(s)) for i, s in enumerate(raw_scores) if float(s) > 0.0),
+                key=lambda x: x[1],
+                reverse=True,
+            )
+            if ranked_bm25:
+                max_bm25_score = ranked_bm25[0][1]
+            for pos, (idx, sc) in enumerate(ranked_bm25[:max(HYBRID_BM25_CANDIDATES, k * 4)], 1):
+                bm25_rank[idx] = pos
+                bm25_score_map[idx] = sc
+
+        # 3. Dual Refusal Gate tổng quát (Dense + BM25 + Độ phủ IDF từ vựng nội dung)
+        q_unigrams = []
+        seen_u = set()
+        for u in tokenize_vietnamese_for_bm25(q_clean, include_bigrams=False):
+            if len(u) >= 2 and u not in seen_u:
+                seen_u.add(u)
+                q_unigrams.append(u)
+
+        total_q_idf = sum(raw_idf.get(u, 3.2) for u in q_unigrams) or 1.0
+        eval_candidates = set(list(dense_rank.keys())[:15]) | set(list(bm25_rank.keys())[:15])
+        best_idf_cov = 0.0
+        for idx in eval_candidates:
+            d_set = unigram_sets[idx]
+            matched_idf = sum(raw_idf.get(u, 3.2) for u in q_unigrams if u in d_set)
+            cov = matched_idf / total_q_idf
+            if cov > best_idf_cov:
+                best_idf_cov = cov
+
+        dense_strong = (max_dense_score >= HYBRID_STRONG_DENSE) and (
+            best_idf_cov >= HYBRID_IDF_COV_FLOOR or max_bm25_score >= HYBRID_MIN_BM25_WITH_DENSE
+        )
+        lexical_strong = (
+            (max_bm25_score >= HYBRID_STRONG_BM25)
+            and (best_idf_cov >= HYBRID_IDF_COV_STRONG)
+            and (max_dense_score >= 0.36)
+        )
+        both_moderate = (
+            (max_dense_score >= HYBRID_SIM_FLOOR)
+            and (max_bm25_score >= HYBRID_MIN_BM25_WITH_DENSE)
+            and (best_idf_cov >= 0.38)
+        )
+        accepted = bool(dense_strong or lexical_strong or both_moderate)
+
+        self.last_retrieval_debug = {
+            "max_dense": round(max_dense_score, 4),
+            "max_bm25": round(max_bm25_score, 4),
+            "best_idf_cov": round(best_idf_cov, 4),
+            "accepted": accepted,
+            "reason": (
+                "dense_strong" if dense_strong else (
+                    "lexical_strong" if lexical_strong else (
+                        "both_moderate" if both_moderate else "dual_refusal_gate"
+                    )
+                )
+            ),
+        }
+        if not accepted:
+            return []
+
+        # 4. Hợp nhất xếp hạng bằng Reciprocal Rank Fusion (RRF) + đồng thuận tiêu đề & từ hiếm IDF cao
+        candidate_indices = set(dense_rank.keys()) | set(bm25_rank.keys())
+        q_u_set = set(q_unigrams)
+        q_b_set = {t for t in q_tokens if "_" in t}
+        rare_q_terms = {u: raw_idf[u] for u in q_unigrams if raw_idf.get(u, 0.0) >= 2.2}
+        total_rare_idf = sum(rare_q_terms.values()) or 1.0
+
+        rrf_scores = {}
+        for idx in candidate_indices:
+            r_d = dense_rank.get(idx)
+            r_b = bm25_rank.get(idx)
+            score = 0.0
+            if r_d is not None:
+                score += HYBRID_DENSE_WEIGHT / (HYBRID_RRF_K + r_d)
+            if r_b is not None:
+                score += HYBRID_BM25_WEIGHT / (HYBRID_RRF_K + r_b)
+            if r_d is not None and r_d <= 8 and r_b is not None and r_b <= 8:
+                score += 0.0025
+            if rare_q_terms:
+                d_u_set = unigram_sets[idx]
+                matched_rare = sum(w for u, w in rare_q_terms.items() if u in d_u_set)
+                score += 0.015 * (matched_rare / total_rare_idf)
+            if idx < len(meta_unigram_sets) and q_u_set:
+                meta_hits = len(q_u_set & meta_unigram_sets[idx])
+                meta_b_hits = len(q_b_set & meta_bigram_sets[idx]) if idx < len(meta_bigram_sets) else 0
+                if meta_b_hits >= 2 or meta_hits >= 4:
+                    score += 0.025 * min((meta_hits + 2 * meta_b_hits) / max(len(q_u_set) + 2, 1), 1.0)
+                elif meta_hits >= 2:
+                    score += 0.005 * (meta_hits / max(len(q_u_set), 1))
+            rrf_scores[idx] = score
+
+        sorted_indices = sorted(
+            candidate_indices,
+            key=lambda i: (rrf_scores[i], bm25_score_map.get(i, 0.0), dense_score.get(i, 0.0)),
+            reverse=True,
+        )
+
+        # Lấy top k tài liệu RRF chính, bảo đảm Top-1 của mỗi kênh luôn nằm trong nhóm neo đầu (<= vị trí 2)
+        selected_indices = list(sorted_indices[:k])
+        top_bm25_indices = [idx for idx, _r in sorted(bm25_rank.items(), key=lambda x: x[1])[:2]]
+        top_dense_indices = [idx for idx, _r in sorted(dense_rank.items(), key=lambda x: x[1])[:2]]
+
+        if top_bm25_indices and top_bm25_indices[0] not in selected_indices[:3]:
+            b0 = top_bm25_indices[0]
+            if b0 in selected_indices:
+                selected_indices.remove(b0)
+            else:
+                selected_indices.pop()
+            selected_indices.insert(min(1, len(selected_indices)), b0)
+
+        for must_idx in top_bm25_indices[1:] + top_dense_indices:
+            if must_idx not in selected_indices and len(selected_indices) > 0:
+                for rep_pos in range(len(selected_indices) - 1, 2, -1):
+                    cand_rep = selected_indices[rep_pos]
+                    if cand_rep not in top_bm25_indices and cand_rep not in top_dense_indices:
+                        selected_indices[rep_pos] = must_idx
+                        break
+        selected_set = set(selected_indices)
+
+        # 5. Mở rộng ngữ cảnh liên tục có phân bổ công bằng cho Top-4 neo (tối đa 2-3 đoạn/neo)
+        # Giúp không để neo đầu chiếm hết ngân sách và nối trọn vẹn Điều dài + Bảng vắt trang
+        adjacent_extras = []
+        max_neighbor_adds = 6
+        max_total = max(k + max_neighbor_adds, 12)
+        for anchor_pos, anchor_idx in enumerate(selected_indices[:4]):
+            if len(adjacent_extras) >= max_neighbor_adds:
+                break
+            anchor_doc = docs_corpus[anchor_idx]
+            src_name = os.path.basename(str(anchor_doc.metadata.get("source", ""))).lower()
+            try:
+                page_num = int(anchor_doc.metadata.get("page", 1))
+            except Exception:
+                page_num = 1
+            same_page_indices = page_map.get((src_name, page_num), [])
+            is_table_like = self._looks_like_table_or_split_page(anchor_doc.page_content, len(same_page_indices))
+
+            neighbor_candidates = []
+            # Các đoạn cùng trang để giữ đủ Khoản a, b, c của cùng một Điều
+            for sibling_idx in same_page_indices:
+                if sibling_idx != anchor_idx:
+                    neighbor_candidates.append(sibling_idx)
+            # Nối tiếp trang kế tiếp (+1), ưu tiên kèm đoạn liền trước (-1) nếu là đầu trang/bảng vắt trang, rồi mới tới (+2, +3)
+            tail_base = same_page_indices[-1] if same_page_indices else anchor_idx
+            if tail_base + 1 < len(docs_corpus):
+                nxt_src = os.path.basename(str(docs_corpus[tail_base + 1].metadata.get("source", ""))).lower()
+                if nxt_src == src_name:
+                    neighbor_candidates.append(tail_base + 1)
+            if anchor_idx - 1 >= 0:
+                prv_src = os.path.basename(str(docs_corpus[anchor_idx - 1].metadata.get("source", ""))).lower()
+                if prv_src == src_name and (is_table_like or (same_page_indices and anchor_idx == same_page_indices[0])):
+                    neighbor_candidates.append(anchor_idx - 1)
+            extra_forward_steps = (2, 3) if anchor_pos == 0 else (2,)
+            for step in extra_forward_steps:
+                cand_idx = tail_base + step
+                if cand_idx < len(docs_corpus):
+                    nxt_src = os.path.basename(str(docs_corpus[cand_idx].metadata.get("source", ""))).lower()
+                    if nxt_src == src_name:
+                        neighbor_candidates.append(cand_idx)
+
+            per_anchor_cap = 3 if anchor_pos == 0 else 2
+            added_for_anchor = 0
+            for nb_idx in neighbor_candidates:
+                if nb_idx not in selected_set and nb_idx not in adjacent_extras:
+                    adjacent_extras.append(nb_idx)
+                    added_for_anchor += 1
+                    if len(adjacent_extras) >= max_neighbor_adds or added_for_anchor >= per_anchor_cap:
+                        break
+
+        # Chèn đoạn nối trang liền kề ngay sau 2 kết quả chính để LLM đọc mạch lạc nhất
+        insert_pos = min(2, len(selected_indices))
+        ordered_indices = selected_indices[:insert_pos] + adjacent_extras + selected_indices[insert_pos:]
+
+        result_docs = []
+        for idx in ordered_indices[:max_total]:
+            base_doc = docs_corpus[idx]
+            meta_copy = dict(base_doc.metadata)
+            meta_copy["similarity_score"] = round(dense_score.get(idx, max(HYBRID_SIM_FLOOR, max_dense_score)), 4)
+            meta_copy["bm25_score"] = round(bm25_score_map.get(idx, 0.0), 4)
+            meta_copy["rrf_score"] = round(rrf_scores.get(idx, 0.0), 6)
+            result_docs.append(Document(page_content=base_doc.page_content, metadata=meta_copy))
+
+        if not result_docs and extra_dense_docs:
+            return extra_dense_docs[:k]
+        return result_docs
 
     def invoke(self, inputs):
         if isinstance(inputs, str):
@@ -519,9 +516,173 @@ _GLOBAL_VECTOR_DB = None
 _GLOBAL_LLM = None
 _GLOBAL_CHAIN = None
 _GLOBAL_REWRITER_LLM = None
+_GLOBAL_BM25_DATA = None
 _DEAD_GROQ_MODELS = set()
 _GROQ_CLIENTS_CACHE = {}
 _CURRENT_KEY_INDEX = 0
+
+# Tham số tổng quát cho Hybrid Search (Dense + BM25 + RRF + Dual Refusal Gate)
+HYBRID_RRF_K = 20
+HYBRID_DENSE_WEIGHT = 1.0
+HYBRID_BM25_WEIGHT = 1.35
+HYBRID_DENSE_CANDIDATES = 30
+HYBRID_BM25_CANDIDATES = 30
+HYBRID_SIM_FLOOR = 0.39
+HYBRID_STRONG_DENSE = 0.51
+HYBRID_STRONG_BM25 = 32.5
+HYBRID_MIN_BM25_WITH_DENSE = 29.0
+HYBRID_IDF_COV_STRONG = 0.44
+HYBRID_IDF_COV_FLOOR = 0.35
+
+# Chuẩn hóa viết tắt hành chính phổ biến tại VLUTE để BM25 nhận diện đồng nhất
+_ACADEMIC_ACRONYM_EXPANSIONS = {
+    "ctsv": ("công", "tác", "sinh", "viên"),
+    "ctxh": ("công", "tác", "xã", "hội"),
+    "kkht": ("khuyến", "khích", "học", "tập"),
+    "attt": ("an", "toàn", "thông", "tin"),
+    "khtc": ("kế", "hoạch", "tài", "chính"),
+    "cvht": ("cố", "vấn", "học", "tập"),
+    "cbvc": ("cán", "bộ", "viên", "chức"),
+}
+
+_ACADEMIC_SYNONYM_BIGRAMS = {
+    "thi_hộ": ("thi", "thay", "kiểm", "tra", "thi_thay", "tra_thay"),
+    "học_hộ": ("học", "thay", "học_thay"),
+    "nhờ_người": ("nhờ", "thay", "thi_thay"),
+    "rớt_môn": ("học", "lại", "điểm", "c", "học_lại", "điểm_c"),
+    "nợ_môn": ("học", "lại", "điểm", "c", "học_lại", "điểm_c"),
+}
+
+_BM25_STOPWORDS = frozenset({
+    "là", "của", "và", "các", "những", "trong", "cho", "về", "với", "được", "bị",
+    "khi", "nào", "gì", "sao", "thế", "tại", "theo", "từ", "đến", "hoặc", "hay",
+    "có", "không", "thì", "mà", "này", "đó", "kia", "nếu", "để", "như", "rằng",
+    "cái", "việc", "sự", "một", "sẽ", "đã", "đang", "do", "bởi", "qua", "vào",
+    "ra", "lên", "xuống", "lại", "nữa", "cũng", "đều", "phải", "cần", "nên",
+    "bao", "nhiêu", "làm", "gồm", "vậy", "nhé", "nhỉ", "ạ", "ơi", "vì",
+    "trên", "dưới", "sau", "trước", "giữa", "bằng", "nơi", "nhất", "hơn", "kém",
+    "từng", "mỗi", "mọi", "tất", "cả", "còn", "hỏi", "xin", "cho_biết", "biết",
+    "thế_nào", "như_thế", "như_nào", "ra_sao", "có_thể", "hay_không",
+})
+
+
+def tokenize_vietnamese_for_bm25(text: str, include_bigrams: bool = True) -> list[str]:
+    """Chuẩn hóa và tách từ tiếng Việt (unigram + bigram + mã văn bản) cho BM25."""
+    if not text:
+        return []
+    normalized = unicodedata.normalize("NFC", str(text)).lower()
+    normalized = re.sub(r"(\d),(\d)", r"\1.\2", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+
+    # Giữ lại các mã hiệu có gạch nối hoặc gạch chéo (vd: bm-kh-10a, qt-sv-04, 201/qd-dhspktvl)
+    compound_codes = re.findall(r"[0-9a-zđ]+(?:[-/][0-9a-zđ]+)+", normalized)
+
+    # Tách từ tiếng Việt và số thập phân (giữ 3.2, 0.5 nhưng bỏ dấu câu cuối câu)
+    raw_tokens = re.findall(r"\d+\.\d+|[^\W_]+", normalized, flags=re.UNICODE)
+    content_unigrams = []
+    for tok in raw_tokens:
+        if tok in _BM25_STOPWORDS:
+            continue
+        content_unigrams.append(tok)
+        if tok in _ACADEMIC_ACRONYM_EXPANSIONS:
+            content_unigrams.extend(_ACADEMIC_ACRONYM_EXPANSIONS[tok])
+        if tok.isdigit() and len(tok) == 2 and tok.startswith("0"):
+            content_unigrams.append(tok.lstrip("0") or "0")
+
+    tokens = list(content_unigrams)
+    tokens.extend(compound_codes)
+
+    if include_bigrams and len(content_unigrams) >= 2:
+        for i in range(len(content_unigrams) - 1):
+            bg = f"{content_unigrams[i]}_{content_unigrams[i + 1]}"
+            tokens.append(bg)
+            if bg in _ACADEMIC_SYNONYM_BIGRAMS:
+                tokens.extend(_ACADEMIC_SYNONYM_BIGRAMS[bg])
+
+    return tokens
+
+
+def _expand_bm25_corpus(raw_docs: list[str], raw_metas: list[dict], departments: dict):
+    """Xây dựng chỉ mục BM25Okapi, bản đồ trang (page_map) và trọng số IDF thô."""
+    docs = []
+    tokenized_docs = []
+    unigram_sets = []
+    meta_unigram_sets = []
+    meta_bigram_sets = []
+    doc_key_to_idx = {}
+    page_map = {}
+    df_counts = {}
+
+    for text, meta in zip(raw_docs, raw_metas):
+        if not text or not text.strip():
+            continue
+        meta_copy = dict(meta or {})
+        src_name = os.path.basename(str(meta_copy.get("source", ""))).lower()
+        if src_name in EXCLUDED_SOURCE_FILES or src_name.startswith("nghi_quyet_"):
+            continue
+
+        doc = Document(page_content=text, metadata=meta_copy)
+        ensure_doc_department_metadata(doc, departments)
+        try:
+            page_num = int(doc.metadata.get("page", 1))
+        except Exception:
+            page_num = 1
+
+        idx = len(docs)
+        docs.append(doc)
+
+        tokens = tokenize_vietnamese_for_bm25(text, include_bigrams=True)
+        tokenized_docs.append(tokens)
+
+        u_set = set(tokenize_vietnamese_for_bm25(text, include_bigrams=False))
+        unigram_sets.append(u_set)
+        for u in u_set:
+            df_counts[u] = df_counts.get(u, 0) + 1
+
+        meta_str = f"{doc.metadata.get('title', '')} {doc.metadata.get('doc_code', '')} {src_name.replace('_', ' ').replace('.pdf', '')}"
+        meta_all = set(tokenize_vietnamese_for_bm25(meta_str, include_bigrams=True))
+        meta_unigram_sets.append({t for t in meta_all if "_" not in t})
+        meta_bigram_sets.append({t for t in meta_all if "_" in t})
+
+        doc_key = (src_name, page_num, text.strip())
+        doc_key_to_idx.setdefault(doc_key, idx)
+        page_map.setdefault((src_name, page_num), []).append(idx)
+
+    total_docs = max(len(docs), 1)
+    raw_idf = {}
+    for term, df in df_counts.items():
+        val = math.log((total_docs - df + 0.5) / (df + 0.5))
+        raw_idf[term] = max(0.30, val)
+
+    bm25 = BM25Okapi(tokenized_docs) if tokenized_docs else None
+    return {
+        "docs": docs,
+        "tokenized_docs": tokenized_docs,
+        "unigram_sets": unigram_sets,
+        "meta_unigram_sets": meta_unigram_sets,
+        "meta_bigram_sets": meta_bigram_sets,
+        "bm25": bm25,
+        "raw_idf": raw_idf,
+        "page_map": page_map,
+        "doc_key_to_idx": doc_key_to_idx,
+        "total_docs": total_docs,
+    }
+
+
+@st.cache_resource(show_spinner=False)
+def get_bm25_index():
+    """Khởi tạo và cache chỉ mục BM25 toàn văn từ ChromaDB để phục vụ Hybrid Search."""
+    global _GLOBAL_BM25_DATA
+    if _GLOBAL_BM25_DATA is not None:
+        return _GLOBAL_BM25_DATA
+
+    vector_db = get_vector_db()
+    data = vector_db.get(include=["documents", "metadatas"])
+    raw_docs = data.get("documents", []) or []
+    raw_metas = data.get("metadatas", []) or []
+    departments = load_departments_config()
+    _GLOBAL_BM25_DATA = _expand_bm25_corpus(raw_docs, raw_metas, departments)
+    return _GLOBAL_BM25_DATA
 
 
 def _parse_keys_value(raw_val):
@@ -661,7 +822,7 @@ class RotatingResilientLLM:
     - TẦNG 2 (Dự phòng 2): Gemini (chỉ gọi nếu có key 'AIzaSy...' hợp lệ).
     - TẦNG 3: Báo lỗi quá tải an toàn (429 RESOURCE_EXHAUSTED).
     """
-    def __init__(self, local_llm, groq_llm=None, max_output_tokens: int = 1200, temperature: float = 0.2, preferred_model: str | None = None):
+    def __init__(self, local_llm, groq_llm=None, max_output_tokens: int = 2048, temperature: float = 0.0, preferred_model: str | None = None):
         self.local_llm = local_llm
         self.groq_llm = groq_llm
         self.max_output_tokens = max_output_tokens
@@ -669,8 +830,8 @@ class RotatingResilientLLM:
         self.preferred_model = preferred_model
         self._cloud_clients = {}
         self._groq_models = [
-            "openai/gpt-oss-120b",
             "qwen/qwen3.8-27b",
+            "openai/gpt-oss-120b",
             "openai/gpt-oss-20b",
             "llama-3.3-70b-versatile",
             "llama-3.1-8b-instant",
@@ -691,21 +852,25 @@ class RotatingResilientLLM:
             )
         return self._cloud_clients[api_key]
 
-    def _get_groq_client(self, model_name: str = "llama-3.3-70b-versatile", temperature: float | None = None, max_tokens: int | None = None):
+    def _get_groq_client(self, model_name: str = "qwen/qwen3.8-27b", temperature: float | None = None, max_tokens: int | None = None):
         groq_api_key = get_groq_api_key()
         if not groq_api_key:
             return None
         temp = self.temperature if temperature is None else temperature
         mtok = self.max_output_tokens if max_tokens is None else max_tokens
-        cache_key = (groq_api_key, model_name, float(temp), int(mtok))
+        is_gpt_oss = "gpt-oss" in model_name and int(mtok) > 200
+        effective_mtok = max(int(mtok), 2500) if is_gpt_oss else int(mtok)
+        extra_kwargs = {"reasoning_effort": "low"} if is_gpt_oss else {}
+        cache_key = (groq_api_key, model_name, float(temp), effective_mtok, is_gpt_oss)
         if cache_key not in _GROQ_CLIENTS_CACHE:
             _GROQ_CLIENTS_CACHE[cache_key] = ChatGroq(
                 api_key=groq_api_key,
                 model_name=model_name,
                 temperature=temp,
-                max_tokens=mtok,
+                max_tokens=effective_mtok,
                 max_retries=0,
-                request_timeout=25
+                request_timeout=25,
+                **extra_kwargs,
             )
         return _GROQ_CLIENTS_CACHE[cache_key]
 
@@ -729,28 +894,29 @@ class RotatingResilientLLM:
                 candidate_models.insert(0, self.preferred_model)
 
         for groq_model in candidate_models:
-            groq_client = self._get_groq_client(model_name=groq_model)
-            if groq_client is not None:
-                try:
-                    groq_resp = groq_client.invoke(prompt, *args, **kwargs)
-                    groq_content = getattr(groq_resp, "content", str(groq_resp))
-                    if groq_content and str(groq_content).strip():
-                        if self.max_output_tokens > 200 and groq_model in self._groq_models and groq_model != self._groq_models[0]:
-                            self._groq_models.remove(groq_model)
-                            self._groq_models.insert(0, groq_model)
-                        return groq_resp
-                except Exception as g_err:
-                    groq_err = g_err
-                    err_msg = str(g_err).lower()
-                    if any(tok in err_msg for tok in ("not_found", "does not exist", "404", "decommissioned", "model_not_found")):
-                        _DEAD_GROQ_MODELS.add(groq_model)
-                        continue
-                    if any(tok in err_msg for tok in ("429", "rate_limit", "rate limit", "too many requests")):
-                        if groq_model in self._groq_models:
-                            self._groq_models.remove(groq_model)
-                            self._groq_models.append(groq_model)
-                        time.sleep(0.5)
+            try:
+                groq_client = self._get_groq_client(model_name=groq_model)
+                if groq_client is None:
                     continue
+                groq_resp = groq_client.invoke(prompt, *args, **kwargs)
+                groq_content = getattr(groq_resp, "content", str(groq_resp))
+                if groq_content and str(groq_content).strip():
+                    if self.max_output_tokens > 200 and groq_model in self._groq_models and groq_model != self._groq_models[0]:
+                        self._groq_models.remove(groq_model)
+                        self._groq_models.insert(0, groq_model)
+                    return groq_resp
+            except Exception as g_err:
+                groq_err = g_err
+                err_msg = str(g_err).lower()
+                if any(tok in err_msg for tok in ("not_found", "does not exist", "404", "decommissioned", "model_not_found")):
+                    _DEAD_GROQ_MODELS.add(groq_model)
+                    continue
+                if any(tok in err_msg for tok in ("429", "rate_limit", "rate limit", "too many requests")):
+                    if groq_model in self._groq_models:
+                        self._groq_models.remove(groq_model)
+                        self._groq_models.append(groq_model)
+                    time.sleep(0.5)
+                continue
 
         # TẦNG 2 (Dự phòng 1): Chuyển tiếp sang Local LM Studio (Qwen 4B)
         try:
@@ -799,36 +965,37 @@ class RotatingResilientLLM:
         print("[LLM ENGINE] Đang tạo phản hồi qua Groq LPU...")
         candidate_models = [m for m in self._groq_models if m not in _DEAD_GROQ_MODELS]
         for groq_model in candidate_models:
-            groq_client = self._get_groq_client(model_name=groq_model)
-            if groq_client is not None:
-                yielded_groq = False
-                try:
-                    for chunk in groq_client.stream(prompt, *args, **kwargs):
-                        chunk_text = getattr(chunk, "content", str(chunk))
-                        if chunk_text:
-                            yielded_groq = True
-                            yield chunk
-                    if yielded_groq:
-                        if groq_model in self._groq_models and groq_model != self._groq_models[0]:
-                            self._groq_models.remove(groq_model)
-                            self._groq_models.insert(0, groq_model)
-                        return
+            yielded_groq = False
+            try:
+                groq_client = self._get_groq_client(model_name=groq_model)
+                if groq_client is None:
                     continue
-                except Exception as g_err:
-                    groq_err = g_err
-                    if yielded_groq:
-                        yield f"\n\n{STREAM_INTERRUPTED_NOTICE}"
-                        return
-                    err_msg = str(g_err).lower()
-                    if any(tok in err_msg for tok in ("not_found", "does not exist", "404", "decommissioned", "model_not_found")):
-                        _DEAD_GROQ_MODELS.add(groq_model)
-                        continue
-                    if any(tok in err_msg for tok in ("429", "rate_limit", "rate limit", "too many requests")):
-                        if groq_model in self._groq_models:
-                            self._groq_models.remove(groq_model)
-                            self._groq_models.append(groq_model)
-                        time.sleep(0.5)
+                for chunk in groq_client.stream(prompt, *args, **kwargs):
+                    chunk_text = getattr(chunk, "content", str(chunk))
+                    if chunk_text:
+                        yielded_groq = True
+                        yield chunk
+                if yielded_groq:
+                    if groq_model in self._groq_models and groq_model != self._groq_models[0]:
+                        self._groq_models.remove(groq_model)
+                        self._groq_models.insert(0, groq_model)
+                    return
+                continue
+            except Exception as g_err:
+                groq_err = g_err
+                if yielded_groq:
+                    yield f"\n\n{STREAM_INTERRUPTED_NOTICE}"
+                    return
+                err_msg = str(g_err).lower()
+                if any(tok in err_msg for tok in ("not_found", "does not exist", "404", "decommissioned", "model_not_found")):
+                    _DEAD_GROQ_MODELS.add(groq_model)
                     continue
+                if any(tok in err_msg for tok in ("429", "rate_limit", "rate limit", "too many requests")):
+                    if groq_model in self._groq_models:
+                        self._groq_models.remove(groq_model)
+                        self._groq_models.append(groq_model)
+                    time.sleep(0.5)
+                continue
 
         # TẦNG 2 (Dự phòng 1): Chuyển tiếp sang Local LM Studio (Qwen 4B)
         yielded_local = False
@@ -886,13 +1053,13 @@ class RotatingResilientLLM:
         raise RuntimeError(f"429 RESOURCE_EXHAUSTED: {err_detail}") from (groq_err or local_err or gemini_err)
 
 
-def get_llm(temperature: float = 0.2, max_output_tokens: int = 1200, preferred_model: str | None = None):
+def get_llm(temperature: float = 0.0, max_output_tokens: int = 2048, preferred_model: str | None = None):
     groq_api_key = get_groq_api_key()
     groq_llm = None
     if groq_api_key:
         groq_llm = ChatGroq(
             api_key=groq_api_key,
-            model_name=preferred_model or "openai/gpt-oss-120b",
+            model_name=preferred_model or "qwen/qwen3.8-27b",
             temperature=temperature,
             max_tokens=max_output_tokens,
             max_retries=0,
@@ -1051,11 +1218,13 @@ def get_rag_chain():
         "   - Khi sinh viên hỏi 'có nợ môn hoặc nợ học phí thì được xét học bổng không?': Căn cứ Điều 17 (yêu cầu tối thiểu 17 tín chỉ, không có học phần nào dưới điểm C) và Điều 1 (hoàn thành nghĩa vụ học phí) để trả lời rõ ràng: Sinh viên nợ môn (dưới điểm C) hoặc chưa hoàn thành học phí sẽ KHÔNG đủ điều kiện xét cấp học bổng khuyến khích học tập. Tuyệt đối không trả về thông báo từ chối ngoài phạm vi dữ liệu đối với câu hỏi này.\n"
         "   - Khi sinh viên hỏi về điều kiện xét học bổng khuyến khích học tập (tín chỉ, điểm TBC, hoặc điểm rèn luyện theo Điều 17): Luôn nêu đầy đủ cả 3 tiêu chuẩn cốt lõi tại Điều 17 gồm: (1) Đăng ký tối thiểu 17 tín chỉ, (2) Điểm TBC học kỳ đạt từ 2,5 trở lên theo thang 4,0 (riêng Học bổng KKHT Mức 1 / SPKT yêu cầu từ 3,2 trở lên) và không có học phần dưới điểm C, (3) Xếp loại rèn luyện đạt từ loại Khá trở lên (riêng Mức 1 / SPKT yêu cầu từ loại Tốt trở lên).\n"
         "   - Khi sinh viên hỏi về mức tiền hoặc cách tính Học bổng KKHT Mức 1 (Học bổng SPKT) tại Điều 18: Nêu rõ công thức 'Học bổng KKHT Mức 1 (Học bổng SPKT) = Đơn giá học phí × 17 TC', trong đó 'Đơn giá học phí = Đơn giá học phí theo khối ngành VII (hệ đại trà)'.\n"
+        "   - Khi đọc Bảng quy đổi ngày CTXH (Điều 8 Quyết định 55, Trang 9–10) bị tách cột qua 2 trang liên tiếp: đối chiếu theo mã số tương ứng gồm Mùa hè xanh (001101 - tham gia các đội hình chuyên), Tiếp sức mùa thi (001301), Tiếp sức tân sinh viên (001501) đều quy đổi 1 ngày CTXH / ngày tham gia (tối thiểu 5 giờ làm việc hoặc 1 ca trực theo phân công); Trực tiếp hiến máu tình nguyện (001202) quy đổi 1 ngày CTXH (theo Giấy xác nhận hiến máu); Hỗ trợ tổ chức hoạt động hiến máu tình nguyện (001201) quy đổi 0,5 ngày CTXH (theo Bảng phân công nhiệm vụ hỗ trợ).\n"
+        "   - Khi đọc Phụ lục Khung xử lý kỷ luật sinh viên (Quyết định 1079, Trang 25–34, 4 cột mức kỷ luật theo thứ tự: Khiển trách | Cảnh cáo | Đình chỉ có thời hạn | Buộc thôi học): mục 4 (Học thay hoặc nhờ người khác học thay) xử lý từ Khiển trách đến Buộc thôi học tùy mức độ; mục 5 (Thi, kiểm tra thay hoặc nhờ thi, kiểm tra thay; làm thay, nhờ làm hoặc sao chép tiểu luận, đồ án, khóa luận tốt nghiệp) xử lý Đình chỉ học tập có thời hạn (vi phạm lần 1) và Buộc thôi học (vi phạm lần 2); mục 6 (Tổ chức học, thi, kiểm tra thay) xử lý Buộc thôi học ngay từ lần 1 (nếu nghiêm trọng giao cơ quan chức năng xử lý theo pháp luật).\n"
         "3. Phong cách trả lời:\n"
         "   - Đi thẳng vào câu hỏi, diễn đạt tự nhiên, rõ ràng, súc tích.\n"
         "   - KHÔNG cần trích dẫn rườm rà số hiệu quyết định hay điều khoản trừ khi câu hỏi yêu cầu cụ thể.\n"
         "   - Trình bày dạng gạch đầu dòng ngắn gọn để sinh viên nắm bắt thông tin nhanh nhất.\n"
-        f"4. Nếu thông tin hoàn toàn không có trong tài liệu được cung cấp, trả về đúng hằng số REFUSAL_MESSAGE duy nhất, không giải thích thêm:\n{REFUSAL_MESSAGE}\n\n"
+        f"4. CHỈ trả về hằng số REFUSAL_MESSAGE duy nhất (không giải thích thêm) khi câu hỏi hoàn toàn nằm ngoài phạm vi các văn bản quy chế trong Ngữ cảnh (ví dụ: hỏi giá phòng ký túc xá, điểm chuẩn tuyển sinh, tuyến xe buýt, học phí 1 tín chỉ...). Nếu Ngữ cảnh đã có quy định liên quan đến chủ đề câu hỏi, tuyệt đối KHÔNG trả về REFUSAL_MESSAGE:\n{REFUSAL_MESSAGE}\n\n"
         "Ngữ cảnh:\n{context}\n\n"
         "Câu hỏi: {input}\n\n"
         "Trả lời:"

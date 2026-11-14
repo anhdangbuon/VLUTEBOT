@@ -7,7 +7,6 @@ import base64
 import traceback
 import unicodedata
 import streamlit as st
-import streamlit.components.v1 as components
 from rag import get_rag_chain, DOC_CATALOG, extract_article_info, REFUSAL_MESSAGE, load_departments_config, rewrite_conversational_query
 
 st.set_page_config(
@@ -68,17 +67,7 @@ div[data-testid="stChatMessageContent"]:not(:has(*)) {
     padding: 0 !important;
 }
 
-/* Ẩn widget trạng thái, menu/header mặc định thừa và nút deploy để giao diện gọn như web app độc lập */
-div[data-testid="stElementContainer"]:has(iframe[height="0"]),
-iframe[height="0"] {
-    height: 0px !important;
-    min-height: 0px !important;
-    margin: 0px !important;
-    padding: 0px !important;
-    overflow: hidden !important;
-    border: none !important;
-}
-
+#mainmenu_hide,
 #MainMenu,
 footer,
 [data-testid="stDecoration"],
@@ -99,9 +88,21 @@ button[data-testid="stExpandSidebarButton"] {
     pointer-events: auto !important;
 }
 
-/* Cuộn mượt toàn cục */
+/* Cuộn mượt & CSS overflow-anchor (không dùng JS iframe) */
 html, body, [data-testid="stAppViewContainer"], section[data-testid="stMain"], .main {
     scroll-behavior: smooth !important;
+    overflow-anchor: auto !important;
+}
+
+div[data-testid="stChatMessage"],
+.chat-row-user {
+    overflow-anchor: none !important;
+}
+
+#chat-scroll-anchor {
+    overflow-anchor: auto !important;
+    height: 1px !important;
+    width: 100% !important;
 }
 
 /* 0. Nền chung toàn trang & vùng nội dung chính */
@@ -775,15 +776,34 @@ div[data-testid="stChatMessageContent"] div[data-testid="stExpander"] blockquote
     }
 }
 
-/* 7. Nút bấm câu hỏi gợi ý nhanh */
+/* 7. Nút bấm câu hỏi gợi ý nhanh & Thẻ 4 nhóm chủ đề */
 .quick-prompt-title {
-    font-size: 0.88rem;
+    font-size: 0.92rem;
     font-weight: 700;
     color: #00703c;
-    margin-bottom: 8px;
+    margin-bottom: 10px;
     display: flex;
     align-items: center;
     gap: 6px;
+}
+
+.prompt-group-header {
+    background: linear-gradient(135deg, #ecfdf5 0%, #f8fafc 100%);
+    border: 1px solid #bbf7d0;
+    border-left: 4px solid #00703c;
+    border-radius: 10px;
+    padding: 8px 12px;
+    margin-top: 6px;
+    margin-bottom: 8px;
+    font-size: 0.88rem;
+    font-weight: 700;
+    color: #005a30;
+    transition: all 0.2s ease;
+}
+
+.prompt-group-header:hover {
+    border-color: #00703c;
+    box-shadow: 0 2px 8px rgba(0, 112, 60, 0.1);
 }
 
 div[data-testid="stHorizontalBlock"] button {
@@ -920,52 +940,6 @@ THINKING_HTML = """
 </div>
 """
 
-def trigger_smooth_scroll(follow_stream: bool = False):
-    """Tự động cuộn mượt xuống cuối khung trò chuyện mà không làm chớp giao diện."""
-    observer_js = """
-        const mainContainer = doc.querySelector('[data-testid="stAppViewContainer"]') || doc.querySelector('section.main') || doc.documentElement;
-        if (mainContainer) {
-            let timer = null;
-            const obs = new MutationObserver(() => {
-                doScroll();
-                clearTimeout(timer);
-                timer = setTimeout(() => obs.disconnect(), 1800);
-            });
-            obs.observe(mainContainer, { childList: true, subtree: true, characterData: true });
-            setTimeout(() => obs.disconnect(), 18000);
-        }
-    """ if follow_stream else ""
-    components.html(
-        f"""
-        <script>
-        (function() {{
-            const doc = window.parent.document;
-            function doScroll() {{
-                const targets = [
-                    doc.querySelector('[data-testid="stAppViewContainer"]'),
-                    doc.querySelector('section.main'),
-                    doc.documentElement,
-                    doc.body
-                ].filter(Boolean);
-                targets.forEach(el => {{
-                    try {{
-                        el.scrollTo({{ top: el.scrollHeight, behavior: 'smooth' }});
-                    }} catch (e) {{
-                        el.scrollTop = el.scrollHeight;
-                    }}
-                }});
-                try {{
-                    window.parent.scrollTo({{ top: doc.body.scrollHeight, behavior: 'smooth' }});
-                }} catch (e) {{}}
-            }}
-            setTimeout(doScroll, 60);
-            {observer_js}
-        }})();
-        </script>
-        """,
-        height=0,
-    )
-
 # ==========================================
 # 1. HEADER TINH GỌN (110-120PX)
 # ==========================================
@@ -1000,9 +974,10 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# ==========================================
-# 4. SIDEBAR ĐẦY ĐỦ (2 NHÓM RÕ RÀNG)
-# ==========================================
+def reset_chat_history():
+    """Callback làm mới hội thoại không cần gọi st.rerun() thủ công."""
+    st.session_state.messages = []
+    st.session_state.pending_user_query = None
 with st.sidebar:
     if LOGO_B64:
         st.markdown(f"""
@@ -1023,10 +998,11 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-    if st.button("🗑️ Làm mới cuộc trò chuyện", use_container_width=True):
-        st.session_state.messages = []
-        st.session_state.pending_user_query = None
-        st.rerun()
+    st.button(
+        "🗑️ Làm mới cuộc trò chuyện",
+        use_container_width=True,
+        on_click=reset_chat_history,
+    )
     
     # 2 nhóm liên kết hệ thống rõ rệt (chuỗi không thụt lề để triệt tiêu lỗi code thô)
     SIDEBAR_NAV_HTML = """<div class="sidebar-links-card">
@@ -1123,9 +1099,8 @@ def build_assistant_bubble_html(content: str, contact_html: str = "", elapsed_ti
     if is_refusal:
         if not body:
             body = REFUSAL_MESSAGE
-        # Đảm bảo ép hiển thị rõ ràng chuỗi từ chối kèm định dạng gạch đầu dòng
-        refusal_text = body if body.startswith("•") else f"• {body}"
-        return f"{refusal_text}\n\n{contact_html}" if contact_html else refusal_text
+        body = re.sub(r"^[•\-\*]\s+", "", body)
+        return f"{body}\n\n{contact_html}" if contact_html else body
 
     badge = get_verify_badge_html(elapsed_time)
     return f"{badge}\n\n{body}\n\n{contact_html}" if contact_html else f"{badge}\n\n{body}"
@@ -1278,7 +1253,7 @@ def normalize_query_intent(query: str) -> str:
 # ==========================================
 WELCOME_CONTENT = (
     "👋 **Xin chào! Mình là Lucas** – trợ lý hỗ trợ tra cứu Quy chế Đào tạo & Quy định sinh viên VLUTE.\n\n"
-    "Bạn có thể chọn nhanh các câu hỏi bên dưới hoặc tra cứu về: Học bổng, học phí, đào tạo, học vụ..."
+    "Bạn có thể chọn nhanh câu hỏi theo **4 nhóm chủ đề bên dưới** hoặc nhập trực tiếp thắc mắc về học bổng, miễn giảm học phí, công tác xã hội, kỷ luật hay học vụ!"
 )
 
 if "messages" not in st.session_state or len(st.session_state.messages) == 0:
@@ -1728,8 +1703,25 @@ elif st.session_state.get("pending_user_query"):
     user_query = st.session_state.pending_user_query
     st.session_state.pending_user_query = None
 
+if user_query:
+    current_user_query = user_query.strip()
+    recent_chat_history = [
+        {"role": m.get("role"), "content": m.get("content", "")}
+        for m in st.session_state.messages[1:]
+        if m.get("role") in ("user", "assistant") and not m.get("is_greeting", False)
+    ][-6:]
+    if current_user_query and not (
+        st.session_state.messages
+        and st.session_state.messages[-1].get("role") == "user"
+        and st.session_state.messages[-1].get("content") == current_user_query
+    ):
+        st.session_state.messages.append({"role": "user", "content": current_user_query})
+else:
+    current_user_query = ""
+    recent_chat_history = []
+
 # ==========================================
-# HIỂN THỊ LỊCH SỬ TIN NHẮN
+# HIỂN THỊ LỊCH SỬ TIN NHẮN (OPTIMISTIC RENDER TỨC THÌ < 0.3S)
 # ==========================================
 last_assistant_idx = max(
     (i for i, m in enumerate(st.session_state.messages) if m.get("role") == "assistant"),
@@ -1744,7 +1736,7 @@ for idx, message in enumerate(st.session_state.messages):
             unsafe_allow_html=True
         )
     else:
-        with st.chat_message("assistant", avatar="lucas_avatar.png" if os.path.exists("lucas_avatar.png") else "🎓"):
+        with st.chat_message("assistant", avatar=BOT_AVATAR):
             msg_content = str(message.get("content", "") or "").strip()
             is_welcome_or_greeting = (idx == 0) or bool(message.get("is_greeting", False))
             is_dept_inquiry = bool(message.get("is_dept_inquiry", False))
@@ -1775,56 +1767,52 @@ for idx, message in enumerate(st.session_state.messages):
                     render_followup_suggestions(q_text or msg_content, key_suffix=str(idx))
 
 # ==========================================
-# KHỐI GỢI Ý CÂU HỎI NHANH (KHI CHƯA BẮT ĐẦU HỎI)
+# KHỐI GỢI Ý 4 NHÓM CHỦ ĐỀ (KHI CHƯA BẮT ĐẦU HỎI)
 # ==========================================
-if len(st.session_state.messages) <= 1 and not user_query:
-    st.markdown('<div class="quick-prompt-title">💡 Gợi ý câu hỏi nhanh từ văn bản quy chế:</div>', unsafe_allow_html=True)
+if len(st.session_state.messages) <= 1 and not current_user_query:
+    st.markdown('<div class="quick-prompt-title">💡 Chọn nhanh câu hỏi theo 4 nhóm chủ đề quy chế:</div>', unsafe_allow_html=True)
     prompts_cfg = load_prompts_config()
-    init_items = prompts_cfg.get("initial_prompts", [])[:4]
+    categories = prompts_cfg.get("categories", {})
+    cat_items = list(categories.items())[:4]
 
-    col1, col2 = st.columns(2)
-    for i, item in enumerate(init_items):
-        target_col = col1 if i % 2 == 0 else col2
-        with target_col:
-            st.button(
-                item["label"],
-                key=f"init_prompt_{i}",
-                use_container_width=True,
-                on_click=submit_user_query,
-                args=(item["query"],)
-            )
+    if cat_items:
+        for row_start in range(0, len(cat_items), 2):
+            row_cats = cat_items[row_start:row_start + 2]
+            cols = st.columns(len(row_cats))
+            for col_idx, (cat_key, cat_data) in enumerate(row_cats):
+                with cols[col_idx]:
+                    cat_name = html.escape(str(cat_data.get("name", cat_key)))
+                    st.markdown(f'<div class="prompt-group-header">{cat_name}</div>', unsafe_allow_html=True)
+                    for p_idx, p_item in enumerate(cat_data.get("prompts", [])[:4]):
+                        st.button(
+                            p_item["label"],
+                            key=f"welcome_{cat_key}_{p_idx}",
+                            use_container_width=True,
+                            on_click=submit_user_query,
+                            args=(p_item["query"],)
+                        )
+    else:
+        init_items = prompts_cfg.get("initial_prompts", [])[:4]
+        col1, col2 = st.columns(2)
+        for i, item in enumerate(init_items):
+            target_col = col1 if i % 2 == 0 else col2
+            with target_col:
+                st.button(
+                    item["label"],
+                    key=f"init_prompt_{i}",
+                    use_container_width=True,
+                    on_click=submit_user_query,
+                    args=(item["query"],)
+                )
 
-if user_query:
-    current_user_query = user_query.strip()
-
-    # Lấy 2-3 lượt hội thoại gần nhất (tối đa 6 tin nhắn) trước khi nối câu hỏi hiện tại
-    recent_chat_history = [
-        {"role": m.get("role"), "content": m.get("content", "")}
-        for m in st.session_state.messages[1:]
-        if m.get("role") in ("user", "assistant") and not m.get("is_greeting", False)
-    ][-6:]
-
-    # Chống lặp tin nhắn nếu bấm nhiều lần
-    if not (st.session_state.messages and st.session_state.messages[-1].get("role") == "user" and st.session_state.messages[-1].get("content") == current_user_query):
-        st.session_state.messages.append({"role": "user", "content": current_user_query})
-
-    # 1. Render ngay lập tức bong bóng câu hỏi người dùng lên màn hình (giữ nguyên văn bản gốc)
-    safe_user_query = html.escape(current_user_query).replace("\n", "<br>")
-    st.markdown(
-        f'<div class="chat-row-user"><div class="user-bubble">{safe_user_query}</div></div>',
-        unsafe_allow_html=True
-    )
-
+if current_user_query:
     new_msg_idx = len(st.session_state.messages)
 
-    # 2. Mở ngay khung chat của Lucas và hiển thị hoạt ảnh Typing Indicator
-    with st.chat_message("assistant", avatar="lucas_avatar.png" if os.path.exists("lucas_avatar.png") else "🎓"):
+    # Mở ngay bong bóng Lucas kèm Typing Dots TRƯỚC KHI rewrite/RAG để đạt Optimistic UI < 0.3s
+    with st.chat_message("assistant", avatar=BOT_AVATAR):
         status_placeholder = st.empty()
         status_placeholder.markdown(THINKING_HTML, unsafe_allow_html=True)
-        trigger_smooth_scroll(follow_stream=True)
-
-        # Force Flush nhả GIL để WebSocket đẩy bong bóng người dùng và typing indicator lên màn hình ngay lập tức
-        time.sleep(0.05)
+        time.sleep(0.01)
 
         if is_greeting(current_user_query):
             greeting_reply = (
@@ -1989,5 +1977,6 @@ if user_query:
                         import traceback
                         traceback.print_exc()
                         status_placeholder.error(f"Lỗi: {e}")
-
-    trigger_smooth_scroll(follow_stream=False)
+    st.markdown('<div id="chat-scroll-anchor"></div>', unsafe_allow_html=True)
+else:
+    st.markdown('<div id="chat-scroll-anchor"></div>', unsafe_allow_html=True)

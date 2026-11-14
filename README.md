@@ -28,18 +28,19 @@ Các nhóm quy chế được hỗ trợ tra cứu trực tiếp:
 
 ```mermaid
 flowchart TD
-    UserQuery["Sinh viên gửi câu hỏi / Chọn gợi ý từ prompts.json"] --> B1{"Nhánh 1: is_greeting()<br/>Chào hỏi xã giao?"}
+    UserQuery["Sinh viên gửi câu hỏi / Chọn 16 gợi ý theo 4 nhóm (prompts.json)"] --> OptUI["Optimistic UI (< 0.3s):<br/>on_click callback + Avatar 96x96 + Typing dots + CSS overflow-anchor"]
+    OptUI --> B1{"Nhánh 1: is_greeting()<br/>Chào hỏi xã giao?"}
     B1 -- Có --> R1["Phản hồi thân thiện tức thì (No RAG)"]
     B1 -- Không --> B2{"Nhánh 2: check_department_inquiry()<br/>Hỏi địa chỉ, SĐT, email phòng ban?"}
-    B2 -- Có --> R2["Tra cứu trực tiếp departments.json<br/>Kèm thẻ chân trang liên hệ"]
-    B2 -- Không --> B3["Nhánh 3: SmartRAGChain.filter_documents()"]
+    B2 -- Có --> R2["Tra cứu trực tiếp departments.json<br/>(Không gắn huy hiệu đối soát)"]
+    B2 -- Không --> B3["Nhánh 3: Hybrid Search RAG (SmartRAGChain.filter_documents)"]
 
-    B3 --> ExclCheck{"Thuộc nhóm loại trừ<br/>(nghi_quyet_71/72/153) hay score < 0.38?"}
-    ExclCheck -- Đúng --> Refusal["🛡️ Trả về REFUSAL_MESSAGE<br/>Tự động ẩn huy hiệu xác nhận"]
-    ExclCheck -- Không --> SingleSearch["1. Single-pass Cosine Search (ChromaDB, k=15)<br/>+ Dự phòng nạp điều khoản cốt lõi theo tệp nguồn"]
+    B3 --> ExclCheck{"Dual Refusal Gate:<br/>Nghị quyết loại trừ hay ngưỡng tin cậy không đạt?"}
+    ExclCheck -- Đúng --> Refusal["🛡️ Trả về REFUSAL_MESSAGE (không dấu đầu dòng •)<br/>Tự động ẩn huy hiệu xác nhận"]
+    ExclCheck -- Không --> HybridSearch["1. Hybrid Search (ChromaDB Dense + BM25Okapi Lexical + RRF)<br/>+ Mở rộng ngữ cảnh lân cận (anchor_idx - 1, +1..+3)"]
 
-    SingleSearch --> PromptBuild["2. Strict Anti-Hallucination Prompt (k=6 đoạn)"]
-    PromptBuild --> LLMRouter["3. RotatingResilientLLM<br/>Tier 1: Groq LPU -> Tier 2: LM Studio (Qwen3.5-4B) -> Tier 3: Gemini"]
+    HybridSearch --> PromptBuild["2. Strict Anti-Hallucination Prompt (tối đa k=12 đoạn)"]
+    PromptBuild --> LLMRouter["3. RotatingResilientLLM<br/>Tier 1: Groq LPU (qwen/qwen3.8-27b chính) -> Tier 2: LM Studio / Gemini"]
     LLMRouter --> StreamUI["4. Stream phản hồi mượt mà + Huy hiệu ✅ Đã đối soát thành công (Xs)"]
     StreamUI --> PostUI["5. Ẩn expander trích dẫn (render_sources)<br/>+ Chân trang động get_contact_footer()<br/>+ 2 nút gợi ý tiếp theo từ prompts.json"]
 ```
@@ -47,32 +48,42 @@ flowchart TD
 ### Các điểm nhấn kiến trúc hiện tại:
 1. **3 nhánh xử lý tách bạch trong `app.py`:**
    - **Nhánh 1 (`is_greeting`):** Phản hồi chào hỏi nhanh không cần gọi RAG.
-   - **Nhánh 2 (`check_department_inquiry`):** Đọc trực tiếp dữ liệu địa điểm, điện thoại, email từ `departments.json`.
-   - **Nhánh 3 (Dynamic RAG):** Chỉ truy xuất vector khi thực sự là câu hỏi nghiệp vụ/quy chế.
+   - **Nhánh 2 (`check_department_inquiry`):** Đọc trực tiếp dữ liệu địa điểm, điện thoại, email từ `departments.json`; tự động bỏ qua các câu hỏi thủ tục/quy chế (`"hồ sơ"`, `"thủ tục"`, `"điều kiện"`, `"miễn giảm"`, `"học bổng"`, `"quy trình"`, `"quy định"`, `"mức"`) để đi đúng vào luồng RAG.
+   - **Nhánh 3 (Hybrid Search RAG):** Chỉ truy xuất văn bản khi thực sự là câu hỏi nghiệp vụ/quy chế.
 2. **Conversational Query Rewriting (`rewrite_conversational_query` trong `rag.py`):**
    - Tự động giữ nguyên câu hỏi gốc khi lịch sử trống hoặc câu hỏi đã đủ chủ ngữ để tránh tăng độ trễ.
    - Khi phát hiện đại từ/từ nối ngữ cảnh (`"nó"`, `"cái đó"`, `"mức này"`, `"vậy thì"`, `"còn hồ sơ"`, `"như thế nào"`...), lấy 2–3 lượt hội thoại gần nhất và dùng `RotatingResilientLLM` (`temperature=0.0, max_tokens=120`) viết lại thành câu hỏi độc lập trước khi truyền vào `SmartRAGChain.filter_documents()` và `get_contact_footer()`, đồng thời vẫn hiển thị nguyên văn câu hỏi gốc trên bong bóng chat.
-3. **`SmartRAGChain.filter_documents` trong `rag.py`:**
-   - Truy vấn **`similarity_search_with_relevance_scores` 1 lần duy nhất** trên CPU (gộp sẵn từ khóa tăng cường vào `search_query`), lọc theo ngưỡng tương đồng Cosine `SIMILARITY_THRESHOLD = 0.38`.
-   - Định tuyến tệp nguồn (`target_source`) và truy xuất dự phòng có kiểm soát (`filter={"source": target_source}`) khi thiếu các điều khoản cốt lõi (học bổng Mức 1/SPKT, hoàn trả học phí `QT-SV-04`, hỗ trợ chi phí học tập `Điều 10–11`, CTXH, công tác sinh viên, ứng xử, ATTT).
+3. **Hybrid Search tổng quát với RRF (`SmartRAGChain.filter_documents` trong `rag.py`):**
+   - Kết hợp **Dense Vector Search** (`ChromaDB` + `bkai-foundation-models/vietnamese-bi-encoder`) và **Lexical Search** (`rank_bm25.BM25Okapi`, cache một lần qua `@st.cache_resource`) bằng công thức **Reciprocal Rank Fusion (RRF)** áp dụng đồng nhất cho toàn bộ PDF hiện có và tương lai (không rẽ nhánh cứng theo từng tệp hay từng câu hỏi).
+   - **Mở rộng đoạn lân cận (`anchor_idx - 1`, `+1`, `+2`, `+3`):** Tự động gom các đoạn liền kề trên cùng trang/bảng PDF tách cột (như phụ lục quy đổi ngày CTXH QĐ 55 hoặc khung xử lý kỷ luật QĐ 1079) và áp dụng **Dual Refusal Gate** (`SIMILARITY_THRESHOLD = 0.38`, kết hợp độ phủ từ khóa/điểm RRF).
    - Loại bỏ hoàn toàn các nghị quyết hành chính (`nghi_quyet_71.pdf`, `nghi_quyet_72.pdf`, `nghi_quyet_153.pdf`) khỏi kết quả và danh sách ingest (`EXCLUDED_FILES`).
 4. **`RotatingResilientLLM` đa tầng chịu lỗi & Caching tài nguyên (`@st.cache_resource`):**
-   - **Tier 1 (Chính):** **Groq LPU** với cơ chế giữ ấm client (`_GROQ_CLIENTS_CACHE`), bỏ qua nhanh model không khả dụng (`_DEAD_GROQ_MODELS`) và xoay vòng qua các model `openai/gpt-oss-120b`, `qwen/qwen3.8-27b`, `openai/gpt-oss-20b`, `llama-3.3-70b-versatile`, `llama-3.1-8b-instant`, `gemma2-9b-it`. Riêng `rewrite_conversational_query()` ưu tiên model nhẹ tốc độ cao (`llama-3.1-8b-instant` / `qwen/qwen3.8-27b`).
+   - **Tier 1 (Chính):** **Groq LPU** với cơ chế giữ ấm client (`_GROQ_CLIENTS_CACHE`), bỏ qua nhanh model không khả dụng (`_DEAD_GROQ_MODELS`), ưu tiên model phản hồi nhanh không tiêu tốn token suy luận **`qwen/qwen3.8-27b`** (`max_output_tokens=2048`), dự phòng `openai/gpt-oss-120b` / `openai/gpt-oss-20b` (cấu hình tường minh `reasoning_effort="low"`, `max_tokens >= 2500` để chống cắt cụt câu trả lời) và các model khác.
    - **Tier 2 (Dự phòng 1):** **Local LM Studio** (`http://127.0.0.1:1234/v1`, model `qwen/qwen3.5-4b`).
    - **Tier 2 (Dự phòng 2):** **Gemini** (`gemini-2.5-flash`) nếu có key hợp lệ.
-   - **Caching tài nguyên:** `get_embedding_model()`, `get_vector_db()`, `get_rag_chain()`, `get_rewriter_llm()`, `load_chain()` đều được cache qua `@st.cache_resource(show_spinner=False)`.
-5. **Giao diện Streamlit chuẩn VLUTE (`app.py`):**
+   - **Caching tài nguyên:** `get_embedding_model()`, `get_vector_db()`, `build_bm25_index()`, `get_rag_chain()`, `get_rewriter_llm()`, `load_chain()` đều được cache qua `@st.cache_resource(show_spinner=False)`.
+5. **Giao diện Streamlit Optimistic UI chuẩn VLUTE (`app.py`):**
+   - **Tối ưu độ trễ giao diện xuống dưới 0.3s:** Nén `lucas_avatar.png` xuống `96x96px` (`4,943` bytes), dùng callback **`on_click=submit_user_query`** / **`on_click=reset_chat_history`** loại bỏ double `st.rerun()`, render ngay bong bóng câu hỏi + hiệu ứng *typing dots* trước khi gọi RAG, và thay iframe JS cuộn trang bằng CSS **`overflow-anchor`** (`#chat-scroll-anchor`, giữ `padding-bottom: 120px`).
    - Header hiển thị logo VLUTE (`logo_vlute.png`), avatar Lucas (`lucas_avatar.png`), và 3 huy hiệu trạng thái.
-   - Hiển thị huy hiệu **`✅ Đã đối soát thành công (Xs)`** ở đầu câu trả lời hợp lệ (tự động ẩn khi trả về `REFUSAL_MESSAGE`).
+   - Hiển thị huy hiệu **`✅ Đã đối soát thành công (Xs)`** ở đầu câu trả lời hợp lệ; tự động ẩn huy hiệu và loại bỏ dấu đầu dòng thừa khi trả về `REFUSAL_MESSAGE`.
    - **Ẩn hoàn toàn khối `st.expander("📑 CĂN CỨ VĂN BẢN TRÍCH DẪN")`** trong `render_sources()` để giữ khung chat tinh gọn.
    - **Chân trang liên hệ động (`get_contact_footer`):** Hiển thị đúng đơn vị phụ trách và hỗ trợ **tuyến phối hợp liên phòng ban `CTSV – Đào tạo – KHTC`** cho quy trình hoàn trả học phí thừa (`QT-SV-04`).
-   - **Sidebar Dark Charcoal đồng bộ động:** Nạp toàn bộ 4 đơn vị trực tiếp từ `departments.json` kèm nút làm mới hội thoại; hệ thống nút gợi ý nhanh (4 nút đầu trang + 2 nút liên quan sau mỗi câu trả lời) đọc từ `prompts.json` với `on_click=submit_user_query`.
+   - **Sidebar Dark Charcoal & Lưới gợi ý 4 nhóm (`prompts.json`):** Sidebar nạp động 4 đơn vị từ `departments.json`; màn hình chào mừng hiển thị đủ **4 nhóm chuyên đề (`🎓 Học bổng & Khen thưởng`, `💰 Học phí & Miễn giảm`, `🤝 Công tác xã hội & Rèn luyện`, `📋 Học vụ & Tốt nghiệp`)** với **16 nút gợi ý** (4 nút/nhóm).
 
 ---
 
-## 📊 Kết quả Đánh giá Định lượng RAG (`evaluation/eval_results.csv`)
+## 📊 Kết quả Đánh giá Định lượng RAG
 
-Bộ đánh giá gồm **35 câu hỏi thực tế** (`evaluation/test_dataset.json`): **30 câu trong phạm vi** (phân bổ đều qua 7 văn bản quy chế trong `chroma_db`) và **5 câu ngoài phạm vi / nghị quyết bị loại trừ**, thực thi tự động bằng `evaluation/run_eval.py`.
+### 1. Kiểm thử Hybrid Search quy mô lớn (`evaluation/stress_test_70.json` & `test_dataset.json`)
+Thực thi bằng `evaluation/run_stress_test_70.py` sau nâng cấp Hybrid Search RRF (xuất chi tiết ra `evaluation/stress_test_70_results.csv`):
+
+| Bộ kiểm thử | Quy mô | Độ chính xác tổng | Trong phạm vi (In-scope) | Từ chối OOS | Độ trễ truy xuất TB |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **`stress_test_70.json`** | **70 câu** *(60 trong phạm vi + 10 OOS)* | **95.71% (67/70)** | **95.00% (57/60)** *(100% đúng file nguồn ở 3 câu sót từ khóa)* | **100.00% (10/10)** | **74.0 ms** |
+| **`test_dataset.json`** | **35 câu** *(30 trong phạm vi + 5 OOS)* | **100.00% (35/35)** | **100.00% (30/30)** | **100.00% (5/5)** | **81.9 ms** |
+
+### 2. Đánh giá End-to-End LLM Judge (`evaluation/eval_results.csv`)
+Bộ đánh giá end-to-end gồm **35 câu hỏi thực tế** (`evaluation/test_dataset.json`), thực thi tự động bằng `evaluation/run_eval.py`:
 
 | Chỉ số đánh giá | Kết quả đo được | Ghi chú |
 | :--- | :---: | :--- |
@@ -103,18 +114,21 @@ D:\VLUTEBOT\
 │   ├── nghi_quyet_72.pdf           # Bị loại trừ trong EXCLUDED_FILES
 │   └── nghi_quyet_153.pdf          # Bị loại trừ trong EXCLUDED_FILES
 ├── chroma_db/                      # Vector Database (386 chunks, 768 chiều)
-├── evaluation/                     # Bộ đánh giá định lượng RAG
+├── evaluation/                     # Bộ đánh giá định lượng RAG & Hybrid Search
 │   ├── test_dataset.json           # 35 câu hỏi kiểm thử + Ground Truth + expected_source
-│   ├── run_eval.py                 # Script chạy đánh giá SmartRAGChain & chấm điểm LLM Judge
-│   └── eval_results.csv            # Kết quả thực nghiệm chi tiết từng câu
-├── app.py                          # Giao diện web Streamlit & điều phối 3 nhánh xử lý
-├── rag.py                          # SmartRAGChain, RotatingResilientLLM, HuggingFaceEmbeddings
+│   ├── stress_test_70.json         # 70 câu hỏi stress test (60 in-scope đa dạng bảng/phụ lục + 10 OOS)
+│   ├── run_eval.py                 # Script chạy đánh giá end-to-end & chấm điểm LLM Judge
+│   ├── run_stress_test_70.py       # Script benchmark Hybrid Search trên 70 + 35 câu hỏi
+│   ├── eval_results.csv            # Kết quả đánh giá end-to-end (35 câu)
+│   └── stress_test_70_results.csv  # Kết quả benchmark chi tiết 70 câu stress test
+├── app.py                          # Giao diện web Streamlit Optimistic UI & điều phối 3 nhánh
+├── rag.py                          # SmartRAGChain (Hybrid RRF + BM25), RotatingResilientLLM
 ├── ingest.py                       # Script trích xuất PDF (PyMuPDF) và xây dựng ChromaDB
 ├── departments.json                # Danh bạ 4 phòng ban/trung tâm dùng cho Sidebar & Footer
-├── prompts.json                    # Danh sách gợi ý đầu trang và theo 5 chủ đề
-├── requirements.txt                # Danh mục thư viện phụ thuộc
+├── prompts.json                    # 4 gợi ý ban đầu + 16 gợi ý theo 4 nhóm chuyên đề
+├── requirements.txt                # Danh mục thư viện phụ thuộc (gồm rank-bm25)
 ├── logo_vlute.png                  # Logo trường VLUTE
-├── lucas_avatar.png                # Avatar trợ lý Lucas
+├── lucas_avatar.png                # Avatar trợ lý Lucas (nén 96x96px, ~4.9 KB)
 └── README.md                       # Tài liệu tổng quan dự án
 ```
 
@@ -149,9 +163,12 @@ streamlit run app.py --server.port 8501
 ```
 Truy cập trình duyệt tại: **`http://localhost:8501`**
 
-### 5. Chạy Đánh giá Định lượng RAG
+### 5. Chạy Đánh giá Định lượng RAG & Stress Test
 ```powershell
-# Chạy đánh giá tự động 35 câu hỏi RAG và xuất evaluation/eval_results.csv
+# Chạy benchmark Hybrid Search (70 câu stress test + 35 câu baseline) và xuất evaluation/stress_test_70_results.csv
+python evaluation/run_stress_test_70.py
+
+# Chạy đánh giá end-to-end 35 câu hỏi RAG (kèm LLM Judge) và xuất evaluation/eval_results.csv
 python evaluation/run_eval.py
 ```
 
