@@ -21,6 +21,12 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
 from langchain_openai import ChatOpenAI
+from ingest import (
+    sync_knowledge_base_from_data_dir,
+    SUPPORTED_EXTENSIONS,
+    DATA_PATH,
+    EXCLUDED_FILES as INGEST_EXCLUDED_FILES,
+)
 
 DEPT_FILE = Path(__file__).parent / "departments.json"
 DB_PATH = str(Path(__file__).parent / "chroma_db")
@@ -517,6 +523,7 @@ _GLOBAL_LLM = None
 _GLOBAL_CHAIN = None
 _GLOBAL_REWRITER_LLM = None
 _GLOBAL_BM25_DATA = None
+_LAST_DATA_DIR_SIGNATURE = None
 _DEAD_GROQ_MODELS = set()
 _GROQ_CLIENTS_CACHE = {}
 _CURRENT_KEY_INDEX = 0
@@ -639,7 +646,8 @@ def _expand_bm25_corpus(raw_docs: list[str], raw_metas: list[dict], departments:
         for u in u_set:
             df_counts[u] = df_counts.get(u, 0) + 1
 
-        meta_str = f"{doc.metadata.get('title', '')} {doc.metadata.get('doc_code', '')} {src_name.replace('_', ' ').replace('.pdf', '')}"
+        src_base = os.path.splitext(src_name)[0].replace("_", " ")
+        meta_str = f"{doc.metadata.get('title', '')} {doc.metadata.get('doc_code', '')} {src_base}"
         meta_all = set(tokenize_vietnamese_for_bm25(meta_str, include_bigrams=True))
         meta_unigram_sets.append({t for t in meta_all if "_" not in t})
         meta_bigram_sets.append({t for t in meta_all if "_" in t})
@@ -683,6 +691,58 @@ def get_bm25_index():
     departments = load_departments_config()
     _GLOBAL_BM25_DATA = _expand_bm25_corpus(raw_docs, raw_metas, departments)
     return _GLOBAL_BM25_DATA
+
+
+def get_data_dir_signature(data_dir: str = DATA_PATH) -> tuple:
+    """Tính nhanh chữ ký (tên, mtime, kích thước) của các tệp hợp lệ trong thư mục data/ (< 5ms)."""
+    if not os.path.isdir(data_dir):
+        return ()
+    excluded_set = set(EXCLUDED_SOURCE_FILES) | {str(f).lower() for f in INGEST_EXCLUDED_FILES}
+    sig_items = []
+    try:
+        with os.scandir(data_dir) as it:
+            for entry in it:
+                fname = entry.name
+                if fname.startswith(("~$", ".")) or not entry.is_file():
+                    continue
+                ext = os.path.splitext(fname)[1].lower()
+                if ext not in SUPPORTED_EXTENSIONS:
+                    continue
+                fname_lower = fname.lower()
+                if fname_lower in excluded_set or fname_lower.startswith("nghi_quyet_"):
+                    continue
+                st_res = entry.stat()
+                sig_items.append((fname, round(st_res.st_mtime, 2), st_res.st_size))
+    except Exception:
+        return ()
+    sig_items.sort()
+    return tuple(sig_items)
+
+
+def auto_sync_knowledge_base(force: bool = False) -> dict:
+    """
+    Kiểm tra chữ ký thư mục data/ với chi phí < 5ms; chỉ đồng bộ ChromaDB & làm mới BM25 RRF
+    khi phát hiện có file mới, file sửa đổi hoặc file bị xóa.
+    """
+    global _LAST_DATA_DIR_SIGNATURE, _GLOBAL_BM25_DATA
+    current_sig = get_data_dir_signature(DATA_PATH)
+    if not force and _LAST_DATA_DIR_SIGNATURE == current_sig:
+        return {"changed": False, "added": [], "updated": [], "deleted": []}
+
+    vector_db = get_vector_db()
+    sync_res = sync_knowledge_base_from_data_dir(vector_db=vector_db)
+    _LAST_DATA_DIR_SIGNATURE = current_sig
+
+    if sync_res.get("changed"):
+        _GLOBAL_BM25_DATA = None
+        try:
+            get_bm25_index.clear()
+        except Exception:
+            pass
+        get_bm25_index()
+        print(f"[AUTO-SYNC] Đồng bộ hoàn tất và đã làm mới Hybrid BM25 Index: {sync_res}")
+
+    return sync_res
 
 
 def _parse_keys_value(raw_val):

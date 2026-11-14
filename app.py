@@ -3,11 +3,20 @@ import re
 import json
 import html
 import time
+import random
 import base64
 import traceback
 import unicodedata
 import streamlit as st
-from rag import get_rag_chain, DOC_CATALOG, extract_article_info, REFUSAL_MESSAGE, load_departments_config, rewrite_conversational_query
+from rag import (
+    get_rag_chain,
+    DOC_CATALOG,
+    extract_article_info,
+    REFUSAL_MESSAGE,
+    load_departments_config,
+    rewrite_conversational_query,
+    auto_sync_knowledge_base,
+)
 
 st.set_page_config(
     page_title="VLUTEBOT - Trợ lý Lucas", 
@@ -978,6 +987,7 @@ def reset_chat_history():
     """Callback làm mới hội thoại không cần gọi st.rerun() thủ công."""
     st.session_state.messages = []
     st.session_state.pending_user_query = None
+    st.session_state.pop("welcome_prompts", None)
 with st.sidebar:
     if LOGO_B64:
         st.markdown(f"""
@@ -1071,6 +1081,7 @@ try:
     if "qa_chain" not in st.session_state:
         st.session_state.qa_chain = load_chain()
     qa_chain = st.session_state.qa_chain
+    auto_sync_knowledge_base()
 except Exception as e:
     st.error(f"Lỗi khởi tạo hệ thống: {e}")
     st.stop()
@@ -1253,7 +1264,7 @@ def normalize_query_intent(query: str) -> str:
 # ==========================================
 WELCOME_CONTENT = (
     "👋 **Xin chào! Mình là Lucas** – trợ lý hỗ trợ tra cứu Quy chế Đào tạo & Quy định sinh viên VLUTE.\n\n"
-    "Bạn có thể chọn nhanh câu hỏi theo **4 nhóm chủ đề bên dưới** hoặc nhập trực tiếp thắc mắc về học bổng, miễn giảm học phí, công tác xã hội, kỷ luật hay học vụ!"
+    "Bạn có thể chọn nhanh một trong các câu hỏi gợi ý bên dưới hoặc nhập trực tiếp thắc mắc về học bổng, miễn giảm học phí, công tác xã hội, kỷ luật hay học vụ!"
 )
 
 if "messages" not in st.session_state or len(st.session_state.messages) == 0:
@@ -1282,6 +1293,39 @@ def load_prompts_config() -> dict:
         except Exception:
             pass
     return {"initial_prompts": [], "categories": {}}
+
+
+def get_random_welcome_prompts() -> list[dict]:
+    """Lấy ngẫu nhiên 4 câu hỏi gợi ý từ 16 câu trong categories (ưu tiên 1 câu mỗi nhóm chủ đề)."""
+    config = load_prompts_config()
+    categories = config.get("categories", {})
+    selected = []
+    remaining_pool = []
+
+    for _cat_key, cat_data in categories.items():
+        prompts = [
+            p for p in cat_data.get("prompts", [])
+            if isinstance(p, dict) and p.get("label") and p.get("query")
+        ]
+        if prompts:
+            chosen = random.choice(prompts)
+            selected.append(chosen)
+            for p in prompts:
+                if p != chosen:
+                    remaining_pool.append(p)
+
+    if len(selected) > 4:
+        selected = random.sample(selected, 4)
+    elif len(selected) < 4:
+        fallback_pool = remaining_pool or [
+            p for p in config.get("initial_prompts", [])
+            if isinstance(p, dict) and p.get("label") and p.get("query")
+        ]
+        need = 4 - len(selected)
+        if fallback_pool:
+            selected.extend(random.sample(fallback_pool, min(need, len(fallback_pool))))
+
+    return selected[:4]
 
 
 # Callback gán câu hỏi trực tiếp vào session_state trước khi rerun
@@ -1452,54 +1496,7 @@ def get_contact_footer(query: str, retrieved_docs=None, is_refusal: bool = False
   </ul>
 </div>"""
 
-    # 1. Ưu tiên cao nhất: Học bổng, khen thưởng, rèn luyện, kỷ luật, CTXH -> LUÔN về Phòng CTSV
-    ctsv_priority_keywords = [
-        "học bổng", "kkht", "khen thưởng", "rèn luyện", "điểm rèn luyện",
-        "kỷ luật", "công tác xã hội", "ctxh", "nội quy", "ứng xử"
-    ]
-    if any(kw in q_raw for kw in ctsv_priority_keywords):
-        return _build_contact_footer_html(
-            dept_name=ctsv_dept["name"],
-            dept_location=ctsv_dept["location"],
-            dept_phone=ctsv_dept["phone"],
-            dept_email=ctsv_dept["email"]
-        )
-
-    # 2. Miễn giảm học phí / Hỗ trợ chi phí học tập / Trợ cấp xã hội -> Đầu mối chính Phòng CTSV (A1.102) phối hợp Phòng KHTC
-    mien_giam_keywords = [
-        "miễn giảm học phí", "miễn giảm", "giảm học phí", "miễn học phí",
-        "hỗ trợ chi phí học tập", "hỗ trợ chi phí", "trợ cấp xã hội"
-    ]
-    if any(kw in q_raw for kw in mien_giam_keywords):
-        return _build_contact_footer_html(
-            dept_name="Phòng Công tác Sinh viên (VLUTE) – Đầu mối tiếp nhận hồ sơ (Phối hợp Phòng Kế hoạch - Tài chính)",
-            dept_location=ctsv_dept["location"],
-            dept_phone=ctsv_dept["phone"],
-            dept_email=ctsv_dept["email"]
-        )
-
-    # 3. Hoàn trả học phí thừa (QT-SV-04) -> Tuyến phối hợp CTSV – Đào tạo – KHTC
-    hoan_tra_keywords = [
-        "hoàn trả học phí", "học phí thừa", "hoàn phí", "hoàn tiền học phí",
-        "rút tiền học phí", "nộp thừa", "hoàn trả"
-    ]
-    if any(kw in q_raw for kw in hoan_tra_keywords):
-        return _build_hoan_tra_footer()
-
-    # 3b. Chỉ định tuyến độc lập về Phòng KHTC khi hỏi về nộp học phí, hóa đơn, biên lai
-    khtc_exclusive_keywords = [
-        "rút tiền", "nộp học phí", "đóng học phí",
-        "thu học phí", "hóa đơn", "biên lai"
-    ]
-    if any(kw in q_raw for kw in khtc_exclusive_keywords):
-        return _build_contact_footer_html(
-            dept_name=khtc_dept["name"],
-            dept_location=khtc_dept["location"],
-            dept_phone=khtc_dept["phone"],
-            dept_email=khtc_dept["email"]
-        )
-
-    # 4. Nếu có retrieved_docs (và không phải từ chối): lấy metadata phòng ban từ tài liệu
+    # 1. Ưu tiên cao nhất: Lấy trực tiếp thông tin phòng ban từ metadata của tài liệu truy xuất hàng đầu (retrieved_docs[0])
     if retrieved_docs and not is_refusal and isinstance(retrieved_docs, (list, tuple)) and len(retrieved_docs) > 0:
         first_item = retrieved_docs[0]
         meta = getattr(first_item, "metadata", None)
@@ -1522,6 +1519,53 @@ def get_contact_footer(query: str, retrieved_docs=None, is_refusal: bool = False
                 dept_phone=meta.get("dept_phone", ctsv_dept["phone"]),
                 dept_email=meta.get("dept_email", ctsv_dept["email"])
             )
+
+    # 2. Dự phòng theo từ khóa câu hỏi: Học bổng, khen thưởng, rèn luyện, kỷ luật, CTXH -> Phòng CTSV
+    ctsv_priority_keywords = [
+        "học bổng", "kkht", "khen thưởng", "rèn luyện", "điểm rèn luyện",
+        "kỷ luật", "công tác xã hội", "ctxh", "nội quy", "ứng xử"
+    ]
+    if any(kw in q_raw for kw in ctsv_priority_keywords):
+        return _build_contact_footer_html(
+            dept_name=ctsv_dept["name"],
+            dept_location=ctsv_dept["location"],
+            dept_phone=ctsv_dept["phone"],
+            dept_email=ctsv_dept["email"]
+        )
+
+    # 3. Miễn giảm học phí / Hỗ trợ chi phí học tập / Trợ cấp xã hội -> Đầu mối chính Phòng CTSV (A1.102) phối hợp Phòng KHTC
+    mien_giam_keywords = [
+        "miễn giảm học phí", "miễn giảm", "giảm học phí", "miễn học phí",
+        "hỗ trợ chi phí học tập", "hỗ trợ chi phí", "trợ cấp xã hội"
+    ]
+    if any(kw in q_raw for kw in mien_giam_keywords):
+        return _build_contact_footer_html(
+            dept_name="Phòng Công tác Sinh viên (VLUTE) – Đầu mối tiếp nhận hồ sơ (Phối hợp Phòng Kế hoạch - Tài chính)",
+            dept_location=ctsv_dept["location"],
+            dept_phone=ctsv_dept["phone"],
+            dept_email=ctsv_dept["email"]
+        )
+
+    # 4. Hoàn trả học phí thừa (QT-SV-04) -> Tuyến phối hợp CTSV – Đào tạo – KHTC
+    hoan_tra_keywords = [
+        "hoàn trả học phí", "học phí thừa", "hoàn phí", "hoàn tiền học phí",
+        "rút tiền học phí", "nộp thừa", "hoàn trả"
+    ]
+    if any(kw in q_raw for kw in hoan_tra_keywords):
+        return _build_hoan_tra_footer()
+
+    # 4b. Chỉ định tuyến độc lập về Phòng KHTC khi hỏi về nộp học phí, hóa đơn, biên lai
+    khtc_exclusive_keywords = [
+        "rút tiền", "nộp học phí", "đóng học phí",
+        "thu học phí", "hóa đơn", "biên lai"
+    ]
+    if any(kw in q_raw for kw in khtc_exclusive_keywords):
+        return _build_contact_footer_html(
+            dept_name=khtc_dept["name"],
+            dept_location=khtc_dept["location"],
+            dept_phone=khtc_dept["phone"],
+            dept_email=khtc_dept["email"]
+        )
 
     # 5. Quét các phòng ban còn lại (Đào tạo, CNTT...) trong departments.json
     for dept_key, dept_info in departments.items():
@@ -1767,43 +1811,25 @@ for idx, message in enumerate(st.session_state.messages):
                     render_followup_suggestions(q_text or msg_content, key_suffix=str(idx))
 
 # ==========================================
-# KHỐI GỢI Ý 4 NHÓM CHỦ ĐỀ (KHI CHƯA BẮT ĐẦU HỎI)
+# KHỐI 4 CÂU HỎI GỢI Ý NGẪU NHIÊN (LƯỚI 2x2 KHI CHƯA BẮT ĐẦU HỎI)
 # ==========================================
 if len(st.session_state.messages) <= 1 and not current_user_query:
-    st.markdown('<div class="quick-prompt-title">💡 Chọn nhanh câu hỏi theo 4 nhóm chủ đề quy chế:</div>', unsafe_allow_html=True)
-    prompts_cfg = load_prompts_config()
-    categories = prompts_cfg.get("categories", {})
-    cat_items = list(categories.items())[:4]
+    if "welcome_prompts" not in st.session_state or not st.session_state.welcome_prompts:
+        st.session_state.welcome_prompts = get_random_welcome_prompts()
 
-    if cat_items:
-        for row_start in range(0, len(cat_items), 2):
-            row_cats = cat_items[row_start:row_start + 2]
-            cols = st.columns(len(row_cats))
-            for col_idx, (cat_key, cat_data) in enumerate(row_cats):
-                with cols[col_idx]:
-                    cat_name = html.escape(str(cat_data.get("name", cat_key)))
-                    st.markdown(f'<div class="prompt-group-header">{cat_name}</div>', unsafe_allow_html=True)
-                    for p_idx, p_item in enumerate(cat_data.get("prompts", [])[:4]):
-                        st.button(
-                            p_item["label"],
-                            key=f"welcome_{cat_key}_{p_idx}",
-                            use_container_width=True,
-                            on_click=submit_user_query,
-                            args=(p_item["query"],)
-                        )
-    else:
-        init_items = prompts_cfg.get("initial_prompts", [])[:4]
-        col1, col2 = st.columns(2)
-        for i, item in enumerate(init_items):
-            target_col = col1 if i % 2 == 0 else col2
-            with target_col:
-                st.button(
-                    item["label"],
-                    key=f"init_prompt_{i}",
-                    use_container_width=True,
-                    on_click=submit_user_query,
-                    args=(item["query"],)
-                )
+    st.markdown('<div class="quick-prompt-title">💡 Gợi ý câu hỏi nhanh dành cho bạn:</div>', unsafe_allow_html=True)
+    welcome_items = st.session_state.welcome_prompts[:4]
+    col1, col2 = st.columns(2)
+    for i, item in enumerate(welcome_items):
+        target_col = col1 if i % 2 == 0 else col2
+        with target_col:
+            st.button(
+                item["label"],
+                key=f"welcome_prompt_{i}",
+                use_container_width=True,
+                on_click=submit_user_query,
+                args=(item["query"],)
+            )
 
 if current_user_query:
     new_msg_idx = len(st.session_state.messages)
