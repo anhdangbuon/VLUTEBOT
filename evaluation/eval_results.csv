@@ -1,0 +1,124 @@
+﻿id,category,expected_source,is_out_of_scope,question,retrieved_sources,retrieval_hit,is_refusal,refusal_correct,judge_score,judge_reason,latency_sec,answer
+Q01,Học bổng & Khen thưởng (QĐ 201),xet_cap_hoc_bong.pdf,False,Sinh viên cần đăng ký tối thiểu bao nhiêu tín chỉ và đạt điểm TBC học kỳ từ bao nhiêu trở lên để được xét học bổng khuyến khích học tập thông thường?,xet_cap_hoc_bong.pdf,1,False,,5,đáp án đúng và bám sát văn bản,4.189,"- **Số tín chỉ tối thiểu:** Đăng ký ít nhất **17 tín chỉ** trong học kỳ chính (không áp dụng cho học kỳ đầu khóa).  
+- **Điểm trung bình tích lũy (TBC) tối thiểu:** Đạt **từ 2,5 trở lên** trên thang điểm 4,0 (và không có học phần nào có điểm dưới C).  
+
+Đây là các tiêu chuẩn cơ bản để được xét **học bổng khuyến khích học tập** theo Điều 17 của quy định."
+Q02,Học bổng & Khen thưởng (QĐ 201),xet_cap_hoc_bong.pdf,False,Điều kiện điểm trung bình học kỳ và xếp loại rèn luyện đối với Học bổng KKHT Mức 1 (Học bổng Sư phạm kỹ thuật) là gì?,xet_cap_hoc_bong.pdf,1,False,,5,"đáp án đúng, đầy đủ và không thêm thông tin sai lệch",9.313,"**Điều kiện đối với Học bổng KKHT Mức 1 (Học bổng Sư phạm kỹ thuật):**
+
+- **Điểm trung bình học kỳ (TBC):**  
+  - ≥ 3,2 trên thang 4,0 (điểm TBC tính từ kết quả kiểm tra cuối học phần lần thứ 1).  
+
+- **Xếp loại rèn luyện:**  
+  - Phải đạt **Tốt** trở lên (đối với mức 1; các mức thấp hơn yêu cầu “Khá trở lên”).  
+
+*(Các điều kiện khác như đăng ký tối thiểu 17 tín chỉ, không có học phần nào dưới C, không bị kỷ luật… cũng áp dụng, nhưng yêu cầu về TBC và xếp loại rèn luyện được nêu trên.)*"
+Q03,Học bổng & Khen thưởng (QĐ 201),xet_cap_hoc_bong.pdf,False,"Các mức cấp học bổng khuyến khích học tập (Mức 1, Mức 2, Mức 3, Mức 4) được tính theo công thức nào tại Điều 18?",xet_cap_hoc_bong.pdf,1,False,,5,Câu trả lời đúng đầy đủ công thức và không thêm thông tin ngoài văn bản,12.986,"- **Mức 1 (Học bổng SPKT)**: Đơn giá học phí × 17 tín chỉ  
+- **Mức 2 (Loại Xuất sắc)**: Mức 1 × 0,75  
+- **Mức 3 (Loại Giỏi)**: Mức 1 × 0,5  
+- **Mức 4 (Loại Khá)**: Mức 1 × 0,25"
+Q04,Học bổng & Khen thưởng (QĐ 201),xet_cap_hoc_bong.pdf,False,"Sau khi được cấp học bổng Sư phạm kỹ thuật (SPKT), sinh viên phải đảm bảo điều kiện đăng ký tín chỉ gì ở học kỳ tiếp theo?",xet_cap_hoc_bong.pdf,1,False,,5,"đáp án đúng, đầy đủ và bám sát văn bản",10.182,"- Sau khi được cấp học bổng Sư phạm Kỹ thuật (SPKT), sinh viên **phải đăng ký tối thiểu 3 tín chỉ học phần SPKT** trong học kỳ chính tiếp theo (trong trường hợp chưa hoàn thành toàn bộ chương trình đào tạo SPKT)."
+Q05,Học bổng & Khen thưởng (QĐ 201),xet_cap_hoc_bong.pdf,False,Sinh viên có hoàn cảnh khó khăn muốn xét học bổng vượt khó thì quy định nằm ở chương và điều nào trong quy chế học bổng?,xet_cap_hoc_bong.pdf,1,False,,3,"Missing Điều 32, incomplete answer",10.432,"- **Chương VI** – “Học bổng vượt khó cho sinh viên”  
+- **Điều 31** – quy định về **đối tượng** được hỗ trợ học bổng vượt khó (sinh viên có hoàn cảnh gia đình khó khăn và có ý chí vươn lên)."
+Q06,Miễn giảm học phí (QĐ 904),quy_dinh_mien_giam_hoc_phi.pdf,False,Những đối tượng sinh viên nào được miễn học phí theo Điều 5 của Quy định miễn giảm học phí QĐ 904?,quy_dinh_mien_giam_hoc_phi.pdf,1,False,,2,"Missing major groups, incomplete answer",4.38,"**Đối tượng được miễn học phí theo Điều 5**  
+
+- Sinh viên thuộc **đối tượng được ưu đãi theo Pháp lệnh “Ưu đãi người có công với cách mạng” (PL 02/2020/UBTVQH14)**, cụ thể:  
+  - **Anh hùng Lực lượng Vũ trang Nhân dân** và **Anh hùng Lao động** trong thời kỳ kháng chiến, cùng **con của** các anh hùng này;  
+  - Người **có công giúp đỡ cách mạng** và đã được tặng **Kỷ niệm chương “Tổ quốc ghi công”** hoặc **Bằng “Có công với nước”** (cũng như các thành viên trong gia đình được tặng).  
+
+*Chỉ những sinh viên thuộc các nhóm trên, đang theo học tại các cơ sở giáo dục thuộc hệ thống giáo dục quốc dân, mới được hưởng chế độ miễn học phí.*"
+Q07,Miễn giảm học phí (QĐ 904),quy_dinh_mien_giam_hoc_phi.pdf,False,Đối tượng sinh viên nào được giảm 70% học phí theo Điều 6 Quy định miễn giảm học phí?,quy_dinh_mien_giam_hoc_phi.pdf; xet_cap_hoc_bong.pdf,1,False,,5,"Đáp án đầy đủ, chính xác và không thêm thông tin sai lệch",5.527,"- **Đối tượng được giảm 70 % học phí (Điều 6):**  
+  - Sinh viên là người dân tộc thiểu số (trừ một số ít không thuộc đối tượng này), **và**  
+  - Bản thân sinh viên cùng cha hoặc mẹ có nơi thường trú tại:  
+    - Thôn/bản **đặc biệt khó khăn**,  
+    - Xã khu vực **III** thuộc vùng đồng bào dân tộc thiểu số và miền núi,  
+    - Xã **đặc biệt khó khăn** ở vùng bãi ngang, ven biển và hải đảo,  
+
+theo quy định của cơ quan có thẩm quyền."
+Q08,Miễn giảm học phí (QĐ 904),quy_dinh_mien_giam_hoc_phi.pdf,False,Sinh viên là con của viên chức và người lao động đang công tác tại Nhà trường có thuộc diện được giảm học phí không?,quy_dinh_mien_giam_hoc_phi.pdf,1,False,,4,"Đúng phần lớn ý chính, thiếu chi tiết nhỏ không đáng kể",5.122,"- **Có**, sinh viên là con của viên chức và người lao động đang công tác tại Nhà trường thuộc **đối tượng được giảm 50 % học phí** (Điều 7, quy định giảm học phí)."
+Q09,Miễn giảm học phí (QĐ 904),quy_dinh_mien_giam_hoc_phi.pdf,False,"Sinh viên thuộc diện miễn, giảm học phí phải nộp hồ sơ bao nhiêu lần trong cả khóa học và trường hợp nào phải nộp bổ sung?",quy_dinh_mien_giam_hoc_phi.pdf,1,False,,5,đáp án chính xác và bám sát văn bản,13.12,"- **Số lần nộp hồ sơ:** Sinh viên được miễn, giảm học phí chỉ cần chuẩn bị **một bộ hồ sơ duy nhất** và nộp lần đầu cho toàn bộ thời gian học tập.  
+
+- **Trường hợp phải nộp hồ sơ bổ sung:** Nếu sinh viên thuộc **hộ nghèo** hoặc **hộ cận nghèo**, họ phải **nộp bổ sung giấy xác nhận hộ nghèo / hộ cận nghèo** vào **đầu mỗi học kỳ** để làm cơ sở xét duyệt miễn, giảm học phí cho kỳ học tiếp theo."
+Q10,Miễn giảm học phí (QĐ 904),quy_dinh_mien_giam_hoc_phi.pdf,False,Mức hỗ trợ chi phí học tập đối với sinh viên dân tộc thiểu số thuộc hộ nghèo/cận nghèo theo Điều 11 được tính bằng bao nhiêu phần trăm mức lương?,quy_dinh_mien_giam_hoc_phi.pdf,1,False,,5,"Đáp án đúng, đầy đủ và trùng khớp với văn bản trích xuất",11.024,- Mức hỗ trợ chi phí học tập cho sinh viên dân tộc thiểu số thuộc hộ nghèo hoặc cận nghèo được tính **bằng 60 % mức lương tối thiểu chung** (theo Điều 11).
+Q11,Hoàn trả học phí thừa (QT-SV-04),quy_trinh_hoan_tra_hoc_phi.pdf,False,Những đối tượng sinh viên nào đủ điều kiện nộp đơn đề nghị hoàn trả học phí thừa theo quy trình QT-SV-04?,quy_trinh_hoan_tra_hoc_phi.pdf,1,False,,5,Câu trả lời chính xác và đầy đủ các điều kiện đối tượng theo văn bản gốc.,9.273,"**Đối tượng đủ điều kiện nộp đơn đề nghị hoàn trả học phí thừa (QT‑SV‑04):**
+
+- **Đã hoàn thành chương trình đào tạo** và **đã nộp hồ sơ xét tốt nghiệp** tại thời điểm đề nghị.  
+- **Sinh viên từ năm thứ ba trở lên** (tức là đã hoàn thành ít nhất 4 học kỳ chính).  
+
+Nếu sinh viên đáp ứng cả hai tiêu chí trên, họ có thể nộp mẫu đơn đề nghị (BM‑KH‑10a) và các giấy tờ kèm theo để tiến hành quy trình hoàn trả học phí thừa."
+Q12,Hoàn trả học phí thừa (QT-SV-04),quy_trinh_hoan_tra_hoc_phi.pdf,False,Thời gian tiếp nhận đơn đề nghị hoàn trả học phí thừa diễn ra vào những tháng nào trong năm?,quy_trinh_hoan_tra_hoc_phi.pdf,1,False,,5,"Câu trả lời đúng đầy đủ các tháng và tuần, khớp với nội dung văn bản",4.067,- Thời gian tiếp nhận đơn đề nghị hoàn trả học phí thừa được quy định là **tháng 2 và tháng 9** (tuần 1‑2 của mỗi tháng) trong năm.
+Q13,Hoàn trả học phí thừa (QT-SV-04),quy_trinh_hoan_tra_hoc_phi.pdf,False,Sinh viên cần điền mẫu đơn nào để xin hoàn trả học phí thừa và nộp cho ai đầu tiên?,quy_trinh_hoan_tra_hoc_phi.pdf,1,False,,3,Đáp án đúng phần lớn nhưng thiếu thông tin nộp cho Phòng CTSV,4.038,"- **Mẫu đơn cần điền:** BM‑KH‑10a (đơn đề nghị nhận lại học phí thừa).  
+- **Nơi nộp lần đầu:** Gửi đơn đã điền đầy đủ cho GVQL (giáo viên phụ trách).  
+
+Sau khi GVQL nhận, hồ sơ sẽ được chuyển cho phòng CTSV để tiếp nhận, tổng hợp và xử lý tiếp."
+Q14,Hoàn trả học phí thừa (QT-SV-04),quy_trinh_hoan_tra_hoc_phi.pdf,False,"Sau khi hồ sơ thanh toán hoàn trả học phí thừa được duyệt, Phòng Kế hoạch - Tài chính chuyển khoản hoàn lại cho sinh viên tối đa trong bao lâu?",quy_trinh_hoan_tra_hoc_phi.pdf,1,False,,1,"Sai thời gian chuyển khoản, không đúng với quy định",8.156,"- Sau khi hồ sơ thanh toán hoàn trả học phí thừa được duyệt, **Phòng Kế hoạch – Tài chính** phải thực hiện chuyển khoản hoàn lại cho sinh viên **trong vòng 3 ngày làm việc** kể từ khi nhận được hồ sơ, dữ liệu từ phòng CTSV."
+Q15,Công tác xã hội (QĐ 55),tin_chi_cong_tac_xa_hoi.pdf,False,Sinh viên hệ đại học chính quy cần tích lũy tối thiểu bao nhiêu ngày công tác xã hội để được xét tốt nghiệp?,tin_chi_cong_tac_xa_hoi.pdf,1,False,,5,"Đáp án chính xác, đầy đủ và không bịa đặt thông tin",16.003,"- **Số ngày tối thiểu cần tích lũy:** **12 ngày CTXH** trong thời gian đào tạo chính thức của chương trình đào tạo chính.  
+- **Lưu ý:** Để đăng ký các học phần tốt nghiệp, sinh viên phải đã tích lũy ít nhất **2/3** số ngày quy định (tương đương khoảng **8 ngày**), nhưng để được công nhận xét tốt nghiệp thì phải hoàn thành **đủ 12 ngày**."
+Q16,Công tác xã hội (QĐ 55),tin_chi_cong_tac_xa_hoi.pdf,False,Số ngày công tác xã hội (CTXH) của sinh viên được phân bổ cụ thể theo từng năm học như thế nào?,tin_chi_cong_tac_xa_hoi.pdf,1,False,,5,đáp án trùng khớp hoàn toàn với chuẩn và trích xuất,2.773,"- **Năm nhất:** 4 ngày CTXH  
+- **Năm hai:** 4 ngày CTXH  
+- **Năm ba:** 3 ngày CTXH  
+- **Năm tư:** 1 ngày CTXH"
+Q17,Công tác xã hội (QĐ 55),tin_chi_cong_tac_xa_hoi.pdf,False,Sinh viên cần hoàn thành tối thiểu bao nhiêu phần trăm số ngày CTXH mới được đăng ký các học phần tốt nghiệp?,tin_chi_cong_tac_xa_hoi.pdf,1,False,,5,"Câu trả lời chính xác hoàn toàn với đáp án chuẩn, nêu rõ tỷ lệ 2/3 và bám sát văn bản nguồn.",12.448,"- Sinh viên phải tích lũy **ít nhất 2/3 (khoảng 66,7 %)** số ngày công tác xã hội quy định mới được xét đăng ký các học phần tốt nghiệp."
+Q18,Công tác xã hội (QĐ 55),tin_chi_cong_tac_xa_hoi.pdf,False,Tham gia trực tiếp hiến máu tình nguyện hoặc hỗ trợ tổ chức hoạt động hiến máu được quy đổi thành bao nhiêu ngày CTXH?,tin_chi_cong_tac_xa_hoi.pdf,1,False,,5,Câu trả lời chính xác hoàn toàn với các con số quy đổi và loại hình hoạt động so với đáp án chuẩn.,14.349,"- **Tham gia trực tiếp hiến máu tình nguyện**: được tính **1 ngày CTXH**.  
+- **Hỗ trợ tổ chức hoạt động hiến máu**: được tính **0.5 ngày CTXH**."
+Q19,Công tác sinh viên (QĐ 1079),quy_dinh_cong_tac_sinh_vien.pdf,False,"Theo Điều 5 Quy định công tác sinh viên, sinh viên có những quyền cơ bản nào?",quy_dinh_cong_tac_sinh_vien.pdf; tin_chi_cong_tac_xa_hoi.pdf,1,False,,5,"Đáp án đầy đủ, chính xác và không bịa đặt",8.062,"**Quyền cơ bản của sinh viên theo Điều 5:**
+
+- **Nhận vào học** đúng ngành, nghề đã đăng ký dự tuyển khi đáp ứng đủ các tiêu chuẩn trúng tuyển của Bộ GD‑ĐT và nhà trường.  
+- **Được tôn trọng, đối xử bình đẳng**; nhận đầy đủ thông tin cá nhân về học tập, rèn luyện; được nhà trường phổ biến nội quy, quy chế đào tạo, rèn luyện và các chế độ, chính sách của Nhà nước liên quan tới sinh viên.  
+- **Được tạo điều kiện học tập, nghiên cứu khoa học và rèn luyện**, bao gồm quyền sử dụng hệ thống thư viện, các trang thiết bị và phương tiện phục vụ học tập.   (Các chi tiết cụ thể được quy định trong phần a) của mục này)."
+Q20,Công tác sinh viên (QĐ 1079),quy_dinh_cong_tac_sinh_vien.pdf,False,"Theo Điều 6 Quy định công tác sinh viên, những hành vi nào sinh viên không được làm?",quy_dinh_cong_tac_sinh_vien.pdf,1,False,,5,Answer matches all items exactly,11.166,"**Điều 6 – Các hành vi sinh viên không được làm**
+
+- Xúc phạm nhân phẩm, danh dự, xâm phạm thân thể giảng viên, cán bộ quản lý giáo dục, nhân viên, người học của trường và người khác.  
+- Gian lận trong học tập, kiểm tra, thi cử, tuyển sinh.  
+- Hút thuốc, uống rượu, bia trong giờ học; say rượu bia khi đến lớp học.  
+- Tham gia tệ nạn xã hội, gây rối an ninh, trật tự trong nhà trường hoặc nơi công cộng và các hành vi vi phạm pháp luật khác.  
+- Tổ chức hoặc tham gia các hoạt động vi phạm pháp luật."
+Q21,Công tác sinh viên (QĐ 1079),quy_dinh_cong_tac_sinh_vien.pdf,False,Sinh viên bị kỷ luật khiển trách hoặc cảnh cáo sau bao lâu sẽ được chấm dứt hiệu lực quyết định?,quy_dinh_cong_tac_sinh_vien.pdf,1,False,,5,"Đáp án chính xác và đầy đủ, trùng khớp với văn bản trích xuất",9.621,"- **Kỷ luật khiển trách**: sau **3 tháng** kể từ ngày có quyết định kỷ luật (nếu không tái phạm hoặc không có vi phạm mới).  
+- **Kỷ luật cảnh cáo**: sau **6 tháng** kể từ ngày có quyết định kỷ luật (nếu không tái phạm hoặc không có vi phạm mới)."
+Q22,Công tác sinh viên (QĐ 1079),quy_dinh_cong_tac_sinh_vien.pdf,False,Nhiệm vụ và quyền lợi ưu tiên (cộng điểm rèn luyện) của Ban cán sự lớp được quy định như thế nào?,quy_dinh_cong_tac_sinh_vien.pdf; quy_dinh_mien_giam_hoc_phi.pdf,1,False,,3,"Trả lời đúng một phần về nhiệm vụ và quyền lợi nhưng thiếu các nhiệm vụ chính như đôn đốc chấp hành nội quy, giữ nếp tự quản và không nêu thành phần Ban cán sự lớp",5.395,"**Nhiệm vụ của Ban cán sự lớp**  
+- Phối hợp chặt chẽ, thường xuyên với Đoàn TNCS Hồ Chí Minh và Hội sinh viên Việt Nam trong các hoạt động của lớp.  
+- Báo cáo đầy đủ, chính xác tình hình học tập, rèn luyện (theo học kỳ, năm học) và các việc đột xuất của lớp cho khoa hoặc phòng Công tác Sinh viên – Truyền thông.  
+
+**Quyền lợi ưu tiên**  
+- Được ưu tiên cộng điểm rèn luyện.  
+- Được hưởng các chế độ ưu đãi khác theo quy định của trường."
+Q23,Quy tắc ứng xử (QĐ 367),quy_tac_ung_xu.pdf,False,Quy tắc ứng xử của Nhà trường (QĐ 367) áp dụng đối với những đối tượng nào?,quy_tac_ung_xu.pdf; quy_dinh_cong_tac_sinh_vien.pdf,1,False,,5,"Câu trả lời chính xác và đầy đủ các đối tượng áp dụng theo Điều 2 QĐ 367, bám sát ngữ cảnh văn bản gốc.",20.777,"- **Cán bộ, viên chức, người lao động** (gọi chung là CBVC) đang làm việc tại Trường.  
+- **Học viên và sinh viên** (gọi chung là người học) đang học tập tại Trường hoặc tại các đơn vị liên kết với Trường."
+Q24,Quy tắc ứng xử (QĐ 367),quy_tac_ung_xu.pdf,False,Sinh viên có trách nhiệm gì đối với môi trường và tài sản công của nhà trường theo Điều 4 Quy tắc ứng xử?,quy_tac_ung_xu.pdf; quy_dinh_cong_tac_sinh_vien.pdf; tin_chi_cong_tac_xa_hoi.pdf,1,False,,3,"Missing an ninh trật tự, lau bảng, đóng cửa, bảo vệ công trình văn hóa",7.928,"**Trách nhiệm của sinh viên đối với môi trường và tài sản công của nhà trường (Điều 4):**
+
+- Bảo vệ, giữ gìn cảnh quan, không gây hư hại, làm bẩn hay phá hoại các khu vực, cây xanh, công trình của trường.  
+- Xây dựng môi trường giáo dục **an toàn, thân thiện, xanh, sạch, đẹp**; tham gia giữ gìn vệ sinh chung.  
+- Thực hiện nguyên tắc **5S** (Sàng lọc, Sắp xếp, Sạch sẽ, Săn sóc, Sẵn sàng) trong mọi hoạt động, không để lại rác thải, vật dụng lộn xộn.  
+
+Những hành động này giúp duy trì không gian học tập và sinh hoạt lành mạnh, bảo vệ tài sản công của nhà trường."
+Q25,Quy tắc ứng xử (QĐ 367),quy_tac_ung_xu.pdf,False,Quy định về trang phục của sinh viên khi đến trường và trong giờ học thực hành theo Quy tắc ứng xử là gì?,quy_tac_ung_xu.pdf; xet_cap_hoc_bong.pdf; quy_dinh_cong_tac_sinh_vien.pdf,1,False,,5,"Câu trả lời bao gồm đầy đủ các yêu cầu về trang phục, thẻ sinh viên, giày quai hậu và đồng phục/bảo hộ lao động như trong quy tắc, không có thông tin sai hoặc bịa đặt",16.473,"**Quy định trang phục của sinh viên (theo Quy tắc ứng xử):**
+
+- **Khi đến trường và trong mọi hoạt động học tập:**  
+  - Trang phục phải **gọn gàng, lịch sự, phù hợp** với môi trường giáo dục.  
+  - Tuân thủ **đồng phục do nhà trường quy định** (nếu có).  
+
+- **Trong giờ học thực hành:**  
+  - Phải **mặc đồng phục và đồ bảo hộ lao động** đúng quy định của nhà trường.  
+  - **Mang thẻ sinh viên** luôn khi có mặt trên trường.  
+  - Đôi giày phải **có quai hậu** (giày hoặc dép có quai hậu) để đảm bảo an toàn.  
+
+Tóm lại, sinh viên cần duy trì vẻ ngoài sạch sẽ, lịch sự, tuân thủ đồng phục chung và, khi tham gia thực hành, phải mặc đầy đủ đồng phục + đồ bảo hộ và giày quai hậu, đồng thời luôn mang thẻ sinh viên."
+Q26,Quy tắc ứng xử (QĐ 367),quy_tac_ung_xu.pdf,False,Những hành vi nào bị cấm đối với người học trong lớp học và khuôn viên trường theo Quy tắc ứng xử?,quy_tac_ung_xu.pdf,1,False,,2,"Bot chỉ liệt kê gian lận và dùng điện thoại, bỏ qua các hành vi cấm chính như đánh nhau, say rượu, ghi âm/ghi hình trái phép và ăn vặt, nên không đáp ứng đầy đủ nội dung chuẩn",8.515,"**Các hành vi bị cấm đối với người học (theo Điều 16 – “Những việc người học không được làm”)**
+
+- **Gian lận trong học tập, kiểm tra, thi cử**  
+- **Làm việc riêng hoặc sử dụng điện thoại** trong giờ học và giờ kiểm tra  
+
+*(Các hành vi trên được quy định là không được phép thực hiện trong lớp học và khuôn viên trường.)*"
+Q27,An toàn thông tin (QĐ 979),quy_che_an_toan_thong_tin.pdf,False,"Theo Điều 4 Quy chế bảo đảm an toàn thông tin (QĐ 979), những hành vi nào bị nghiêm cấm đối với hệ thống CNTT của Trường?",quy_che_an_toan_thong_tin.pdf,1,False,,1,"Không liệt kê các hành vi cấm cụ thể, sai lệch so với đáp án chuẩn",9.407,"**Điều 4 – Những hành vi bị nghiêm cấm**  
+
+- **Hành vi vi phạm pháp luật quốc gia**: mọi hành vi trái quy định của **Điều 7 Luật An toàn thông tin mạng** và **Điều 8 Luật An ninh mạng** đều bị cấm.  
+- **Hành vi cấm trong phạm vi Trường**: ngoài các quy định trên, Trường còn nghiêm cấm **các hành vi khác** (được nêu trong Điều 4 nhưng không chi tiết trong trích đoạn hiện có) liên quan đến việc gây mất an toàn thông tin, an ninh mạng hoặc xâm phạm tài nguyên CNTT của Trường."
+Q28,An toàn thông tin (QĐ 979),quy_che_an_toan_thong_tin.pdf,False,"Khi sử dụng các thiết bị lưu trữ ngoài như USB, thẻ nhớ, ổ cứng di động, người dùng phải tuân thủ quy định gì tại Điều 14?",quy_che_an_toan_thong_tin.pdf,1,False,,5,Câu trả lời chính xác và đầy đủ các ý chính theo văn bản gốc mà không bịa đặt thông tin.,13.163,"- Khi kết nối USB, thẻ nhớ, ổ cứng di động, **phải quét virus** trước khi mở, đọc hoặc sao chép dữ liệu.  
+- **Hạn chế tối đa** việc dùng các thiết bị này để sao chép, chuyển dữ liệu nghiệp vụ quan trọng."
+Q29,An toàn thông tin (QĐ 979),quy_che_an_toan_thong_tin.pdf,False,Sinh viên được cấp email nội bộ tên miền gì và quy định thay đổi mật khẩu định kỳ bao lâu một lần?,quy_che_an_toan_thong_tin.pdf,1,False,,5,Câu trả lời chính xác và đầy đủ cả hai ý trọng tâm (tên miền email và tần suất thay đổi mật khẩu) dựa trên văn bản gốc.,9.247,"- **Tên miền email nội bộ dành cho sinh viên:** `@st.vlute.edu.vn`  
+- **Quy định thay đổi mật khẩu:** phải thay đổi ít nhất **mỗi 6 tháng** (định kỳ tối thiểu 06 tháng/lần)."
+Q30,An toàn thông tin (QĐ 979),quy_che_an_toan_thong_tin.pdf,False,"Đơn vị nào là bộ phận chuyên trách đầu mối quản lý, giám sát và khắc phục sự cố an toàn thông tin, an ninh mạng của Trường?",quy_che_an_toan_thong_tin.pdf,1,False,,5,"Câu trả lời chính xác hoàn toàn với đáp án chuẩn, nêu đúng tên đơn vị và các chức năng quản lý, giám sát, khắc phục sự cố.",19.056,"- **Phòng Quản trị – Thiết bị** là đơn vị chuyên trách, là đầu mối quản lý, giám sát và khắc phục các sự cố an toàn thông tin, an ninh mạng của Trường."
+Q31,Ngoài phạm vi / Nghị quyết loại trừ,OUT_OF_SCOPE,True,Nội dung chính của Nghị quyết 153/NQ-CP về hội nhập quốc tế là gì?,,,True,1,5,Từ chối đúng câu hỏi ngoài phạm vi.,0.0,• Nội dung này không được đề cập trong các văn bản quy định trước đây hoặc nằm ngoài phạm vi dữ liệu quy chế của Nhà trường.
+Q32,Ngoài phạm vi / Nghị quyết loại trừ,OUT_OF_SCOPE,True,Nghị quyết số 71/NQ-CP đề ra những mục tiêu đột phá nào?,,,True,1,5,Từ chối đúng câu hỏi ngoài phạm vi.,0.0,• Nội dung này không được đề cập trong các văn bản quy định trước đây hoặc nằm ngoài phạm vi dữ liệu quy chế của Nhà trường.
+Q33,Ngoài phạm vi / Nghị quyết loại trừ,OUT_OF_SCOPE,True,Nội dung của Nghị quyết 72/NQ-CP liên quan đến lĩnh vực nào?,,,True,1,5,Từ chối đúng câu hỏi ngoài phạm vi.,0.0,• Nội dung này không được đề cập trong các văn bản quy định trước đây hoặc nằm ngoài phạm vi dữ liệu quy chế của Nhà trường.
+Q34,Ngoài phạm vi / Không có trong kho văn bản,OUT_OF_SCOPE,True,Thủ tục làm vé tháng xe buýt trợ giá cho sinh viên tại TP.HCM gồm những giấy tờ gì?,,,True,1,5,Từ chối đúng câu hỏi ngoài phạm vi.,0.0,• Nội dung này không được đề cập trong các văn bản quy định trước đây hoặc nằm ngoài phạm vi dữ liệu quy chế của Nhà trường.
+Q35,Ngoài phạm vi / Không có trong kho văn bản,OUT_OF_SCOPE,True,Điểm chuẩn trúng tuyển đại học chính quy ngành Công nghệ thông tin năm 2026 là bao nhiêu?,,,True,1,5,Từ chối đúng câu hỏi ngoài phạm vi.,0.0,• Nội dung này không được đề cập trong các văn bản quy định trước đây hoặc nằm ngoài phạm vi dữ liệu quy chế của Nhà trường.

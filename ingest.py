@@ -3,18 +3,26 @@ import sys
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 import re
+import json
 import shutil
 import glob
+from pathlib import Path
 from datetime import datetime
 import fitz  # PyMuPDF
 import torch
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import SentenceTransformerEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 
-DATA_PATH = "data"
-DB_PATH = "chroma_db"
+BASE_DIR = Path(__file__).parent
+DATA_PATH = str(BASE_DIR / "data")
+DB_PATH = str(BASE_DIR / "chroma_db")
+DEPT_FILE = BASE_DIR / "departments.json"
+DEPARTMENTS_PATH = str(DEPT_FILE)
+
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 # Danh sách các văn bản nghị quyết hành chính không liên quan đến sinh viên (cần loại bỏ)
 EXCLUDED_FILES = [
@@ -22,6 +30,35 @@ EXCLUDED_FILES = [
     "nghi_quyet_72.pdf",
     "nghi_quyet_153.pdf"
 ]
+
+
+def load_departments(json_path: str = DEPARTMENTS_PATH) -> dict:
+    """Đọc tệp cấu hình phòng ban departments.json."""
+    if os.path.exists(json_path):
+        with open(json_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+
+def match_department_for_file(filename: str, departments: dict):
+    """
+    So khớp tên tệp PDF với danh sách patterns của từng phòng ban trong departments.json.
+    Nếu không khớp pattern nào, mặc định là "ctsv".
+    """
+    fname_lower = filename.lower().replace("cong_tac_xa_hoi", "ctxh")
+    for dept_key, dept_info in departments.items():
+        patterns = dept_info.get("patterns", [])
+        if any(str(pat).lower() in fname_lower for pat in patterns):
+            return dept_key, dept_info
+
+    default_key = "ctsv"
+    default_info = departments.get(default_key, {
+        "name": "Phòng Công tác Sinh viên (VLUTE)",
+        "location": "Tòa nhà A (Phòng A1.102 - Tầng trệt)",
+        "phone": "(0270) 3862 436",
+        "email": "ctsv@vlute.edu.vn"
+    })
+    return default_key, default_info
 
 
 def extract_doc_title(text: str, filename: str) -> str:
@@ -173,6 +210,7 @@ def extract_clean_text_from_pdf(pdf_path: str):
 
 def load_documents():
     docs = []
+    departments = load_departments(DEPARTMENTS_PATH)
     pdf_files = sorted(glob.glob(os.path.join(DATA_PATH, "*.pdf")))
     for file_path in pdf_files:
         filename = os.path.basename(file_path)
@@ -182,34 +220,41 @@ def load_documents():
             print(f"⏩ Bỏ qua văn bản không thuộc quy chế sinh viên: {filename}")
             continue
             
+        dept_key, dept_info = match_department_for_file(filename, departments)
         print(f"📖 Đang trích xuất & bóc tách Metadata tự động (PyMuPDF): {filename}")
         try:
             pages_data = extract_clean_text_from_pdf(file_path)
             if pages_data:
                 p0 = pages_data[0]
-                print(f"   ↳ Tiêu đề: {p0['title']} | Số hiệu: {p0['doc_code']} | Năm: {p0['year']}")
+                print(f"   ↳ Tiêu đề: {p0['title']} | Số hiệu: {p0['doc_code']} | Năm: {p0['year']} | Phòng ban: {dept_info['name']} ({dept_key})")
             for p in pages_data:
-                docs.append(
-                    Document(
-                        page_content=p["text"],
-                        metadata={
-                            "source": os.path.basename(file_path),
-                            "title": p["title"],
-                            "year": str(p["year"]),
-                            "doc_code": p["doc_code"],
-                            "page": p["page"]
-                        }
-                    )
+                doc = Document(
+                    page_content=p["text"],
+                    metadata={
+                        "source": os.path.basename(file_path),
+                        "title": p["title"],
+                        "year": str(p["year"]),
+                        "doc_code": p["doc_code"],
+                        "page": p["page"]
+                    }
                 )
+                doc.metadata["dept_key"] = dept_key
+                doc.metadata["dept_name"] = dept_info["name"]
+                doc.metadata["dept_location"] = dept_info["location"]
+                doc.metadata["dept_phone"] = dept_info["phone"]
+                doc.metadata["dept_email"] = dept_info["email"]
+                docs.append(doc)
         except Exception as e:
             print(f"⚠️ Lỗi đọc file {file_path}: {e}")
     return docs
 
 
 def create_vector_db():
-    if os.path.exists(DB_PATH):
-        print("🗑️ Đang xóa cơ sở dữ liệu cũ để làm sạch hoàn toàn...")
-        shutil.rmtree(DB_PATH)
+    temp_db_path = str(BASE_DIR / "chroma_db_temp")
+    backup_db_path = str(BASE_DIR / "chroma_db_old")
+
+    if os.path.exists(temp_db_path):
+        shutil.rmtree(temp_db_path, ignore_errors=True)
 
     print("⏳ Đang trích xuất văn bản từ thư mục data bằng PyMuPDF (fitz)...")
     documents = load_documents()
@@ -223,31 +268,62 @@ def create_vector_db():
     )
     chunks = text_splitter.split_documents(documents)
 
-    # Gắn trực tiếp metadata động vào từng chunk trước khi đưa vào ChromaDB
-    for chunk in chunks:
-        chunk.metadata.update({
-            "title": chunk.metadata.get("title", ""),
-            "year": str(chunk.metadata.get("year", "")),
-            "doc_code": chunk.metadata.get("doc_code", ""),
-            "source": os.path.basename(chunk.metadata.get("source", ""))
+    departments = load_departments(DEPARTMENTS_PATH)
+    # Gắn trực tiếp metadata động và thông tin phòng ban vào từng chunk trước khi đưa vào ChromaDB
+    for doc in chunks:
+        src_filename = os.path.basename(doc.metadata.get("source", ""))
+        dept_key, dept_info = match_department_for_file(src_filename, departments)
+        doc.metadata.update({
+            "title": doc.metadata.get("title", ""),
+            "year": str(doc.metadata.get("year", "")),
+            "doc_code": doc.metadata.get("doc_code", ""),
+            "source": src_filename
         })
+        doc.metadata["dept_key"] = dept_key
+        doc.metadata["dept_name"] = dept_info["name"]
+        doc.metadata["dept_location"] = dept_info["location"]
+        doc.metadata["dept_phone"] = dept_info["phone"]
+        doc.metadata["dept_email"] = dept_info["email"]
 
     print(f"🧩 Tổng số chunks tinh gọn được tạo: {len(chunks)}.")
 
-    print("🧠 Đang tạo Vector Database với mô hình bkai-foundation-models/vietnamese-bi-encoder...")
-    embedding_model = SentenceTransformerEmbeddings(
-        model_name="bkai-foundation-models/vietnamese-bi-encoder",
-        model_kwargs={"device": "cpu"},
-        encode_kwargs={"normalize_embeddings": True}
-    )
-    
-    vector_db = Chroma.from_documents(
-        documents=chunks,
-        embedding=embedding_model,
-        persist_directory=DB_PATH,
-        collection_metadata={"hnsw:space": "cosine"}
-    )
-    print("✅ ĐÃ HOÀN TẤT TẠO VECTOR DATABASE DYNAMIC MỚI SẠCH HOÀN TOÀN!")
+    print("🧠 Đang tạo Vector Database tạm thời tại chroma_db_temp với mô hình bkai-foundation-models/vietnamese-bi-encoder...")
+    try:
+        embedding_model = HuggingFaceEmbeddings(
+            model_name="bkai-foundation-models/vietnamese-bi-encoder",
+            model_kwargs={"device": "cpu"},
+            encode_kwargs={"normalize_embeddings": True}
+        )
+
+        vector_db = Chroma.from_documents(
+            documents=chunks,
+            embedding=embedding_model,
+            persist_directory=temp_db_path,
+            collection_metadata={"hnsw:space": "cosine"}
+        )
+        del vector_db
+    except Exception as build_err:
+        print(f"❌ Lỗi khi khởi tạo Vector Database mới, giữ nguyên cơ sở dữ liệu cũ: {build_err}")
+        if os.path.exists(temp_db_path):
+            shutil.rmtree(temp_db_path, ignore_errors=True)
+        raise build_err
+
+    # Hoán đổi an toàn chroma_db_temp thay thế cho chroma_db sau khi tạo thành công 100%
+    if os.path.exists(backup_db_path):
+        shutil.rmtree(backup_db_path, ignore_errors=True)
+
+    try:
+        if os.path.exists(DB_PATH):
+            os.replace(DB_PATH, backup_db_path)
+        os.replace(temp_db_path, DB_PATH)
+        if os.path.exists(backup_db_path):
+            shutil.rmtree(backup_db_path, ignore_errors=True)
+    except PermissionError:
+        print("ℹ️ Thư mục chroma_db đang mở bởi tiến trình khác, tiến hành đồng bộ tệp từ chroma_db_temp...")
+        shutil.copytree(temp_db_path, DB_PATH, dirs_exist_ok=True)
+        shutil.rmtree(temp_db_path, ignore_errors=True)
+
+    print("✅ ĐÃ HOÀN TẤT TẠO VÀ HOÁN ĐỔI AN TOÀN VECTOR DATABASE DYNAMIC MỚI!")
 
 
 if __name__ == "__main__":

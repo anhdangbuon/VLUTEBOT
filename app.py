@@ -1,10 +1,13 @@
 import os
 import re
+import json
 import html
 import time
 import base64
+import traceback
+import unicodedata
 import streamlit as st
-from rag import get_rag_chain, DOC_CATALOG, extract_article_info, REFUSAL_MESSAGE, is_fast_bailout_query
+from rag import get_rag_chain, DOC_CATALOG, extract_article_info, REFUSAL_MESSAGE, load_departments_config, rewrite_conversational_query
 
 st.set_page_config(
     page_title="VLUTEBOT - Trợ lý Lucas", 
@@ -45,10 +48,37 @@ LOGO_B64 = load_logo_base64()
 # ==========================================
 st.markdown("""
 <style>
-/* 0. Nền chung toàn trang */
+/* Vô hiệu hóa hiệu ứng làm mờ khi Streamlit đang tính toán hoặc re-run */
+[data-stale="true"] {
+    opacity: 1 !important;
+    filter: none !important;
+    transition: none !important;
+}
+
+/* Ẩn hoàn toàn khung bong bóng chat của trợ lý khi chưa có nội dung hoặc đang rỗng */
+div[data-testid="stChatMessage"]:has(img[src*="data:image"]) div[data-testid="stChatMessageContent"]:empty,
+div[data-testid="stChatMessage"]:has(.avatar-assistant) div[data-testid="stChatMessageContent"]:empty,
+div[data-testid="stChatMessageContent"]:not(:has(*)) {
+    display: none !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+}
+
+/* Ẩn widget trạng thái và nút deploy góc phải để giao diện mượt mà */
+.stAppDeployButton, div[data-testid="stStatusWidget"] {
+    display: none !important;
+}
+
+/* 0. Nền chung toàn trang & vùng nội dung chính */
 .stApp {
     background-color: #f4f6f9 !important;
     color: #1e293b !important;
+}
+
+.main .block-container {
+    max-width: 820px !important;
 }
 
 /* 1. Header tinh gọn chiều cao 110-120px */
@@ -498,19 +528,20 @@ div[data-testid="stChatMessage"] img {
     display: inline-block !important;
 }
 
-/* Khung tin nhắn của Lucas: Màu xanh lá VLUTE, MAX-WIDTH: 720px */
+/* Khung tin nhắn của Lucas: Nền sáng dễ đọc kèm viền nhấn xanh lá VLUTE, MAX-WIDTH: 720px */
 div[data-testid="stChatMessageContent"] {
-    background-color: #00703c !important;
-    border: 2px solid #00502b !important;
+    background-color: #ffffff !important;
+    border: 1.5px solid #cbd5e1 !important;
+    border-left: 4px solid #00703c !important;
     border-radius: 20px !important;
     padding: 13px 20px !important;
     max-width: 720px !important;
     width: fit-content !important;
-    color: #ffffff !important;
+    color: #1e293b !important;
     box-sizing: border-box !important;
     line-height: 1.65 !important;
     margin-left: 0px !important;
-    box-shadow: 0 4px 14px rgba(0, 112, 60, 0.18) !important;
+    box-shadow: 0 4px 14px rgba(0, 112, 60, 0.12) !important;
     word-break: normal !important;
     overflow-wrap: break-word !important;
 }
@@ -523,7 +554,7 @@ div[data-testid="stChatMessageContent"] ul {
 div[data-testid="stChatMessageContent"] li {
     margin-bottom: 6px !important;
     line-height: 1.6 !important;
-    color: #ffffff !important;
+    color: #1e293b !important;
 }
 
 div[data-testid="stChatMessageContent"] li:last-child {
@@ -533,7 +564,7 @@ div[data-testid="stChatMessageContent"] li:last-child {
 div[data-testid="stChatMessageContent"] p,
 div[data-testid="stChatMessageContent"] strong,
 div[data-testid="stChatMessageContent"] b {
-    color: #ffffff !important;
+    color: #1e293b !important;
 }
 
 /* Khung tin nhắn Sinh viên (User): Màu xanh dương, MAX-WIDTH: 720px */
@@ -639,13 +670,13 @@ div[data-testid="stChatMessageContent"] div[data-testid="stExpander"] blockquote
 }
 
 .gear-main {
-    color: #a7f3d0;
+    color: #00703c;
     animation: rotateGearMain 3.5s ease-in-out infinite alternate;
     transform-origin: center;
 }
 
 .gear-sub {
-    color: #fde68a;
+    color: #e67e22;
     font-size: 16px;
     margin-left: -5px;
     margin-top: -6px;
@@ -655,7 +686,7 @@ div[data-testid="stChatMessageContent"] div[data-testid="stExpander"] blockquote
 
 .thinking-label {
     font-size: 13px;
-    color: #ecfdf5;
+    color: #00703c;
     font-style: italic;
     font-weight: 500;
     margin-left: 10px;
@@ -873,10 +904,15 @@ with st.sidebar:
         """, unsafe_allow_html=True)
     
     st.markdown("""
-    <div style="text-align: center; color: #cbd5e1; font-size: 0.75rem; margin-bottom: 12px; padding: 6px 8px; background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; line-height: 1.4; word-break: keep-all;">
+    <div style="text-align: center; color: #cbd5e1; font-size: 0.75rem; margin-bottom: 10px; padding: 6px 8px; background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; line-height: 1.4; word-break: keep-all;">
         <span>📍</span> <span>Số 73 Nguyễn Huệ, Phường Long Châu, Tỉnh Vĩnh Long</span>
     </div>
     """, unsafe_allow_html=True)
+
+    if st.button("🗑️ Làm mới cuộc trò chuyện", use_container_width=True):
+        st.session_state.messages = []
+        st.session_state.pending_user_query = None
+        st.rerun()
     
     # 2 nhóm liên kết hệ thống rõ rệt (chuỗi không thụt lề để triệt tiêu lỗi code thô)
     SIDEBAR_NAV_HTML = """<div class="sidebar-links-card">
@@ -897,26 +933,34 @@ with st.sidebar:
 </div>"""
     st.markdown(SIDEBAR_NAV_HTML, unsafe_allow_html=True)
 
-    # Khối thông tin liên hệ phòng ban
-    st.markdown("""
-    <div class="sidebar-contact-card">
-        <div style="font-weight: 700; color: #ffffff; margin-bottom: 6px; font-size: 0.85rem;">
-            📞 ĐẦU MỐI LIÊN HỆ PHÒNG BAN:
-        </div>
-        <div style="margin-bottom: 6px; font-size: 0.8rem;">
-            <b style="color: #a7f3d0;">• Phòng Đào tạo (A1.101):</b><br>
-            ☎️ <code>(0270) 3822 141</code> | ✉️ <i>daotao@vlute.edu.vn</i>
-        </div>
-        <div style="margin-bottom: 6px; font-size: 0.8rem;">
-            <b style="color: #a7f3d0;">• Phòng CTSV (A1.102):</b><br>
-            ☎️ <code>(0270) 3862 436</code> | ✉️ <i>ctsv@vlute.edu.vn</i>
-        </div>
-        <div style="margin-bottom: 6px; font-size: 0.8rem;">
-            <b style="color: #a7f3d0;">• Phòng Kế hoạch - Tài chính:</b><br>
-            ☎️ <code>(0270) 3822 141</code> | ✉️ <i>khtc@vlute.edu.vn</i>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    # Khối thông tin liên hệ phòng ban (đọc động từ departments.json)
+    depts_cfg = load_departments_config()
+    sidebar_order = [k for k in ("dao_tao", "ctsv", "khtc", "cntt") if k in depts_cfg] + [
+        k for k in depts_cfg.keys() if k not in ("dao_tao", "ctsv", "khtc", "cntt")
+    ]
+    dept_rows_html = []
+    for d_key in sidebar_order:
+        d_item = depts_cfg.get(d_key, {})
+        d_name = html.escape(str(d_item.get("name", d_key)).replace(" (VLUTE)", ""))
+        d_loc = html.escape(str(d_item.get("location", "")))
+        d_phone = html.escape(str(d_item.get("phone", "")))
+        d_email = html.escape(str(d_item.get("email", "")))
+        loc_str = f" ({d_loc})" if d_loc else ""
+        dept_rows_html.append(
+            f'<div style="margin-bottom: 6px; font-size: 0.8rem;">'
+            f'<b style="color: #a7f3d0;">• {d_name}{loc_str}:</b><br>'
+            f'☎️ <code>{d_phone}</code> | ✉️ <i>{d_email}</i>'
+            f'</div>'
+        )
+    sidebar_contacts_html = (
+        '<div class="sidebar-contact-card">'
+        '<div style="font-weight: 700; color: #ffffff; margin-bottom: 6px; font-size: 0.85rem;">'
+        '📞 ĐẦU MỐI LIÊN HỆ PHÒNG BAN:'
+        '</div>'
+        + "".join(dept_rows_html)
+        + '</div>'
+    )
+    st.markdown(sidebar_contacts_html, unsafe_allow_html=True)
     
     st.markdown("""
     <div style="margin-top: 10px; padding: 8px 10px; background: rgba(0, 0, 0, 0.2); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; font-size: 0.72rem; color: #94a3b8; text-align: center; line-height: 1.45;">
@@ -924,12 +968,6 @@ with st.sidebar:
         <div style="font-size: 0.68rem; color: #a7f3d0; margin-top: 1px;">(Tiền thân: Trường ĐH Sư phạm Kỹ thuật Vĩnh Long)</div>
     </div>
     """, unsafe_allow_html=True)
-    
-    st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-    if st.button("🗑️ Làm mới cuộc trò chuyện", use_container_width=True):
-        st.session_state.messages = []
-        st.session_state.quick_prompt = None
-        st.rerun()
 
 # ==========================================
 # KHỞI TẠO VÀ CACHE RAG CHAIN
@@ -947,178 +985,179 @@ except Exception as e:
     st.error(f"Lỗi khởi tạo hệ thống: {e}")
     st.stop()
 
-_GLOBAL_ANSWER_CACHE = {}
+VERIFY_BADGE_HTML = """<div style="display: inline-flex; align-items: center; background: #e8f5e9; color: #2e7d32; font-size: 13px; font-weight: 600; padding: 4px 12px; border-radius: 16px; margin-bottom: 8px;">
+✅ Đã đối soát thành công - Được trích từ quy chế liên quan
+</div>"""
 
-@st.cache_data(ttl=86400, show_spinner=False)
-def execute_rag_pipeline(query: str):
-    """Thực thi pipeline RAG và cache kết quả vào RAM để tái sử dụng cho các sinh viên hỏi trùng câu hỏi."""
-    if is_fast_bailout_query(query):
-        return REFUSAL_MESSAGE, [], 0
 
-    # Lấy chuỗi RAG singleton
+def get_verify_badge_html(elapsed_time=None) -> str:
+    """Kết xuất huy hiệu đối soát thành công có hiển thị thời gian xử lý (elapsed_time)."""
+    if elapsed_time is not None:
+        badge_label = f"✅ Đã đối soát thành công ({elapsed_time}s) - Được trích từ quy chế liên quan"
+    else:
+        badge_label = "✅ Đã đối soát thành công - Được trích từ quy chế liên quan"
+    return f"""<div style="display: inline-flex; align-items: center; background: #e8f5e9; color: #2e7d32; font-size: 13px; font-weight: 600; padding: 4px 12px; border-radius: 16px; margin-bottom: 8px;">
+{badge_label}
+</div>"""
+
+
+def build_assistant_bubble_html(content: str, contact_html: str = "", elapsed_time=None, is_refusal: bool = False, is_welcome_or_greeting: bool = False) -> str:
+    """Gộp Huy hiệu + Nội dung + Khối liên hệ vào chung 1 chuỗi Markdown/HTML duy nhất để cố định 1 DOM Slot."""
+    body = (content or "").strip()
+    if is_welcome_or_greeting:
+        return body
+    if is_refusal:
+        if not body:
+            body = REFUSAL_MESSAGE
+        # Đảm bảo ép hiển thị rõ ràng chuỗi từ chối kèm định dạng gạch đầu dòng
+        refusal_text = body if body.startswith("•") else f"• {body}"
+        return f"{refusal_text}\n\n{contact_html}" if contact_html else refusal_text
+
+    badge = get_verify_badge_html(elapsed_time)
+    return f"{badge}\n\n{body}\n\n{contact_html}" if contact_html else f"{badge}\n\n{body}"
+
+CTSV_CONTACT_HTML = """<div style="margin-top: 12px; padding: 12px 16px; background: #f8fafc; border-radius: 8px; border-left: 3.5px solid #ff9800; color: #334155 !important;">
+  <b style="color: #005a30 !important;">📞 Phòng Công tác Sinh viên (VLUTE):</b>
+  <ul style="margin: 6px 0 0 0; padding-left: 20px; color: #334155 !important;">
+    <li style="color: #334155 !important;">Vị trí: Tòa nhà A (Phòng A1.102 - Tầng trệt)</li>
+    <li style="color: #334155 !important;">Điện thoại: (0270) 3862 436 | Email: ctsv@vlute.edu.vn</li>
+  </ul>
+</div>"""
+
+KHTC_CONTACT_HTML = """<div style="margin-top: 12px; padding: 12px 16px; background: #f8fafc; border-radius: 8px; border-left: 3.5px solid #ff9800; color: #334155 !important;">
+  <b style="color: #005a30 !important;">📞 Phòng Kế hoạch - Tài chính (VLUTE):</b>
+  <ul style="margin: 6px 0 0 0; padding-left: 20px; color: #334155 !important;">
+    <li style="color: #334155 !important;">Vị trí: Tòa nhà A (Tầng trệt)</li>
+    <li style="color: #334155 !important;">Điện thoại: (0270) 3822 141 | Email: khtc@vlute.edu.vn</li>
+  </ul>
+</div>"""
+
+RATE_LIMIT_MESSAGE = "⚠️ Hệ thống tra cứu đang nhận lượng truy cập cao trong cùng thời điểm. Bạn vui lòng đợi khoảng 30–60 giây rồi thử hỏi lại nhé!"
+
+
+def execute_rag_pipeline(query: str, chat_history: list | None = None):
+    """Thực thi trực tiếp (live) pipeline RAG không qua bộ nhớ đệm."""
+    effective_query = rewrite_conversational_query(query, chat_history) if chat_history else query
     chain = get_rag_chain()
-    
-    # 1. Trích xuất tài liệu đối chiếu động (k=5)
-    docs = chain.filter_documents(query, k=5)
+    docs = chain.filter_documents(effective_query, k=6)
     if not docs:
         return REFUSAL_MESSAGE, [], 0
-        
+
     context_parts = []
     sources = []
     for doc in docs:
         src_file = os.path.basename(doc.metadata.get("source", "Tài liệu"))
         title = doc.metadata.get("title", src_file)
-        year = doc.metadata.get("year", "Chưa rõ")
-        code = doc.metadata.get("doc_code", "")
         page = doc.metadata.get("page", 1)
         article = extract_article_info(doc.page_content)
-        
+
         header_line = f"--- [VĂN BẢN: {doc.metadata.get('title', src_file)} | Năm ban hành: {doc.metadata.get('year', 'Chưa rõ')} | Số hiệu: {doc.metadata.get('doc_code', '')} | Trang {page}] ---"
         context_parts.append(f"{header_line}\n{doc.page_content}")
-        
+
         sources.append({
             "file": src_file,
             "title": title,
             "short_title": title,
-            "dept": "VLUTE",
+            "dept": doc.metadata.get("dept_name", "VLUTE"),
+            "dept_key": doc.metadata.get("dept_key", "ctsv"),
+            "dept_name": doc.metadata.get("dept_name", "Phòng Công tác Sinh viên (VLUTE)"),
+            "dept_location": doc.metadata.get("dept_location", "Tòa nhà A (Phòng A1.102 - Tầng trệt)"),
+            "dept_phone": doc.metadata.get("dept_phone", "(0270) 3862 436"),
+            "dept_email": doc.metadata.get("dept_email", "ctsv@vlute.edu.vn"),
             "page": page,
             "article": article,
             "snippet": doc.page_content.strip()
         })
 
     context_str = "\n\n".join(context_parts)
-    formatted_prompt = chain.prompt.format(context=context_str, input=query)
+    formatted_prompt = chain.prompt.format(context=context_str, input=effective_query)
 
-    # 2. Gọi LLM có retry an toàn
-    import time
-    raw_answer = ""
-    max_attempts = 3
-    for attempt in range(max_attempts):
-        try:
-            response_obj = chain.llm.invoke(formatted_prompt)
-            raw_answer = getattr(response_obj, "content", str(response_obj))
-            if raw_answer:
-                break
-        except Exception as api_err:
-            err_str = str(api_err)
-            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                raw_answer = "Hệ thống tra cứu đang nhận lượng truy cập cao trong ngày từ sinh viên khiến hạn ngạch tạm thời bị chạm mốc. Bạn vui lòng đợi khoảng 1 phút rồi bấm hỏi lại nhé!"
-                break
-            elif any(code in err_str for code in ["503", "UNAVAILABLE"]) and attempt < max_attempts - 1:
-                time.sleep(2 * (attempt + 1))
-                continue
+    try:
+        response_obj = chain.llm.invoke(formatted_prompt)
+        raw_answer = getattr(response_obj, "content", str(response_obj))
+    except Exception as api_err:
+        err_str = str(api_err)
+        if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str.upper():
+            raw_answer = RATE_LIMIT_MESSAGE
+        else:
+            traceback.print_exc()
             raise api_err
 
-    _GLOBAL_ANSWER_CACHE[query] = (raw_answer, sources, len(docs))
     return raw_answer, sources, len(docs)
 
-def stream_rag_pipeline(query: str):
-    """
-    Tối ưu hóa hiệu năng và độ trễ phản hồi:
-    - Nếu câu hỏi đã có sẵn trong Cache RAM: Trả về kết quả tức thì (0.1s).
-    - Nếu câu hỏi mới: Gọi LLM dạng stream (generate_content_stream) và đẩy từng từ ra UI ngay khi API phản hồi.
-    """
-    if query in _GLOBAL_ANSWER_CACHE:
-        raw_text, sources, num_docs = _GLOBAL_ANSWER_CACHE[query]
-        def fast_word_stream():
-            words = raw_text.split(" ")
-            for idx, w in enumerate(words):
-                yield w + (" " if idx < len(words) - 1 else "")
-                time.sleep(0.006)
-        return fast_word_stream(), sources, num_docs, True
 
-    if is_fast_bailout_query(query):
-        return None, [], 0, False
-
+def stream_rag_pipeline(query: str, chat_history: list | None = None):
+    """Thực thi trực tiếp (live) luồng RAG streaming với k=6 đoạn trích."""
+    effective_query = rewrite_conversational_query(query, chat_history) if chat_history else query
     chain = get_rag_chain()
-    docs = chain.filter_documents(query, k=5)
+    docs = chain.filter_documents(effective_query, k=6)
     if not docs:
-        return None, [], 0, False
+        return None, [], 0, []
 
     context_parts = []
     sources = []
     for doc in docs:
         src_file = os.path.basename(doc.metadata.get("source", "Tài liệu"))
         title = doc.metadata.get("title", src_file)
-        year = doc.metadata.get("year", "Chưa rõ")
-        code = doc.metadata.get("doc_code", "")
         page = doc.metadata.get("page", 1)
         article = extract_article_info(doc.page_content)
-        
+
         header_line = f"--- [VĂN BẢN: {doc.metadata.get('title', src_file)} | Năm ban hành: {doc.metadata.get('year', 'Chưa rõ')} | Số hiệu: {doc.metadata.get('doc_code', '')} | Trang {page}] ---"
         context_parts.append(f"{header_line}\n{doc.page_content}")
-        
+
         sources.append({
             "file": src_file,
             "title": title,
             "short_title": title,
-            "dept": "VLUTE",
+            "dept": doc.metadata.get("dept_name", "VLUTE"),
+            "dept_key": doc.metadata.get("dept_key", "ctsv"),
+            "dept_name": doc.metadata.get("dept_name", "Phòng Công tác Sinh viên (VLUTE)"),
+            "dept_location": doc.metadata.get("dept_location", "Tòa nhà A (Phòng A1.102 - Tầng trệt)"),
+            "dept_phone": doc.metadata.get("dept_phone", "(0270) 3862 436"),
+            "dept_email": doc.metadata.get("dept_email", "ctsv@vlute.edu.vn"),
             "page": page,
             "article": article,
             "snippet": doc.page_content.strip()
         })
 
     context_str = "\n\n".join(context_parts)
-    formatted_prompt = chain.prompt.format(context=context_str, input=query)
+    formatted_prompt = chain.prompt.format(context=context_str, input=effective_query)
 
     def generate_content_stream():
+        yielded_any = False
         try:
             for chunk in chain.llm.stream(formatted_prompt):
                 chunk_text = getattr(chunk, "content", str(chunk))
+                if isinstance(chunk_text, list):
+                    chunk_text = "".join(
+                        part.get("text", "") if isinstance(part, dict) else str(part)
+                        for part in chunk_text
+                    )
                 if chunk_text:
+                    yielded_any = True
                     yield chunk_text
+            if not yielded_any:
+                resp_obj = chain.llm.invoke(formatted_prompt)
+                fallback_text = getattr(resp_obj, "content", str(resp_obj))
+                if fallback_text and str(fallback_text).strip():
+                    yield str(fallback_text)
         except Exception as stream_err:
+            if not yielded_any:
+                raise stream_err
             err_str = str(stream_err)
-            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                yield "\n\nHệ thống tra cứu đang nhận lượng truy cập cao trong ngày từ sinh viên khiến hạn ngạch tạm thời bị chạm mốc. Bạn vui lòng đợi khoảng 1 phút rồi bấm hỏi lại nhé!"
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str.upper():
+                yield f"\n\n{RATE_LIMIT_MESSAGE}"
             else:
-                yield f"\n\n*(Lỗi kết nối mô hình: {err_str})*"
+                raise stream_err
 
-    return generate_content_stream(), sources, len(docs), False
+    return generate_content_stream(), sources, len(docs), docs
+
 
 def normalize_query_intent(query: str) -> str:
-    """Chuẩn hóa câu hỏi của sinh viên về truy vấn chuẩn để tối đa hóa tỷ lệ trúng Response Cache (RAM)."""
+    """Làm sạch khoảng trắng thừa của câu hỏi, giữ nguyên nội dung câu hỏi để chạy trực tiếp qua RAG."""
     if not query:
         return ""
-    
-    q_clean = query.strip()
-    q_lower = q_clean.lower()
-
-    # Nếu câu hỏi có chứa mốc năm cụ thể (VD: 2024, 2025, 2026...), giữ nguyên câu hỏi gốc để LLM đối soát mốc thời gian
-    if re.search(r"\b20\d{2}\b", q_lower):
-        normalized = re.sub(r"[\?\.\,\!\;\:\_]+$", "", q_clean).strip()
-        normalized = re.sub(r"\s+", " ", normalized)
-        return normalized if normalized else q_clean
-
-    # 1. Nhóm học bổng khuyến khích chung: chỉ chuẩn hóa khi không hỏi xoáy vào điều kiện con (điểm rèn luyện, nợ môn, nợ học phí, số tín chỉ...)
-    if (
-        any(k in q_lower for k in ["học bổng", "kkht", "khen thưởng"])
-        and not any(
-            k in q_lower
-            for k in ["vượt khó", "nghèo", "điểm rèn luyện", "rèn luyện", "nợ môn", "rớt môn", "học phí", "bao nhiêu tín chỉ", "mức học bổng", "bao nhiêu tiền", "quy trình", "hồ sơ"]
-        )
-    ):
-        return "Tiêu chuẩn và điều kiện xét cấp học bổng khuyến khích học tập là gì?"
-
-    # 2. Nhóm hoàn học phí: chứa "hoàn trả", "hoàn phí", "học phí thừa", "rút tiền", "nộp thừa", "hoàn tiền", "trả lại học phí", "trả học phí"
-    if any(k in q_lower for k in ["hoàn trả", "hoàn phí", "học phí thừa", "rút tiền", "nộp thừa", "hoàn tiền", "trả lại học phí", "trả học phí"]):
-        return "Quy trình làm thủ tục hoàn trả học phí thừa cho sinh viên gồm những bước nào?"
-
-    # 3. Nhóm miễn giảm học phí / học phí chung chung: chứa "miễn giảm", "giảm học phí", "chính sách học phí" hoặc "học phí"
-    if (
-        (any(k in q_lower for k in ["miễn giảm", "giảm học phí", "chính sách học phí"]) or "học phí" in q_lower)
-        and not any(k in q_lower for k in ["hồ sơ", "thủ tục", "giấy tờ", "học bổng", "kkht", "nợ học phí"])
-    ):
-        return "Đối tượng sinh viên nào được xét miễn giảm học phí theo quy định của trường?"
-
-    # 4. Nhóm tín chỉ CTXH: chứa "công tác xã hội", "ctxh", "tín chỉ ctxh"
-    if any(k in q_lower for k in ["công tác xã hội", "ctxh", "tín chỉ ctxh"]):
-        return "Sinh viên cần hoàn thành bao nhiêu tín chỉ Công tác xã hội để đủ điều kiện xét tốt nghiệp?"
-
-    # 5. Các câu hỏi khác: làm sạch dấu câu cuối câu và khoảng trắng thừa
-    normalized = re.sub(r"[\?\.\,\!\;\:\_]+$", "", q_clean).strip()
-    normalized = re.sub(r"\s+", " ", normalized)
-    return normalized if normalized else q_clean
+    return re.sub(r"\s+", " ", query.strip())
 
 # ==========================================
 # 2. TINH GỌN LỜI CHÀO MỞ ĐẦU
@@ -1141,8 +1180,28 @@ elif len(st.session_state.messages) == 1 and st.session_state.messages[0]["role"
     st.session_state.messages[0]["content"] = WELCOME_CONTENT
     st.session_state.messages[0]["is_refusal"] = True
 
-if "quick_prompt" not in st.session_state:
-    st.session_state.quick_prompt = None
+PROMPTS_FILE = os.path.join(os.path.dirname(__file__), "prompts.json")
+
+
+@st.cache_data
+def load_prompts_config() -> dict:
+    """Nạp danh sách câu hỏi gợi ý từ tệp prompts.json."""
+    if os.path.exists(PROMPTS_FILE):
+        try:
+            with open(PROMPTS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"initial_prompts": [], "categories": {}}
+
+
+# Callback gán câu hỏi trực tiếp vào session_state trước khi rerun
+if "pending_user_query" not in st.session_state:
+    st.session_state.pending_user_query = None
+
+
+def submit_user_query(query_text: str):
+    st.session_state.pending_user_query = query_text
 
 def clean_snippet_text(text: str) -> str:
     """Làm sạch đoạn trích quy chế, loại bỏ các ký tự rác, dấu sao, lỗi chính tả từ quét PDF."""
@@ -1216,97 +1275,344 @@ def render_sources(sources_list):
 GREETING_KEYWORDS = ["chào", "hello", "hi", "bạn là ai", "tên gì", "giới thiệu", "alo", "lucas", "xin chào", "hey", "ad"]
 
 def is_greeting(query: str) -> bool:
-    """Nhận diện nhanh các câu chào hỏi xã giao."""
+    """Nhận diện nhanh các câu chào hỏi xã giao bằng ranh giới từ (\\b) để tránh khớp nhầm."""
     clean = query.lower().strip()
     words = clean.split()
     duty_keywords = ["học bổng", "học phí", "tín chỉ", "cảnh báo", "điểm", "rút môn", "thôi học", "miễn giảm", "bảo hiểm", "quy chế", "điều"]
-    if len(words) <= 4 and any(k in clean for k in GREETING_KEYWORDS):
+    if len(words) <= 4 and any(re.search(rf"\b{re.escape(k)}\b", clean) for k in GREETING_KEYWORDS):
         if not any(dk in clean for dk in duty_keywords):
             return True
     return False
 
 def is_refusal_answer(text: str) -> bool:
-    """Kiểm tra xem phản hồi của mô hình có phải là câu từ chối ngoài phạm vi dữ liệu hay không."""
-    t = (text or "").lower()
-    refusal_keywords = [
-        "không được đề cập",
-        "ngoài phạm vi dữ liệu",
-        "chưa có thông tin quy định",
-        "không có thông tin quy định",
-        "trong tài liệu tham khảo"
-    ]
-    return any(kw in t for kw in refusal_keywords)
+    """Kiểm tra xem phản hồi của mô hình có phải là câu từ chối ngoài phạm vi dữ liệu hoặc thông báo quá tải hay không."""
+    t = (text or "").lower().strip()
+    if not t:
+        return True
+    if "lượng truy cập cao" in t or "đợi khoảng 30–60 giây" in t:
+        return True
+    if "không được đề cập trong các văn bản quy định" in t or "nằm ngoài phạm vi dữ liệu quy chế" in t:
+        return True
+    if len(t) < 220 and any(kw in t for kw in ["không được đề cập", "ngoài phạm vi dữ liệu"]):
+        return True
+    return False
 
-def get_contact_footer(query: str, answer: str) -> str:
-    """Tự động đính kèm thông tin liên hệ phòng ban thích hợp theo nghiệp vụ (chỉ áp dụng cho câu hỏi trong phạm vi)."""
-    if is_refusal_answer(answer):
+def _strip_accents(text: str) -> str:
+    """Loại bỏ dấu tiếng Việt và chuyển khoảng trắng thành gạch dưới để so khớp với patterns trong departments.json."""
+    if not text:
         return ""
-    safe_query = str(query) if query is not None else ""
-    safe_answer = str(answer) if answer is not None else ""
-    combined = (safe_query + " " + safe_answer).lower()
-    
-    # 1. Nhóm Kế hoạch - Tài chính
-    if any(k in combined for k in ["hoàn tiền", "hoàn trả học phí", "nộp tiền", "tài khoản ngân hàng", "biên lai", "học phí đóng trễ", "số tài khoản"]):
-        return (
-            "\n\n---\n"
-            "📞 **Phòng Kế hoạch - Tài chính (VLUTE):**\n"
-            "- Vị trí: Tòa nhà A (Tầng trệt)\n"
-            "- Điện thoại: **(0270) 3822 141** | Email: **khtc@vlute.edu.vn**"
+    s = text.lower().replace("đ", "d")
+    s = "".join(
+        ch for ch in unicodedata.normalize("NFD", s)
+        if unicodedata.category(ch) != "Mn"
+    )
+    return re.sub(r"[^a-z0-9]+", "_", s).strip("_")
+
+
+def _build_contact_footer_html(dept_name: str, dept_location: str, dept_phone: str, dept_email: str) -> str:
+    """Kết xuất khối HTML chân trang thông tin phòng ban theo chuẩn CSS giao diện nền sáng."""
+    return f"""<div style="margin-top: 12px; padding: 12px 16px; background: #f8fafc; border-radius: 8px; border-left: 3.5px solid #ff9800; color: #334155 !important;">
+  <b style="color: #005a30 !important;">📞 {dept_name}:</b>
+  <ul style="margin: 6px 0 0 0; padding-left: 20px; color: #334155 !important;">
+    <li style="color: #334155 !important;">Vị trí: {dept_location}</li>
+    <li style="color: #334155 !important;">Điện thoại: {dept_phone} | Email: {dept_email}</li>
+  </ul>
+</div>"""
+
+
+def get_contact_footer(query: str, retrieved_docs=None, is_refusal: bool = False) -> str:
+    """
+    Kết xuất chân trang động ưu tiên theo chủ đề chính của câu hỏi:
+    - Nếu câu hỏi chứa từ khóa học bổng, khen thưởng, rèn luyện, kỷ luật, công tác xã hội, ctxh:
+      LUÔN định tuyến về Phòng Công tác Sinh viên (CTSV), kể cả khi có từ phụ 'học phí'.
+    - Nếu câu hỏi về miễn giảm học phí, hỗ trợ chi phí học tập, trợ cấp xã hội:
+      Hiển thị Phòng Công tác Sinh viên (A1.102) là đầu mối tiếp nhận chính kèm ghi chú phối hợp Phòng KHTC.
+    - Chỉ định tuyến độc lập về Phòng Kế hoạch - Tài chính (KHTC) khi hỏi về hoàn trả học phí thừa,
+      rút tiền học phí, nộp học phí, hóa đơn, biên lai.
+    """
+    departments = load_departments_config()
+    q_raw = str(query or "").lower()
+    q_slug = _strip_accents(q_raw)
+
+    ctsv_dept = departments.get("ctsv", {
+        "name": "Phòng Công tác Sinh viên (VLUTE)",
+        "location": "Tòa nhà A (Phòng A1.102 - Tầng trệt)",
+        "phone": "(0270) 3862 436",
+        "email": "ctsv@vlute.edu.vn"
+    })
+    pdt_dept = departments.get("dao_tao") or departments.get("daotao") or {
+        "name": "Phòng Đào tạo (VLUTE)",
+        "location": "Tòa nhà A (Tầng 1)",
+        "phone": "(0270) 3822 140",
+        "email": "daotao@vlute.edu.vn"
+    }
+    khtc_dept = departments.get("khtc", {
+        "name": "Phòng Kế hoạch - Tài chính (VLUTE)",
+        "location": "Tòa nhà A (Tầng trệt)",
+        "phone": "(0270) 3822 141",
+        "email": "khtc@vlute.edu.vn"
+    })
+
+    def _build_hoan_tra_footer() -> str:
+        return f"""<div style="margin-top: 12px; padding: 12px 16px; background: #f8fafc; border-radius: 8px; border-left: 3.5px solid #ff9800; color: #334155 !important;">
+  <b style="color: #005a30 !important;">📞 Tuyến phối hợp xử lý (CTSV – Đào tạo – KHTC):</b>
+  <ul style="margin: 6px 0 0 0; padding-left: 20px; color: #334155 !important;">
+    <li style="color: #334155 !important;"><b>1. {ctsv_dept['name']} (Tiếp nhận & tổng hợp đơn):</b> {ctsv_dept['location']} | ĐT: {ctsv_dept['phone']} | Email: {ctsv_dept['email']}</li>
+    <li style="color: #334155 !important;"><b>2. {pdt_dept['name']} (Xác nhận học phí thừa):</b> {pdt_dept['location']} | ĐT: {pdt_dept['phone']} | Email: {pdt_dept['email']}</li>
+    <li style="color: #334155 !important;"><b>3. {khtc_dept['name']} (Thanh toán hoàn trả):</b> {khtc_dept['location']} | ĐT: {khtc_dept['phone']} | Email: {khtc_dept['email']}</li>
+  </ul>
+</div>"""
+
+    # 1. Ưu tiên cao nhất: Học bổng, khen thưởng, rèn luyện, kỷ luật, CTXH -> LUÔN về Phòng CTSV
+    ctsv_priority_keywords = [
+        "học bổng", "kkht", "khen thưởng", "rèn luyện", "điểm rèn luyện",
+        "kỷ luật", "công tác xã hội", "ctxh", "nội quy", "ứng xử"
+    ]
+    if any(kw in q_raw for kw in ctsv_priority_keywords):
+        return _build_contact_footer_html(
+            dept_name=ctsv_dept["name"],
+            dept_location=ctsv_dept["location"],
+            dept_phone=ctsv_dept["phone"],
+            dept_email=ctsv_dept["email"]
         )
-    
-    # 2. Nhóm Công tác Sinh viên
-    if any(k in combined for k in ["học bổng", "miễn giảm", "chính sách", "bảo hiểm", "bhyt", "trợ cấp", "rèn luyện", "kỷ luật", "khen thưởng", "ký túc xá", "công tác xã hội", "vay vốn"]):
-        return (
-            "\n\n---\n"
-            "📞 **Phòng Công tác Sinh viên (VLUTE):**\n"
-            "- Vị trí: Tòa nhà A (Phòng A1.102 - Tầng trệt)\n"
-            "- Điện thoại: **(0270) 3862 436** | Email: **ctsv@vlute.edu.vn**"
+
+    # 2. Miễn giảm học phí / Hỗ trợ chi phí học tập / Trợ cấp xã hội -> Đầu mối chính Phòng CTSV (A1.102) phối hợp Phòng KHTC
+    mien_giam_keywords = [
+        "miễn giảm học phí", "miễn giảm", "giảm học phí", "miễn học phí",
+        "hỗ trợ chi phí học tập", "hỗ trợ chi phí", "trợ cấp xã hội"
+    ]
+    if any(kw in q_raw for kw in mien_giam_keywords):
+        return _build_contact_footer_html(
+            dept_name="Phòng Công tác Sinh viên (VLUTE) – Đầu mối tiếp nhận hồ sơ (Phối hợp Phòng Kế hoạch - Tài chính)",
+            dept_location=ctsv_dept["location"],
+            dept_phone=ctsv_dept["phone"],
+            dept_email=ctsv_dept["email"]
         )
-    
-    # 3. Nhóm Đào tạo
-    if any(k in combined for k in ["tín chỉ", "học phần", "môn học", "rút môn", "cảnh báo", "thôi học", "điểm", "thang điểm", "thi", "lịch thi", "hoãn thi", "tốt nghiệp", "chứng chỉ", "chuẩn đầu ra"]):
-        return (
-            "\n\n---\n"
-            "📞 **Phòng Đào tạo (VLUTE):**\n"
-            "- Vị trí: Tòa nhà A (Phòng A1.101 - Tòa nhà Điều hành)\n"
-            "- Điện thoại: **(0270) 3822 141** | Email: **daotao@vlute.edu.vn**"
+
+    # 3. Hoàn trả học phí thừa (QT-SV-04) -> Tuyến phối hợp CTSV – Đào tạo – KHTC
+    hoan_tra_keywords = [
+        "hoàn trả học phí", "học phí thừa", "hoàn phí", "hoàn tiền học phí",
+        "rút tiền học phí", "nộp thừa", "hoàn trả"
+    ]
+    if any(kw in q_raw for kw in hoan_tra_keywords):
+        return _build_hoan_tra_footer()
+
+    # 3b. Chỉ định tuyến độc lập về Phòng KHTC khi hỏi về nộp học phí, hóa đơn, biên lai
+    khtc_exclusive_keywords = [
+        "rút tiền", "nộp học phí", "đóng học phí",
+        "thu học phí", "hóa đơn", "biên lai"
+    ]
+    if any(kw in q_raw for kw in khtc_exclusive_keywords):
+        return _build_contact_footer_html(
+            dept_name=khtc_dept["name"],
+            dept_location=khtc_dept["location"],
+            dept_phone=khtc_dept["phone"],
+            dept_email=khtc_dept["email"]
         )
-        
-    return ""
+
+    # 4. Nếu có retrieved_docs (và không phải từ chối): lấy metadata phòng ban từ tài liệu
+    if retrieved_docs and not is_refusal and isinstance(retrieved_docs, (list, tuple)) and len(retrieved_docs) > 0:
+        first_item = retrieved_docs[0]
+        meta = getattr(first_item, "metadata", None)
+        if meta is None and isinstance(first_item, dict):
+            meta = first_item
+        if isinstance(meta, dict) and meta.get("dept_name"):
+            src_file = os.path.basename(str(meta.get("source", "") or meta.get("file", ""))).lower()
+            if "hoan_tra_hoc_phi" in src_file:
+                return _build_hoan_tra_footer()
+            if "mien_giam_hoc_phi" in src_file:
+                return _build_contact_footer_html(
+                    dept_name="Phòng Công tác Sinh viên (VLUTE) – Đầu mối tiếp nhận hồ sơ (Phối hợp Phòng Kế hoạch - Tài chính)",
+                    dept_location=ctsv_dept["location"],
+                    dept_phone=ctsv_dept["phone"],
+                    dept_email=ctsv_dept["email"]
+                )
+            return _build_contact_footer_html(
+                dept_name=meta.get("dept_name", ctsv_dept["name"]),
+                dept_location=meta.get("dept_location", ctsv_dept["location"]),
+                dept_phone=meta.get("dept_phone", ctsv_dept["phone"]),
+                dept_email=meta.get("dept_email", ctsv_dept["email"])
+            )
+
+    # 5. Quét các phòng ban còn lại (Đào tạo, CNTT...) trong departments.json
+    for dept_key, dept_info in departments.items():
+        if dept_key == "khtc":
+            # Đã xử lý độc lập ở mục 3, tránh khớp nhầm từ khóa chung "hoc_phi"
+            continue
+        patterns = dept_info.get("patterns", [])
+        for pat in patterns:
+            pat_str = str(pat).lower().strip()
+            if not pat_str:
+                continue
+            if pat_str == "mang":
+                if "mạng" in q_raw or "an_ninh_mang" in q_slug or "mang_internet" in q_slug or "mang_wifi" in q_slug:
+                    return _build_contact_footer_html(
+                        dept_name=dept_info["name"],
+                        dept_location=dept_info["location"],
+                        dept_phone=dept_info["phone"],
+                        dept_email=dept_info["email"]
+                    )
+            elif pat_str in q_slug or pat_str.replace("_", " ") in q_raw:
+                return _build_contact_footer_html(
+                    dept_name=dept_info["name"],
+                    dept_location=dept_info["location"],
+                    dept_phone=dept_info["phone"],
+                    dept_email=dept_info["email"]
+                )
+
+    return _build_contact_footer_html(
+        dept_name=ctsv_dept["name"],
+        dept_location=ctsv_dept["location"],
+        dept_phone=ctsv_dept["phone"],
+        dept_email=ctsv_dept["email"]
+    )
+
+def check_department_inquiry(query: str):
+    q = (query or "").lower()
+    regulation_keywords = [
+        "hồ sơ", "thủ tục", "điều kiện", "miễn giảm", "miễn, giảm", "học bổng",
+        "quy trình", "quy định", "mức", "nộp ở đâu", "nộp đơn", "nộp hồ sơ",
+        "hoàn trả", "hỗ trợ chi phí", "công tác xã hội", "ctxh", "tín chỉ",
+        "kỷ luật", "rèn luyện", "xét tốt nghiệp", "chuẩn bị", "giấy tờ",
+    ]
+    if any(rw in q for rw in regulation_keywords):
+        return None
+    ask_contact_keywords = ["địa chỉ", "ở đâu", "liên hệ", "số điện thoại", "sđt", "hotline", "email", "phòng nào", "gặp ai", "đơn vị nào"]
+    if any(kw in q for kw in ask_contact_keywords):
+        departments = load_departments_config()
+        pdt = departments.get("daotao") or departments.get("dao_tao") or {
+            "name": "Phòng Đào tạo (VLUTE)",
+            "location": "Tòa nhà A (Tầng 1)",
+            "phone": "(0270) 3822 140",
+            "email": "daotao@vlute.edu.vn"
+        }
+        ctsv = departments.get("ctsv", {
+            "name": "Phòng Công tác Sinh viên (VLUTE)",
+            "location": "Tòa nhà A (Phòng A1.102 - Tầng trệt)",
+            "phone": "(0270) 3862 436",
+            "email": "ctsv@vlute.edu.vn"
+        })
+        khtc = departments.get("khtc", {
+            "name": "Phòng Kế hoạch - Tài chính (VLUTE)",
+            "location": "Tòa nhà A (Tầng trệt)",
+            "phone": "(0270) 3822 141",
+            "email": "khtc@vlute.edu.vn"
+        })
+        cntt = departments.get("cntt", {
+            "name": "Trung tâm Công nghệ Thông tin (VLUTE)",
+            "location": "Tòa nhà B",
+            "phone": "(0270) 3862 250",
+            "email": "ttcntt@vlute.edu.vn"
+        })
+
+        has_pdt = any(k in q for k in ["đào tạo", "pdt", "học vụ"])
+        has_ctsv = any(k in q for k in ["công tác sinh viên", "ctsv"])
+        has_khtc = any(k in q for k in ["tài chính", "kế hoạch", "khtc", "học phí"])
+        has_cntt = any(k in q for k in ["cntt", "công nghệ thông tin", "tin học", "mật khẩu", "wifi", "internet", "mạng", "e-learning"])
+        has_all = "các phòng ban" in q or (int(has_pdt) + int(has_ctsv) + int(has_khtc) + int(has_cntt) >= 2)
+
+        if has_all:
+            return (
+                "Thông tin liên hệ các phòng ban hỗ trợ sinh viên tại **VLUTE** như sau:\n\n"
+                f"• **{pdt['name']}:** {pdt['location']} | ĐT: {pdt['phone']} | Email: {pdt['email']}\n"
+                f"• **{ctsv['name']}:** {ctsv['location']} | ĐT: {ctsv['phone']} | Email: {ctsv['email']}\n"
+                f"• **{khtc['name']}:** {khtc['location']} | ĐT: {khtc['phone']} | Email: {khtc['email']}\n"
+                f"• **{cntt['name']}:** {cntt['location']} | ĐT: {cntt['phone']} | Email: {cntt['email']}"
+            )
+
+        # 1. Trung tâm Công nghệ Thông tin (ưu tiên khi hỏi quên mật khẩu E-Learning / email)
+        if has_cntt:
+            return (
+                f"Thông tin liên hệ của **{cntt['name']}** như sau:\n\n"
+                f"• **Vị trí phòng làm việc:** {cntt['location']}\n"
+                f"• **Số điện thoại:** {cntt['phone']}\n"
+                f"• **Email tiếp nhận:** {cntt['email']}\n\n"
+                f"Bạn có thể liên hệ để được hỗ trợ cấp lại mật khẩu cổng thông tin, tài khoản E-Learning, email sinh viên và sự cố kết nối mạng."
+            )
+
+        # 2. Phòng Đào tạo
+        if has_pdt:
+            return (
+                f"Thông tin liên hệ của **{pdt['name']}** như sau:\n\n"
+                f"• **Vị trí phòng làm việc:** {pdt['location']}\n"
+                f"• **Số điện thoại:** {pdt['phone']}\n"
+                f"• **Email tiếp nhận:** {pdt['email']}\n\n"
+                f"Bạn có thể liên hệ trực tiếp trong giờ hành chính để được hướng dẫn giải quyết các thủ tục đào tạo, đăng ký môn học và học vụ."
+            )
+
+        # 3. Phòng Công tác Sinh viên
+        if has_ctsv:
+            return (
+                f"Thông tin liên hệ của **{ctsv['name']}** như sau:\n\n"
+                f"• **Vị trí phòng làm việc:** {ctsv['location']}\n"
+                f"• **Số điện thoại:** {ctsv['phone']}\n"
+                f"• **Email tiếp nhận:** {ctsv['email']}\n\n"
+                f"Bạn có thể liên hệ trực tiếp để được hỗ trợ về học bổng, chính sách miễn giảm học phí, rèn luyện và các thủ tục sinh viên."
+            )
+
+        # 4. Phòng Kế hoạch - Tài chính
+        if has_khtc:
+            return (
+                f"Thông tin liên hệ của **{khtc['name']}** như sau:\n\n"
+                f"• **Vị trí phòng làm việc:** {khtc['location']}\n"
+                f"• **Số điện thoại:** {khtc['phone']}\n"
+                f"• **Email tiếp nhận:** {khtc['email']}\n\n"
+                f"Bạn có thể liên hệ để giải quyết các vấn đề nộp học phí, hoàn trả học phí thừa hoặc thủ tục hóa đơn, biên lai."
+            )
+    return None
+
 
 def render_followup_suggestions(query_or_content: str, key_suffix: str = ""):
-    """Hiển thị hàng nút câu hỏi gợi ý liên quan theo chủ đề vừa tra cứu."""
-    if is_refusal_answer(query_or_content):
-        return
+    """Hiển thị tối đa 2 nút gợi ý liên quan theo chủ đề, dùng callback on_click để phản hồi tức thì."""
     text_check = (query_or_content or "").lower()
+    config = load_prompts_config()
+    categories = config.get("categories", {})
 
-    # Phân loại gợi ý động theo chủ đề vừa tra cứu:
-    # 1. Học phí
-    if any(k in text_check for k in ["học phí", "miễn giảm", "hoàn trả", "tiền học", "rút tiền"]):
-        prompts = [
-            ("📝 Hồ sơ xét miễn giảm học phí gồm những gì?", "Hồ sơ xét miễn giảm học phí gồm những gì?"),
-            ("💰 Quy trình hoàn trả học phí thừa?", "Quy trình làm thủ tục hoàn trả học phí thừa cho sinh viên gồm những bước nào?")
-        ]
-    # 2. Học bổng
-    elif any(k in text_check for k in ["học bổng", "kkht", "khen thưởng", "rèn luyện"]):
-        prompts = [
-            ("🎯 Điều kiện điểm rèn luyện xét học bổng?", "Điều kiện điểm rèn luyện để được xét cấp học bổng khuyến khích học tập là gì?"),
-            ("⚠️ Có nợ môn thì được xét học bổng không?", "Sinh viên có nợ môn hoặc nợ học phí thì có được xét học bổng khuyến khích học tập không?")
-        ]
-    # 3. Khác
-    else:
-        prompts = [
-            ("🤝 Bao nhiêu tín chỉ CTXH thì đủ tốt nghiệp?", "Sinh viên cần hoàn thành bao nhiêu tín chỉ Công tác xã hội để đủ điều kiện xét tốt nghiệp?"),
-            ("🏢 Địa chỉ liên hệ Phòng Đào tạo?", "Địa chỉ và thông tin liên hệ của Phòng Đào tạo trường VLUTE ở đâu?")
-        ]
+    candidate_prompts = []
+    # 1. So khớp từ khóa để tìm danh mục phù hợp nhất
+    for _cat_key, cat_data in categories.items():
+        kws = cat_data.get("keywords", [])
+        if any(kw in text_check for kw in kws):
+            candidate_prompts = [(p["label"], p["query"]) for p in cat_data.get("prompts", [])]
+            break
 
-    st.markdown("<p style='font-size: 0.88rem; color: #e2e8f0; margin-top: 10px; margin-bottom: 6px;'>💡 <b>Gợi ý câu hỏi liên quan bạn có thể quan tâm:</b></p>", unsafe_allow_html=True)
-    cols = st.columns(len(prompts))
-    for idx, (label, target_q) in enumerate(prompts):
+    # Nếu không khớp nhóm nào, lấy mặc định từ initial_prompts
+    if not candidate_prompts:
+        candidate_prompts = [(p["label"], p["query"]) for p in config.get("initial_prompts", [])]
+
+    # 2. Lọc bỏ câu hỏi trùng lặp với câu vừa hỏi
+    filtered = [
+        (lbl, q) for lbl, q in candidate_prompts
+        if q.lower().strip("?") not in text_check and text_check not in q.lower()
+    ]
+    prompts_to_show = (filtered if len(filtered) >= 2 else candidate_prompts)[:2]
+
+    if not prompts_to_show:
+        return
+
+    st.markdown("<p style='font-size: 0.88rem; color: #00703c !important; margin-top: 10px; margin-bottom: 6px;'>💡 <b style='color: #00703c !important;'>Gợi ý câu hỏi liên quan bạn có thể quan tâm:</b></p>", unsafe_allow_html=True)
+    cols = st.columns(len(prompts_to_show))
+    for idx, (label, target_q) in enumerate(prompts_to_show):
         with cols[idx]:
-            if st.button(label, key=f"followup_{key_suffix}_{idx}", use_container_width=True):
-                st.session_state.quick_prompt = target_q
-                st.rerun()
+            st.button(
+                label,
+                key=f"followup_{key_suffix}_{idx}",
+                use_container_width=True,
+                on_click=submit_user_query,
+                args=(target_q,)
+            )
+
+# ==========================================
+# 5. KHUNG NHẬP CÂU HỎI
+# ==========================================
+user_input_from_chat = st.chat_input("Hỏi về quy chế đào tạo, học bổng, học phí, học vụ VLUTE...")
+
+user_query = None
+if user_input_from_chat:
+    user_query = user_input_from_chat
+elif st.session_state.get("pending_user_query"):
+    user_query = st.session_state.pending_user_query
+    st.session_state.pending_user_query = None
 
 # ==========================================
 # HIỂN THỊ LỊCH SỬ TIN NHẮN
@@ -1325,192 +1631,241 @@ for idx, message in enumerate(st.session_state.messages):
         )
     else:
         with st.chat_message("assistant", avatar="lucas_avatar.png" if os.path.exists("lucas_avatar.png") else "🎓"):
-            msg_content = message.get("content", "")
-            msg_is_refusal = message.get("is_refusal", is_refusal_answer(msg_content) or idx == 0)
+            msg_content = str(message.get("content", "") or "").strip()
+            is_welcome_or_greeting = (idx == 0) or bool(message.get("is_greeting", False))
+            is_dept_inquiry = bool(message.get("is_dept_inquiry", False))
+            msg_is_refusal = bool(message.get("is_refusal", is_refusal_answer(msg_content))) or is_refusal_answer(msg_content)
 
-            if not msg_is_refusal and not is_refusal_answer(msg_content):
+            if is_welcome_or_greeting or is_dept_inquiry:
+                st.markdown(build_assistant_bubble_html(msg_content, is_welcome_or_greeting=True), unsafe_allow_html=True)
+                if is_dept_inquiry and idx > 0 and idx == last_assistant_idx and not user_query:
+                    q_text = message.get("query") or (st.session_state.messages[idx - 1].get("content") if idx > 0 else "")
+                    render_followup_suggestions(q_text or msg_content, key_suffix=str(idx))
+            elif not msg_is_refusal:
+                q_text = message.get("query") or (st.session_state.messages[idx - 1].get("content") if idx > 0 else "")
+                contact_html = message.get("contact") or get_contact_footer(q_text or "", retrieved_docs=message.get("sources"), is_refusal=False)
                 st.markdown(
-                    """<div style="display: inline-flex; align-items: center; background: #e8f5e9; color: #2e7d32; font-size: 13px; font-weight: 600; padding: 4px 12px; border-radius: 16px; margin-bottom: 8px;">
-                    ✅ Đã đối soát thành công - Được trích từ quy chế liên quan
-                    </div>""",
+                    build_assistant_bubble_html(msg_content, contact_html=contact_html, elapsed_time=message.get("elapsed_time"), is_refusal=False),
                     unsafe_allow_html=True
                 )
-
-            st.markdown(msg_content)
-            if not msg_is_refusal and not is_refusal_answer(msg_content):
-                if message.get("contact"):
-                    st.markdown(message["contact"])
-
-                # Hiển thị gợi ý câu hỏi liên quan tiếp theo ngay dưới câu trả lời cho phản hồi mới nhất của Lucas
-                if idx > 0 and idx == last_assistant_idx:
-                    q_text = message.get("query")
-                    if not q_text and idx > 0 and st.session_state.messages[idx - 1].get("role") == "user":
-                        q_text = st.session_state.messages[idx - 1].get("content")
+                if idx > 0 and idx == last_assistant_idx and not user_query:
+                    render_followup_suggestions(q_text or msg_content, key_suffix=str(idx))
+            else:
+                q_text = message.get("query") or (st.session_state.messages[idx - 1].get("content") if idx > 0 else "")
+                contact_html = message.get("contact") or get_contact_footer(q_text or "", retrieved_docs=None, is_refusal=True)
+                st.markdown(
+                    build_assistant_bubble_html(msg_content or REFUSAL_MESSAGE, contact_html=contact_html, is_refusal=True),
+                    unsafe_allow_html=True
+                )
+                if idx > 0 and idx == last_assistant_idx and not user_query:
                     render_followup_suggestions(q_text or msg_content, key_suffix=str(idx))
 
 # ==========================================
 # KHỐI GỢI Ý CÂU HỎI NHANH (KHI CHƯA BẮT ĐẦU HỎI)
 # ==========================================
-if len(st.session_state.messages) <= 1:
+if len(st.session_state.messages) <= 1 and not user_query:
     st.markdown('<div class="quick-prompt-title">💡 Gợi ý câu hỏi nhanh từ văn bản quy chế:</div>', unsafe_allow_html=True)
+    prompts_cfg = load_prompts_config()
+    init_items = prompts_cfg.get("initial_prompts", [])[:4]
+
     col1, col2 = st.columns(2)
-    with col1:
-        if st.button("🏆 Tiêu chuẩn xét học bổng khuyến khích?", use_container_width=True, key="btn_hb"):
-            st.session_state.quick_prompt = "Tiêu chuẩn và điều kiện xét cấp học bổng khuyến khích học tập là gì?"
-            st.rerun()
-        if st.button("💰 Quy trình hoàn trả học phí thừa?", use_container_width=True, key="btn_ht"):
-            st.session_state.quick_prompt = "Quy trình làm thủ tục hoàn trả học phí thừa cho sinh viên gồm những bước nào?"
-            st.rerun()
-    with col2:
-        if st.button("🎁 Đối tượng được miễn giảm học phí?", use_container_width=True, key="btn_mg"):
-            st.session_state.quick_prompt = "Đối tượng sinh viên nào được xét miễn giảm học phí theo quy định của trường?"
-            st.rerun()
-        if st.button("🤝 Quy định tích lũy tín chỉ CTXH?", use_container_width=True, key="btn_ctxh"):
-            st.session_state.quick_prompt = "Sinh viên cần hoàn thành bao nhiêu tín chỉ Công tác xã hội để đủ điều kiện xét tốt nghiệp?"
-            st.rerun()
-
-# ==========================================
-# 5. KHUNG NHẬP CÂU HỎI (INPUT PLACEHOLDER)
-# ==========================================
-user_input_from_chat = st.chat_input("Hỏi về quy chế đào tạo, học bổng, học phí, học vụ VLUTE...")
-
-user_query = None
-if user_input_from_chat:
-    user_query = user_input_from_chat
-elif st.session_state.quick_prompt:
-    user_query = st.session_state.quick_prompt
-    st.session_state.quick_prompt = None
+    for i, item in enumerate(init_items):
+        target_col = col1 if i % 2 == 0 else col2
+        with target_col:
+            st.button(
+                item["label"],
+                key=f"init_prompt_{i}",
+                use_container_width=True,
+                on_click=submit_user_query,
+                args=(item["query"],)
+            )
 
 if user_query:
-    # 1. Lưu và hiển thị ngay câu hỏi của sinh viên
-    st.session_state.messages.append({"role": "user", "content": user_query})
-    safe_user_query = html.escape(user_query).replace("\n", "<br>")
+    current_user_query = user_query.strip()
+
+    # Lấy 2-3 lượt hội thoại gần nhất (tối đa 6 tin nhắn) trước khi nối câu hỏi hiện tại
+    recent_chat_history = [
+        {"role": m.get("role"), "content": m.get("content", "")}
+        for m in st.session_state.messages[1:]
+        if m.get("role") in ("user", "assistant") and not m.get("is_greeting", False)
+    ][-6:]
+
+    # Chống lặp tin nhắn nếu bấm nhiều lần
+    if not (st.session_state.messages and st.session_state.messages[-1].get("role") == "user" and st.session_state.messages[-1].get("content") == current_user_query):
+        st.session_state.messages.append({"role": "user", "content": current_user_query})
+
+    # 1. Render ngay lập tức bong bóng câu hỏi người dùng lên màn hình (giữ nguyên văn bản gốc)
+    safe_user_query = html.escape(current_user_query).replace("\n", "<br>")
     st.markdown(
         f'<div class="chat-row-user"><div class="user-bubble">{safe_user_query}</div></div>',
         unsafe_allow_html=True
     )
 
-    # 2. Xử lý phản hồi từ Lucas
+    new_msg_idx = len(st.session_state.messages)
+
+    # 2. Mở ngay khung chat của Lucas và hiển thị hoạt ảnh bánh răng
     with st.chat_message("assistant", avatar="lucas_avatar.png" if os.path.exists("lucas_avatar.png") else "🎓"):
-        # TRƯỜNG HỢP 1: Chào hỏi xã giao -> Phản hồi tức thì, không lặp lại câu chào dài dòng
-        if is_greeting(user_query):
+        status_placeholder = st.empty()
+        status_placeholder.markdown(THINKING_HTML, unsafe_allow_html=True)
+
+        # Force Flush nhả GIL để WebSocket đẩy bong bóng người dùng và bánh răng lên màn hình trong 50ms
+        time.sleep(0.08)
+
+        if is_greeting(current_user_query):
             greeting_reply = (
                 "Chào bạn! Mình có thể hỗ trợ bạn tra cứu quy chế nào hôm nay? "
                 "*(Bạn có thể chọn các gợi ý nhanh ở trên hoặc gõ câu hỏi cụ thể nhé!)*"
             )
-            st.markdown(greeting_reply)
-            answer_to_save = greeting_reply
-            contact_to_save = ""
-            sources_to_save = []
-            is_refusal_to_save = True
-
-        # TRƯỜNG HỢP 2: Chuyển thẳng câu hỏi tới RAG chain để xử lý tự nhiên
+            status_placeholder.markdown(
+                build_assistant_bubble_html(greeting_reply, is_welcome_or_greeting=True),
+                unsafe_allow_html=True
+            )
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": greeting_reply,
+                "contact": "",
+                "sources": [],
+                "query": current_user_query,
+                "is_refusal": True,
+                "is_greeting": True,
+                "elapsed_time": None
+            })
         else:
-            status_placeholder = st.empty()
-            status_placeholder.markdown(THINKING_HTML, unsafe_allow_html=True)
+            canonical_query = normalize_query_intent(current_user_query)
+            rewritten_query = rewrite_conversational_query(canonical_query, recent_chat_history)
+            dept_reply = check_department_inquiry(rewritten_query) if "check_department_inquiry" in globals() else None
 
-            try:
-                canonical_query = normalize_query_intent(user_query)
-                stream_gen, sources_to_save, num_docs, is_cached = stream_rag_pipeline(canonical_query)
+            if dept_reply:
+                status_placeholder.markdown(
+                    build_assistant_bubble_html(dept_reply, is_welcome_or_greeting=True),
+                    unsafe_allow_html=True
+                )
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": dept_reply,
+                    "contact": "",
+                    "sources": [],
+                    "query": rewritten_query,
+                    "is_refusal": False,
+                    "is_greeting": False,
+                    "is_dept_inquiry": True,
+                    "elapsed_time": None
+                })
+                render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx))
 
-                if not num_docs or not stream_gen:
-                    status_placeholder.empty()
-                    no_doc_msg = REFUSAL_MESSAGE
-                    st.markdown(no_doc_msg)
-                    answer_to_save = no_doc_msg
-                    contact_to_save = ""
-                    sources_to_save = []
-                    is_refusal_to_save = True
-                else:
-                    status_placeholder.empty()
-                    full_answer = st.write_stream(stream_gen)
-                    if not isinstance(full_answer, str):
-                        full_answer = str(full_answer)
-                    answer_to_save = full_answer
+            # 5. Tra cứu RAG nếu là câu hỏi quy chế
+            else:
+                try:
+                    start_time = time.time()
+                    stream_gen, sources_to_save, num_docs, retrieved_docs = stream_rag_pipeline(rewritten_query)
 
-                    # Kiểm tra nếu câu trả lời là ngoài phạm vi / từ chối
-                    if is_refusal_answer(answer_to_save):
-                        status_placeholder.empty()
-                        sources_to_save = []
-                        contact_to_save = ""
-                        is_refusal_to_save = True
-                    else:
+                    if not num_docs or not stream_gen:
+                        no_doc_msg = REFUSAL_MESSAGE
+                        contact_footer = get_contact_footer(rewritten_query, retrieved_docs=None, is_refusal=True)
                         status_placeholder.markdown(
-                            """<div style="display: inline-flex; align-items: center; background: #e8f5e9; color: #2e7d32; font-size: 13px; font-weight: 600; padding: 4px 12px; border-radius: 16px; margin-bottom: 8px;">
-                            ✅ Đã đối soát thành công - Được trích từ quy chế liên quan
-                            </div>""",
+                            build_assistant_bubble_html(no_doc_msg, contact_html=contact_footer, is_refusal=True),
                             unsafe_allow_html=True
                         )
-                        is_refusal_to_save = False
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": no_doc_msg,
+                            "contact": contact_footer,
+                            "sources": [],
+                            "query": rewritten_query,
+                            "is_refusal": True,
+                            "is_greeting": False,
+                            "elapsed_time": None
+                        })
+                        render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx))
+                    else:
+                        badge_html = get_verify_badge_html()
+                        streamed_chunks = []
+                        last_update = time.time()
 
-                        # Tự động lưu câu trả lời vào Cache nếu là câu hỏi mới thành công
-                        if not is_cached and "hạn ngạch" not in answer_to_save:
-                            _GLOBAL_ANSWER_CACHE[canonical_query] = (answer_to_save, sources_to_save, num_docs)
+                        for chunk in stream_gen:
+                            streamed_chunks.append(str(chunk))
+                            if time.time() - last_update > 0.04:
+                                current_text = "".join(streamed_chunks)
+                                status_placeholder.markdown(f"{badge_html}\n\n{current_text}", unsafe_allow_html=True)
+                                last_update = time.time()
 
-                        # Hiển thị thông tin liên hệ phòng ban ở cuối cùng
-                        contact_footer = get_contact_footer(user_query, full_answer)
-                        if contact_footer and "hạn ngạch" not in answer_to_save:
-                            st.markdown(contact_footer)
-                            contact_to_save = contact_footer
+                        full_answer = "".join(streamed_chunks).strip()
+                        elapsed_time = round(time.time() - start_time, 2)
+                        is_interrupted = "Phản hồi bị gián đoạn giữa chừng do sự cố kết nối mô hình" in full_answer
+
+                        if is_interrupted:
+                            contact_footer = get_contact_footer(rewritten_query, retrieved_docs=retrieved_docs, is_refusal=True)
+                            status_placeholder.markdown(
+                                build_assistant_bubble_html(full_answer, contact_html=contact_footer, is_refusal=True),
+                                unsafe_allow_html=True
+                            )
+                            st.session_state.messages.append({
+                                "role": "assistant",
+                                "content": full_answer,
+                                "contact": contact_footer,
+                                "sources": [],
+                                "query": rewritten_query,
+                                "is_refusal": True,
+                                "is_greeting": False,
+                                "elapsed_time": None
+                            })
+                            render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx))
+                        elif is_refusal_answer(full_answer) or not full_answer:
+                            full_answer = full_answer or REFUSAL_MESSAGE
+                            contact_footer = get_contact_footer(rewritten_query, retrieved_docs=None, is_refusal=True)
+                            status_placeholder.markdown(
+                                build_assistant_bubble_html(full_answer, contact_html=contact_footer, is_refusal=True),
+                                unsafe_allow_html=True
+                            )
+                            st.session_state.messages.append({
+                                "role": "assistant",
+                                "content": full_answer,
+                                "contact": contact_footer,
+                                "sources": [],
+                                "query": rewritten_query,
+                                "is_refusal": True,
+                                "is_greeting": False,
+                                "elapsed_time": None
+                            })
+                            render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx))
                         else:
-                            contact_to_save = ""
+                            contact_footer = get_contact_footer(rewritten_query, retrieved_docs=retrieved_docs, is_refusal=False)
+                            status_placeholder.markdown(
+                                build_assistant_bubble_html(full_answer, contact_html=contact_footer, elapsed_time=elapsed_time, is_refusal=False),
+                                unsafe_allow_html=True
+                            )
+                            st.session_state.messages.append({
+                                "role": "assistant",
+                                "content": full_answer,
+                                "contact": contact_footer,
+                                "sources": sources_to_save,
+                                "query": rewritten_query,
+                                "is_refusal": False,
+                                "is_greeting": False,
+                                "elapsed_time": elapsed_time
+                            })
+                            render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx))
 
-            except Exception as rag_err:
-                status_placeholder.empty()
-                err_msg = f"⚠️ Đã xảy ra lỗi trong quá trình xử lý câu hỏi: {rag_err}. Vui lòng thử lại sau ít phút."
-                st.error(err_msg)
-                answer_to_save = err_msg
-                contact_to_save = ""
-                sources_to_save = []
-                is_refusal_to_save = True
-
-    # 3. Lưu câu trả lời cùng trích dẫn và cờ is_refusal vào lịch sử
-    st.session_state.messages.append({
-        "role": "assistant",
-        "content": answer_to_save,
-        "contact": contact_to_save,
-        "sources": sources_to_save,
-        "query": user_query,
-        "is_refusal": is_refusal_to_save
-    })
-    st.rerun()
-
-# ==========================================
-# 6. TỰ ĐỘNG LÀM ẤM BỘ NHỚ ĐỆM (CACHE PRE-WARMING)
-# ==========================================
-def _prewarm_cache_background():
-    """Khởi chạy ngầm nạp sẵn câu trả lời cho các câu hỏi gợi ý phổ biến vào RAM (@st.cache_data và Cache)."""
-    suggested_queries = [
-        "Tiêu chuẩn và điều kiện xét cấp học bổng khuyến khích học tập là gì?",
-        "Quy trình làm thủ tục hoàn trả học phí thừa cho sinh viên gồm những bước nào?",
-        "Đối tượng sinh viên nào được xét miễn giảm học phí theo quy định của trường?",
-        "Sinh viên cần hoàn thành bao nhiêu tín chỉ Công tác xã hội để đủ điều kiện xét tốt nghiệp?",
-        "Hồ sơ xét miễn giảm học phí gồm những gì?",
-        "Điều kiện điểm rèn luyện để được xét cấp học bổng khuyến khích học tập là gì?",
-        "Sinh viên có nợ môn hoặc nợ học phí thì có được xét học bổng khuyến khích học tập không?",
-        "Địa chỉ và thông tin liên hệ của Phòng Đào tạo trường VLUTE ở đâu?"
-    ]
-    for q in suggested_queries:
-        try:
-            execute_rag_pipeline(q)
-        except Exception:
-            pass
-
-try:
-    import threading
-    if "_cache_prewarmed" not in st.session_state:
-        st.session_state["_cache_prewarmed"] = True
-        try:
-            from streamlit.runtime.scriptrunner import add_script_run_ctx
-        except Exception:
-            add_script_run_ctx = None
-
-        _prewarm_thread = threading.Thread(target=_prewarm_cache_background, daemon=True)
-        if add_script_run_ctx:
-            try:
-                add_script_run_ctx(_prewarm_thread)
-            except Exception:
-                pass
-        _prewarm_thread.start()
-except Exception:
-    pass
+                except Exception as e:
+                    status_placeholder.empty()
+                    err_str = str(e)
+                    if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str.upper():
+                        contact_footer = get_contact_footer(rewritten_query, retrieved_docs=None, is_refusal=True)
+                        status_placeholder.markdown(
+                            build_assistant_bubble_html(RATE_LIMIT_MESSAGE, contact_html=contact_footer, is_refusal=True),
+                            unsafe_allow_html=True
+                        )
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": RATE_LIMIT_MESSAGE,
+                            "contact": contact_footer,
+                            "sources": [],
+                            "query": rewritten_query,
+                            "is_refusal": True,
+                            "is_greeting": False,
+                            "elapsed_time": None
+                        })
+                    else:
+                        import traceback
+                        traceback.print_exc()
+                        status_placeholder.error(f"Lỗi: {e}")

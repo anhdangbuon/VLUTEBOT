@@ -1,0 +1,282 @@
+[
+  {
+    "id": "Q01",
+    "category": "Học bổng & Khen thưởng (QĐ 201)",
+    "question": "Sinh viên cần đăng ký tối thiểu bao nhiêu tín chỉ và đạt điểm TBC học kỳ từ bao nhiêu trở lên để được xét học bổng khuyến khích học tập thông thường?",
+    "ground_truth": "Theo Điều 17 QĐ 201, sinh viên phải đăng ký tối thiểu 17 tín chỉ trong học kỳ chính trước thời điểm xét (không tính học lại, học cải thiện, GDQP-AN, bằng đại học thứ hai), đạt điểm TBC học kỳ từ 2,5 trở lên theo thang điểm 4,0, không có học phần nào có điểm tích lũy dưới C và xếp loại rèn luyện từ Khá trở lên.",
+    "expected_source": "xet_cap_hoc_bong.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q02",
+    "category": "Học bổng & Khen thưởng (QĐ 201)",
+    "question": "Điều kiện điểm trung bình học kỳ và xếp loại rèn luyện đối với Học bổng KKHT Mức 1 (Học bổng Sư phạm kỹ thuật) là gì?",
+    "ground_truth": "Theo Điều 17 QĐ 201, Học bổng KKHT Mức 1 (Học bổng SPKT) yêu cầu sinh viên đăng ký tối thiểu 17 tín chỉ, điểm TBC học kỳ chính trước thời điểm xét đạt từ 3,2 trở lên theo thang điểm 4,0 (không có học phần dưới điểm C), xếp loại rèn luyện từ Tốt trở lên và phải có đơn xét học bổng SPKT.",
+    "expected_source": "xet_cap_hoc_bong.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q03",
+    "category": "Học bổng & Khen thưởng (QĐ 201)",
+    "question": "Các mức cấp học bổng khuyến khích học tập (Mức 1, Mức 2, Mức 3, Mức 4) được tính theo công thức nào tại Điều 18?",
+    "ground_truth": "Theo Điều 18 QĐ 201: Học bổng KKHT Mức 1 (Học bổng SPKT) = Đơn giá học phí khối ngành VII (hệ đại trà) × 17 tín chỉ; Mức 2 (Loại Xuất sắc) = Mức 1 × 0,75; Mức 3 (Loại Giỏi) = Mức 1 × 0,5; Mức 4 (Loại Khá) = Mức 1 × 0,25.",
+    "expected_source": "xet_cap_hoc_bong.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q04",
+    "category": "Học bổng & Khen thưởng (QĐ 201)",
+    "question": "Sau khi được cấp học bổng Sư phạm kỹ thuật (SPKT), sinh viên phải đảm bảo điều kiện đăng ký tín chỉ gì ở học kỳ tiếp theo?",
+    "ground_truth": "Theo khoản 3 Điều 17 QĐ 201, sau khi được cấp học bổng SPKT, sinh viên phải đảm bảo đăng ký ít nhất 3 tín chỉ học phần SPKT trong học kỳ chính tiếp theo khi chưa hoàn thành cây tiến trình đào tạo hệ SPKT của Trường; nếu không đăng ký sẽ không được xét học bổng SPKT ở những học kỳ tiếp theo.",
+    "expected_source": "xet_cap_hoc_bong.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q05",
+    "category": "Học bổng & Khen thưởng (QĐ 201)",
+    "question": "Sinh viên có hoàn cảnh khó khăn muốn xét học bổng vượt khó thì quy định nằm ở chương và điều nào trong quy chế học bổng?",
+    "ground_truth": "Học bổng vượt khó dành cho sinh viên có hoàn cảnh gia đình khó khăn được quy định tại Chương VI (Điều 31 và Điều 32) của Quy định xét cấp học bổng (QĐ 201).",
+    "expected_source": "xet_cap_hoc_bong.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q06",
+    "category": "Miễn giảm học phí (QĐ 904)",
+    "question": "Những đối tượng sinh viên nào được miễn học phí theo Điều 5 của Quy định miễn giảm học phí QĐ 904?",
+    "ground_truth": "Theo Điều 5 QĐ 904, các đối tượng được miễn học phí gồm: đối tượng theo Pháp lệnh Ưu đãi người có công với cách mạng (con liệt sĩ, con thương binh, bệnh binh, người nhiễm chất độc hóa học...), sinh viên khuyết tật, người từ 16 đến 22 tuổi thuộc diện bảo trợ xã hội/mồ côi, sinh viên hệ cử tuyển, và sinh viên người dân tộc thiểu số rất ít người ở vùng khó khăn/đặc biệt khó khăn.",
+    "expected_source": "quy_dinh_mien_giam_hoc_phi.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q07",
+    "category": "Miễn giảm học phí (QĐ 904)",
+    "question": "Đối tượng sinh viên nào được giảm 70% học phí theo Điều 6 Quy định miễn giảm học phí?",
+    "ground_truth": "Theo Điều 6 QĐ 904, sinh viên là người dân tộc thiểu số (ngoài đối tượng dân tộc thiểu số rất ít người) mà bản thân và cha hoặc mẹ có nơi thường trú tại thôn/bản đặc biệt khó khăn, xã khu vực III vùng đồng bào dân tộc thiểu số và miền núi được giảm 70% học phí.",
+    "expected_source": "quy_dinh_mien_giam_hoc_phi.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q08",
+    "category": "Miễn giảm học phí (QĐ 904)",
+    "question": "Sinh viên là con của viên chức và người lao động đang công tác tại Nhà trường có thuộc diện được giảm học phí không?",
+    "ground_truth": "Có, theo Quy định miễn giảm học phí QĐ 904, sinh viên là con của viên chức và người lao động đang công tác tại Nhà trường thuộc đối tượng được giảm học phí.",
+    "expected_source": "quy_dinh_mien_giam_hoc_phi.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q09",
+    "category": "Miễn giảm học phí (QĐ 904)",
+    "question": "Sinh viên thuộc diện miễn, giảm học phí phải nộp hồ sơ bao nhiêu lần trong cả khóa học và trường hợp nào phải nộp bổ sung?",
+    "ground_truth": "Theo khoản 3 Điều 8 QĐ 904, sinh viên thuộc diện miễn, giảm học phí chỉ phải làm 01 bộ hồ sơ nộp lần đầu cho cả thời gian học tập; riêng đối với người học thuộc diện hộ nghèo, hộ cận nghèo phải nộp bổ sung giấy chứng nhận theo quy định.",
+    "expected_source": "quy_dinh_mien_giam_hoc_phi.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q10",
+    "category": "Miễn giảm học phí (QĐ 904)",
+    "question": "Mức hỗ trợ chi phí học tập đối với sinh viên dân tộc thiểu số thuộc hộ nghèo/cận nghèo theo Điều 11 được tính bằng bao nhiêu phần trăm mức lương?",
+    "ground_truth": "Theo Điều 10 và Điều 11 QĐ 904 (căn cứ Quyết định 66/2013/QĐ-TTg), mức hỗ trợ chi phí học tập bằng 60% mức lương tối thiểu chung.",
+    "expected_source": "quy_dinh_mien_giam_hoc_phi.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q11",
+    "category": "Hoàn trả học phí thừa (QT-SV-04)",
+    "question": "Những đối tượng sinh viên nào đủ điều kiện nộp đơn đề nghị hoàn trả học phí thừa theo quy trình QT-SV-04?",
+    "ground_truth": "Theo mục 2 quy trình QT-SV-04, sinh viên chính quy có học phí thừa thuộc một trong hai trường hợp: đã hoàn thành chương trình đào tạo và đã nộp hồ sơ xét tốt nghiệp, hoặc sinh viên năm thứ ba trở đi (đã hoàn thành từ 4 học kỳ chính).",
+    "expected_source": "quy_trinh_hoan_tra_hoc_phi.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q12",
+    "category": "Hoàn trả học phí thừa (QT-SV-04)",
+    "question": "Thời gian tiếp nhận đơn đề nghị hoàn trả học phí thừa diễn ra vào những tháng nào trong năm?",
+    "ground_truth": "Theo mục 2 và 5.2.1 QT-SV-04, việc hoàn trả học phí thừa thực hiện 2 đợt trong năm vào tuần 1, 2 của tháng 2 và tháng 9 hàng năm.",
+    "expected_source": "quy_trinh_hoan_tra_hoc_phi.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q13",
+    "category": "Hoàn trả học phí thừa (QT-SV-04)",
+    "question": "Sinh viên cần điền mẫu đơn nào để xin hoàn trả học phí thừa và nộp cho ai đầu tiên?",
+    "ground_truth": "Theo mục 5.2.1 QT-SV-04, sinh viên liên hệ Giáo viên quản lý (GVQL) để xin mẫu đơn đề nghị nhận lại học phí thừa (mẫu BM-KH-10a), điền đầy đủ thông tin và nộp cho GVQL Phòng CTSV.",
+    "expected_source": "quy_trinh_hoan_tra_hoc_phi.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q14",
+    "category": "Hoàn trả học phí thừa (QT-SV-04)",
+    "question": "Sau khi hồ sơ thanh toán hoàn trả học phí thừa được duyệt, Phòng Kế hoạch - Tài chính chuyển khoản hoàn lại cho sinh viên tối đa trong bao lâu?",
+    "ground_truth": "Theo mục 5.2.4 QT-SV-04, Phòng KH-TC kiểm tra chứng từ trình Hiệu trưởng duyệt trong vòng 3 ngày làm việc kể từ ngày nhận hồ sơ từ Phòng Đào tạo, và thực hiện chuyển khoản hoàn lại học phí thừa cho sinh viên trong thời gian tối đa 5 ngày làm việc kể từ ngày hồ sơ thanh toán được duyệt.",
+    "expected_source": "quy_trinh_hoan_tra_hoc_phi.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q15",
+    "category": "Công tác xã hội (QĐ 55)",
+    "question": "Sinh viên hệ đại học chính quy cần tích lũy tối thiểu bao nhiêu ngày công tác xã hội để được xét tốt nghiệp?",
+    "ground_truth": "Theo khoản 1 Điều 6 Quy định chuẩn tham gia hoạt động CTXH, sinh viên đại học hệ chính quy phải tích lũy đủ 12 ngày CTXH trong thời gian đào tạo chính thức của chương trình đào tạo chính.",
+    "expected_source": "tin_chi_cong_tac_xa_hoi.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q16",
+    "category": "Công tác xã hội (QĐ 55)",
+    "question": "Số ngày công tác xã hội (CTXH) của sinh viên được phân bổ cụ thể theo từng năm học như thế nào?",
+    "ground_truth": "Theo Điều 6 Quy định CTXH, việc tích lũy 12 ngày CTXH được phân bổ theo từng năm học: Năm nhất 4 ngày, Năm hai 4 ngày, Năm ba 3 ngày, Năm tư 1 ngày.",
+    "expected_source": "tin_chi_cong_tac_xa_hoi.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q17",
+    "category": "Công tác xã hội (QĐ 55)",
+    "question": "Sinh viên cần hoàn thành tối thiểu bao nhiêu phần trăm số ngày CTXH mới được đăng ký các học phần tốt nghiệp?",
+    "ground_truth": "Theo khoản 4 Điều 6 Quy định CTXH, sinh viên phải tích lũy ít nhất 2/3 số ngày CTXH theo quy định mới được xét đăng ký các học phần tốt nghiệp.",
+    "expected_source": "tin_chi_cong_tac_xa_hoi.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q18",
+    "category": "Công tác xã hội (QĐ 55)",
+    "question": "Tham gia trực tiếp hiến máu tình nguyện hoặc hỗ trợ tổ chức hoạt động hiến máu được quy đổi thành bao nhiêu ngày CTXH?",
+    "ground_truth": "Theo bảng quy đổi tại Điều 8 Quy định CTXH, trực tiếp hiến máu tình nguyện được quy đổi 1 ngày CTXH (cần giấy xác nhận hiến máu), còn hỗ trợ tổ chức hoạt động hiến máu được quy đổi 0,5 ngày.",
+    "expected_source": "tin_chi_cong_tac_xa_hoi.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q19",
+    "category": "Công tác sinh viên (QĐ 1079)",
+    "question": "Theo Điều 5 Quy định công tác sinh viên, sinh viên có những quyền cơ bản nào?",
+    "ground_truth": "Theo Điều 5 QĐ 1079, sinh viên được nhận vào học đúng ngành nghề đã đăng ký dự tuyển khi đủ điều kiện, được tôn trọng và đối xử bình đẳng, được cung cấp đầy đủ thông tin cá nhân và các chế độ chính sách theo quy định.",
+    "expected_source": "quy_dinh_cong_tac_sinh_vien.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q20",
+    "category": "Công tác sinh viên (QĐ 1079)",
+    "question": "Theo Điều 6 Quy định công tác sinh viên, những hành vi nào sinh viên không được làm?",
+    "ground_truth": "Theo Điều 6 QĐ 1079, sinh viên không được xúc phạm nhân phẩm, danh dự, xâm phạm thân thể giảng viên, CBVC và người học khác; không gian lận trong học tập, kiểm tra, thi cử, tuyển sinh; không hút thuốc, uống rượu bia...",
+    "expected_source": "quy_dinh_cong_tac_sinh_vien.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q21",
+    "category": "Công tác sinh viên (QĐ 1079)",
+    "question": "Sinh viên bị kỷ luật khiển trách hoặc cảnh cáo sau bao lâu sẽ được chấm dứt hiệu lực quyết định?",
+    "ground_truth": "Theo Điều 11 QĐ 1079, sinh viên bị kỷ luật khiển trách được chấm dứt hiệu lực sau 03 tháng kể từ ngày có quyết định kỷ luật; bị kỷ luật cảnh cáo được chấm dứt hiệu lực sau 06 tháng nếu không tái phạm.",
+    "expected_source": "quy_dinh_cong_tac_sinh_vien.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q22",
+    "category": "Công tác sinh viên (QĐ 1079)",
+    "question": "Nhiệm vụ và quyền lợi ưu tiên (cộng điểm rèn luyện) của Ban cán sự lớp được quy định như thế nào?",
+    "ground_truth": "Theo Điều 20 và Điều 21 QĐ 1079, Ban cán sự lớp gồm Lớp trưởng và các lớp phó do tập thể lớp bầu và được công nhận; có nhiệm vụ đôn đốc chấp hành nội quy, giữ nếp tự quản, phối hợp Đoàn-Hội, báo cáo tình hình lớp; và được hưởng quyền lợi ưu tiên cộng điểm rèn luyện cùng các chế độ khác theo quy định của trường.",
+    "expected_source": "quy_dinh_cong_tac_sinh_vien.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q23",
+    "category": "Quy tắc ứng xử (QĐ 367)",
+    "question": "Quy tắc ứng xử của Nhà trường (QĐ 367) áp dụng đối với những đối tượng nào?",
+    "ground_truth": "Theo Điều 2 QĐ 367, Quy tắc ứng xử áp dụng cho tất cả cán bộ quản lý, viên chức và người lao động đang làm việc tại trường, cùng tất cả học viên và sinh viên (người học) đang học tập tại trường.",
+    "expected_source": "quy_tac_ung_xu.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q24",
+    "category": "Quy tắc ứng xử (QĐ 367)",
+    "question": "Sinh viên có trách nhiệm gì đối với môi trường và tài sản công của nhà trường theo Điều 4 Quy tắc ứng xử?",
+    "ground_truth": "Theo Điều 4 QĐ 367, cần bảo vệ giữ gìn cảnh quan nhà trường, bảo đảm an ninh trật tự, bảo vệ cơ sở vật chất và không gian học tập, lau sạch bảng viết, thu dọn rác thải, đóng cửa sổ phòng học và bảo vệ các công trình văn hóa như tượng đài, vườn hoa, cây xanh.",
+    "expected_source": "quy_tac_ung_xu.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q25",
+    "category": "Quy tắc ứng xử (QĐ 367)",
+    "question": "Quy định về trang phục của sinh viên khi đến trường và trong giờ học thực hành theo Quy tắc ứng xử là gì?",
+    "ground_truth": "Theo Quy tắc ứng xử QĐ 367, trang phục phải gọn gàng, lịch sự, phù hợp trong môi trường giáo dục; mang thẻ sinh viên, đi giày hoặc dép có quai hậu; mặc đồng phục, bảo hộ lao động đúng quy định của nhà trường trong các giờ học thực hành.",
+    "expected_source": "quy_tac_ung_xu.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q26",
+    "category": "Quy tắc ứng xử (QĐ 367)",
+    "question": "Những hành vi nào bị cấm đối với người học trong lớp học và khuôn viên trường theo Quy tắc ứng xử?",
+    "ground_truth": "Theo Quy tắc ứng xử QĐ 367, người học không được đánh nhau, gây rối trật tự; không tham gia học tập, kiểm tra, thi cử trong tình trạng còn mùi cồn hoặc say rượu bia; không ghi âm, ghi hình, chụp ảnh trái phép; không mang thức uống đựng ly vào lớp học và không lén ăn vặt trong giờ học.",
+    "expected_source": "quy_tac_ung_xu.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q27",
+    "category": "An toàn thông tin (QĐ 979)",
+    "question": "Theo Điều 4 Quy chế bảo đảm an toàn thông tin (QĐ 979), những hành vi nào bị nghiêm cấm đối với hệ thống CNTT của Trường?",
+    "ground_truth": "Theo Điều 4 QĐ 979, nghiêm cấm các hành vi: truy nhập, khai thác, sử dụng trái phép hệ thống thông tin/CSDL; phát tán mã độc, thư rác, thông tin giả mạo; chia sẻ tài khoản cho người khác sử dụng; cản trở, gây rối, phá hoại hoặc làm gián đoạn hoạt động hệ thống CNTT của Trường.",
+    "expected_source": "quy_che_an_toan_thong_tin.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q28",
+    "category": "An toàn thông tin (QĐ 979)",
+    "question": "Khi sử dụng các thiết bị lưu trữ ngoài như USB, thẻ nhớ, ổ cứng di động, người dùng phải tuân thủ quy định gì tại Điều 14?",
+    "ground_truth": "Theo khoản 1 Điều 14 QĐ 979, khi kết nối các thiết bị lưu trữ ngoài (ổ cứng di động, thẻ nhớ, USB), phải quét virus trước khi mở, đọc hoặc sao chép dữ liệu và hạn chế tối đa việc sử dụng thiết bị lưu trữ ngoài.",
+    "expected_source": "quy_che_an_toan_thong_tin.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q29",
+    "category": "An toàn thông tin (QĐ 979)",
+    "question": "Sinh viên được cấp email nội bộ tên miền gì và quy định thay đổi mật khẩu định kỳ bao lâu một lần?",
+    "ground_truth": "Theo Quy chế an toàn thông tin QĐ 979, sinh viên được cấp email có tên miền @st.vlute.edu.vn để phục vụ học tập; người dùng phải thay đổi mật khẩu định kỳ tối thiểu 06 tháng/lần hoặc ngay khi nghi ngờ lộ, lọt thông tin và không chia sẻ tài khoản.",
+    "expected_source": "quy_che_an_toan_thong_tin.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q30",
+    "category": "An toàn thông tin (QĐ 979)",
+    "question": "Đơn vị nào là bộ phận chuyên trách đầu mối quản lý, giám sát và khắc phục sự cố an toàn thông tin, an ninh mạng của Trường?",
+    "ground_truth": "Theo Điều 19 (và Điều 9) QĐ 979, Phòng Quản trị - Thiết bị là bộ phận chuyên trách đầu mối của Trường trong công tác quản lý, giám sát, khắc phục sự cố và ứng cứu khi xảy ra mất an toàn thông tin, an ninh mạng.",
+    "expected_source": "quy_che_an_toan_thong_tin.pdf",
+    "is_out_of_scope": false
+  },
+  {
+    "id": "Q31",
+    "category": "Ngoài phạm vi / Nghị quyết loại trừ",
+    "question": "Nội dung chính của Nghị quyết 153/NQ-CP về hội nhập quốc tế là gì?",
+    "ground_truth": "Ngoài phạm vi dữ liệu quy chế sinh viên (văn bản thuộc danh sách loại trừ EXCLUDED_FILES), hệ thống phải từ chối trả lời.",
+    "expected_source": "OUT_OF_SCOPE",
+    "is_out_of_scope": true
+  },
+  {
+    "id": "Q32",
+    "category": "Ngoài phạm vi / Nghị quyết loại trừ",
+    "question": "Nghị quyết số 71/NQ-CP đề ra những mục tiêu đột phá nào?",
+    "ground_truth": "Ngoài phạm vi dữ liệu quy chế sinh viên (văn bản thuộc danh sách loại trừ EXCLUDED_FILES), hệ thống phải từ chối trả lời.",
+    "expected_source": "OUT_OF_SCOPE",
+    "is_out_of_scope": true
+  },
+  {
+    "id": "Q33",
+    "category": "Ngoài phạm vi / Nghị quyết loại trừ",
+    "question": "Nội dung của Nghị quyết 72/NQ-CP liên quan đến lĩnh vực nào?",
+    "ground_truth": "Ngoài phạm vi dữ liệu quy chế sinh viên (văn bản thuộc danh sách loại trừ EXCLUDED_FILES), hệ thống phải từ chối trả lời.",
+    "expected_source": "OUT_OF_SCOPE",
+    "is_out_of_scope": true
+  },
+  {
+    "id": "Q34",
+    "category": "Ngoài phạm vi / Không có trong kho văn bản",
+    "question": "Thủ tục làm vé tháng xe buýt trợ giá cho sinh viên tại TP.HCM gồm những giấy tờ gì?",
+    "ground_truth": "Ngoài phạm vi dữ liệu quy chế của Nhà trường, hệ thống phải từ chối trả lời.",
+    "expected_source": "OUT_OF_SCOPE",
+    "is_out_of_scope": true
+  },
+  {
+    "id": "Q35",
+    "category": "Ngoài phạm vi / Không có trong kho văn bản",
+    "question": "Điểm chuẩn trúng tuyển đại học chính quy ngành Công nghệ thông tin năm 2026 là bao nhiêu?",
+    "ground_truth": "Ngoài phạm vi dữ liệu quy chế của Nhà trường, hệ thống phải từ chối trả lời.",
+    "expected_source": "OUT_OF_SCOPE",
+    "is_out_of_scope": true
+  }
+]
