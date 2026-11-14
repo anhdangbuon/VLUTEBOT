@@ -8,6 +8,7 @@ import base64
 import traceback
 import unicodedata
 import streamlit as st
+import streamlit.components.v1 as components
 from rag import (
     get_rag_chain,
     DOC_CATALOG,
@@ -111,8 +112,18 @@ div[data-testid="stChatMessage"],
 
 #chat-scroll-anchor {
     overflow-anchor: auto !important;
-    height: 1px !important;
+    height: 16px !important;
     width: 100% !important;
+}
+
+div.element-container:has(iframe[height="0"]),
+div[data-testid="stElementContainer"]:has(iframe[height="0"]) {
+    height: 0 !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    line-height: 0 !important;
 }
 
 /* 0. Nền chung toàn trang & vùng nội dung chính */
@@ -124,7 +135,7 @@ div[data-testid="stChatMessage"],
 .main .block-container,
 div[data-testid="stAppViewBlockContainer"] {
     max-width: 820px !important;
-    padding-bottom: 120px !important;
+    padding-bottom: 160px !important;
 }
 
 /* 1. Header tinh gọn chiều cao 110-120px */
@@ -508,6 +519,16 @@ section[data-testid="stSidebar"] b {
     transform: translateY(-1px);
 }
 
+.sidebar-link-item svg {
+    stroke: #00a65a;
+    flex-shrink: 0;
+    transition: stroke 0.2s ease;
+}
+
+.sidebar-link-item:hover svg {
+    stroke: #ffffff !important;
+}
+
 section[data-testid="stSidebar"] .stButton > button {
     border-radius: 8px !important;
     border: none !important;
@@ -515,6 +536,25 @@ section[data-testid="stSidebar"] .stButton > button {
     color: white !important;
     font-weight: 700 !important;
     transition: all 0.2s ease !important;
+}
+
+section[data-testid="stSidebar"] .stButton > button p {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 7px !important;
+    margin: 0 !important;
+}
+
+section[data-testid="stSidebar"] .stButton > button p::before {
+    content: "";
+    display: inline-block;
+    width: 15px;
+    height: 15px;
+    flex-shrink: 0;
+    background-color: #ffffff;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8'/%3E%3Cpath d='M3 3v5h5'/%3E%3C/svg%3E") no-repeat center / contain;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8'/%3E%3Cpath d='M3 3v5h5'/%3E%3C/svg%3E") no-repeat center / contain;
 }
 
 section[data-testid="stSidebar"] .stButton > button:hover {
@@ -840,14 +880,24 @@ div[data-testid="stHorizontalBlock"] button {
     color: #00703c !important;
     border: 1.5px solid #00703c !important;
     border-radius: 18px !important;
-    font-size: 0.84rem !important;
+    font-size: 0.82rem !important;
     font-weight: 600 !important;
-    padding: 6px 12px !important;
+    padding: 7px 12px !important;
     text-align: left !important;
     box-shadow: 0 2px 4px rgba(0, 112, 60, 0.08) !important;
     transition: all 0.2s ease !important;
     white-space: normal !important;
     height: auto !important;
+}
+
+div[data-testid="stHorizontalBlock"] button p,
+div[data-testid="stHorizontalBlock"] button span,
+div[data-testid="stHorizontalBlock"] button [data-testid="stMarkdownContainer"] {
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    font-size: 0.82rem !important;
+    line-height: 1.35 !important;
 }
 
 div[data-testid="stHorizontalBlock"] button:hover {
@@ -857,12 +907,35 @@ div[data-testid="stHorizontalBlock"] button:hover {
     transform: translateY(-1px);
 }
 
+div[data-testid="stHorizontalBlock"] button:hover p,
+div[data-testid="stHorizontalBlock"] button:hover span {
+    color: #ffffff !important;
+}
+
+/* Hiệu ứng chuyển động 60fps từng thẻ cho 4 nút gợi ý chào mừng */
+@keyframes promptCardIn {
+    from {
+        opacity: 0;
+        transform: translate3d(0, 10px, 0) scale(0.98);
+    }
+    to {
+        opacity: 1;
+        transform: translate3d(0, 0, 0) scale(1);
+    }
+}
+
+[class*="st-key-welcome_prompt_"] button {
+    animation: promptCardIn 0.18s cubic-bezier(0.22, 1, 0.36, 1) both !important;
+    animation-delay: 0ms !important;
+    will-change: transform, opacity;
+}
+
 /* Đảm bảo nút gợi ý bên trong tin nhắn bot có chữ rõ nét, không bị đè màu trắng */
 div[data-testid="stChatMessageContent"] div[data-testid="stHorizontalBlock"] button,
 div[data-testid="stChatMessageContent"] div[data-testid="stHorizontalBlock"] button p,
 div[data-testid="stChatMessageContent"] div[data-testid="stHorizontalBlock"] button span {
     color: #00703c !important;
-    font-size: 0.84rem !important;
+    font-size: 0.82rem !important;
     font-weight: 600 !important;
 }
 
@@ -992,26 +1065,126 @@ st.markdown(f"""
 
 <div class="vlute-nav-ribbon">
     <div class="vlute-nav-badge">
-        <span>🟢 Tra cứu học vụ</span>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <span>Tra cứu học vụ</span>
     </div>
     <div class="vlute-nav-badge official">
-        <span>📚 Văn bản chính thức</span>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
+        <span>Văn bản chính thức</span>
     </div>
     <div class="vlute-nav-badge verified">
-        <span>🛡️ Trả lời có căn cứ</span>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>
+        <span>Trả lời có căn cứ</span>
     </div>
 </div>
 """, unsafe_allow_html=True)
+
+def _outline_svg(paths_markup: str, size: int = 14, color: str = "currentColor") -> str:
+    """Tạo icon SVG đường nét đơn sắc (stroke-width=2) dùng thống nhất cho Sidebar."""
+    return (
+        f'<svg width="{size}" height="{size}" viewBox="0 0 24 24" fill="none" '
+        f'stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+        f'style="flex-shrink: 0; display: inline-block; vertical-align: middle;">'
+        f'{paths_markup}</svg>'
+    )
+
+
+SVG_PIN_ICON = _outline_svg(
+    '<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/>',
+    size=14,
+    color="#00a65a",
+)
+SVG_LINK_ICON = _outline_svg(
+    '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>'
+    '<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+    size=14,
+    color="#00a65a",
+)
+SVG_LANDMARK_ICON = _outline_svg(
+    '<line x1="3" x2="21" y1="22" y2="22"/><line x1="6" x2="6" y1="18" y2="11"/>'
+    '<line x1="10" x2="10" y1="18" y2="11"/><line x1="14" x2="14" y1="18" y2="11"/>'
+    '<line x1="18" x2="18" y1="18" y2="11"/><polygon points="12 2 20 7 4 7"/>',
+    size=14,
+    color="#00a65a",
+)
+SVG_SIDEBAR_PHONE_HEADER = _outline_svg(
+    '<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 '
+    '19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 '
+    '12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27'
+    'a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>',
+    size=14,
+    color="#00a65a",
+)
+SVG_SIDEBAR_PHONE_ROW = _outline_svg(
+    '<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 '
+    '19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 '
+    '12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27'
+    'a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>',
+    size=12,
+    color="#94a3b8",
+)
+SVG_SIDEBAR_MAIL_ROW = _outline_svg(
+    '<rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>',
+    size=12,
+    color="#94a3b8",
+)
+SVG_GLOBE_ICON = _outline_svg(
+    '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
+    size=14,
+)
+SVG_FILE_EDIT_ICON = _outline_svg(
+    '<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>'
+    '<path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62'
+    'l.84-2.873a2 2 0 0 1 .506-.852z"/>',
+    size=14,
+)
+SVG_MONITOR_ICON = _outline_svg(
+    '<rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/>'
+    '<line x1="12" x2="12" y1="17" y2="21"/>',
+    size=14,
+)
+SVG_CARD_ICON = _outline_svg(
+    '<rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/>',
+    size=14,
+)
+SVG_COMPASS_ICON = _outline_svg(
+    '<circle cx="12" cy="12" r="10"/>'
+    '<polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/>',
+    size=14,
+)
+SVG_CLIPBOARD_ICON = _outline_svg(
+    '<rect width="8" height="4" x="8" y="2" rx="1" ry="1"/>'
+    '<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>'
+    '<path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/>',
+    size=14,
+)
+SVG_USERS_ICON = _outline_svg(
+    '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>'
+    '<path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+    size=14,
+)
+SVG_WALLET_ICON = _outline_svg(
+    '<path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/>'
+    '<path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/>',
+    size=14,
+)
+
 
 def reset_chat_history():
     """Callback làm mới hội thoại không cần gọi st.rerun() thủ công."""
     st.session_state.messages = []
     st.session_state.pending_user_query = None
-    st.session_state.pop("welcome_prompts", None)
+    st.session_state.kb_synced = False
+    prev_queries = [
+        p.get("query", "") for p in st.session_state.get("welcome_prompts", [])
+        if isinstance(p, dict)
+    ]
+    st.session_state.welcome_prompts = get_random_welcome_prompts(previous_queries=prev_queries)
+    st.session_state.welcome_shuffle_count = int(st.session_state.get("welcome_shuffle_count", 0)) + 1
 with st.sidebar:
     if LOGO_B64:
         st.markdown(f"""
-        <div style="display: flex; justify-content: center; align-items: center; width: 100%; margin-bottom: 8px; margin-top: 2px;">
+        <div style="display: flex; justify-content: center; align-items: center; width: 100%; padding-top: 8px; margin-bottom: 8px; margin-top: 2px;">
             <img src="data:image/png;base64,{LOGO_B64}" style="width: 95px; height: 95px; object-fit: contain; filter: drop-shadow(0 3px 8px rgba(0,0,0,0.4));" alt="Logo VLUTE" />
         </div>
         <div style="text-align: center; color: #ffffff; font-weight: 800; font-size: 0.92rem; letter-spacing: 0.3px; margin-bottom: 4px; line-height: 1.35;">
@@ -1022,35 +1195,37 @@ with st.sidebar:
         </div>
         """, unsafe_allow_html=True)
     
-    st.markdown("""
-    <div style="text-align: center; color: #cbd5e1; font-size: 0.75rem; margin-bottom: 10px; padding: 6px 8px; background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; line-height: 1.4; word-break: keep-all;">
-        <span>📍</span> <span>Số 73 Nguyễn Huệ, Phường Long Châu, Tỉnh Vĩnh Long</span>
+    st.markdown(f"""
+    <div style="display: flex; align-items: center; justify-content: center; gap: 5px; text-align: center; color: #cbd5e1; font-size: 0.75rem; margin-bottom: 10px; padding: 6px 8px; background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; line-height: 1.4; word-break: keep-all;">
+        {SVG_PIN_ICON} <span>Số 73 Nguyễn Huệ, Phường Long Châu, Tỉnh Vĩnh Long</span>
     </div>
     """, unsafe_allow_html=True)
 
     st.button(
-        "🗑️ Làm mới cuộc trò chuyện",
+        "Làm mới cuộc trò chuyện",
         use_container_width=True,
         on_click=reset_chat_history,
     )
     
     # 2 nhóm liên kết hệ thống rõ rệt (chuỗi không thụt lề để triệt tiêu lỗi code thô)
-    SIDEBAR_NAV_HTML = """<div class="sidebar-links-card">
-<div class="sidebar-section-title">🔗 HỆ THỐNG HỌC TẬP</div>
-<div class="sidebar-link-grid">
-<a href="https://vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Cổng thông tin My VLUTE">🌐 My VLUTE</a>
-<a href="https://daotao.vlute.edu.vn/sinh-vien" target="_blank" class="sidebar-link-item" title="Đăng ký học phần">📝 ĐK Học phần</a>
-<a href="http://elearning.vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Học trực tuyến E-Learning">💻 E-Learning</a>
-<a href="https://thanhtoan.vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Cổng thanh toán Trực tuyến">💳 Thanh toán</a>
-</div>
-<div class="sidebar-section-title" style="margin-top: 12px;">🏫 ĐƠN VỊ HỖ TRỢ</div>
-<div class="sidebar-link-grid">
-<a href="https://tuyensinh.vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Phòng Tuyển sinh">🎯 Tuyển sinh</a>
-<a href="http://pdt.vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Phòng Đào tạo (A1.101)">📋 Đào tạo (A1.101)</a>
-<a href="http://cgtdt-dsa.vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Phòng Công tác SV (A1.102)">👥 CTSV (A1.102)</a>
-<a href="https://vlute.edu.vn" target="_blank" class="sidebar-link-item" title="Phòng Kế hoạch - Tài chính">💰 KHTC (Tầng trệt)</a>
-</div>
-</div>"""
+    SIDEBAR_NAV_HTML = (
+        '<div class="sidebar-links-card">'
+        f'<div class="sidebar-section-title">{SVG_LINK_ICON}<span>HỆ THỐNG HỌC TẬP</span></div>'
+        '<div class="sidebar-link-grid">'
+        f'<a href="https://vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Cổng thông tin My VLUTE">{SVG_GLOBE_ICON}<span style="overflow:hidden;text-overflow:ellipsis;">My VLUTE</span></a>'
+        f'<a href="https://daotao.vlute.edu.vn/sinh-vien" target="_blank" class="sidebar-link-item" title="Đăng ký học phần">{SVG_FILE_EDIT_ICON}<span style="overflow:hidden;text-overflow:ellipsis;">ĐK Học phần</span></a>'
+        f'<a href="http://elearning.vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Học trực tuyến E-Learning">{SVG_MONITOR_ICON}<span style="overflow:hidden;text-overflow:ellipsis;">E-Learning</span></a>'
+        f'<a href="https://thanhtoan.vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Cổng thanh toán Trực tuyến">{SVG_CARD_ICON}<span style="overflow:hidden;text-overflow:ellipsis;">Thanh toán</span></a>'
+        '</div>'
+        f'<div class="sidebar-section-title" style="margin-top: 12px;">{SVG_LANDMARK_ICON}<span>ĐƠN VỊ HỖ TRỢ</span></div>'
+        '<div class="sidebar-link-grid">'
+        f'<a href="https://tuyensinh.vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Phòng Tuyển sinh">{SVG_COMPASS_ICON}<span style="overflow:hidden;text-overflow:ellipsis;">Tuyển sinh</span></a>'
+        f'<a href="http://pdt.vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Phòng Đào tạo (A1.101)">{SVG_CLIPBOARD_ICON}<span style="overflow:hidden;text-overflow:ellipsis;">Đào tạo (A1.101)</span></a>'
+        f'<a href="http://cgtdt-dsa.vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Phòng Công tác SV (A1.102)">{SVG_USERS_ICON}<span style="overflow:hidden;text-overflow:ellipsis;">CTSV (A1.102)</span></a>'
+        f'<a href="https://vlute.edu.vn" target="_blank" class="sidebar-link-item" title="Phòng Kế hoạch - Tài chính">{SVG_WALLET_ICON}<span style="overflow:hidden;text-overflow:ellipsis;">KHTC (Tầng trệt)</span></a>'
+        '</div>'
+        '</div>'
+    )
     st.markdown(SIDEBAR_NAV_HTML, unsafe_allow_html=True)
 
     # Khối thông tin liên hệ phòng ban (đọc động từ departments.json)
@@ -1069,13 +1244,17 @@ with st.sidebar:
         dept_rows_html.append(
             f'<div style="margin-bottom: 6px; font-size: 0.8rem;">'
             f'<b style="color: #a7f3d0;">• {d_name}{loc_str}:</b><br>'
-            f'☎️ <code>{d_phone}</code> | ✉️ <i>{d_email}</i>'
+            f'<span style="display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap;">'
+            f'{SVG_SIDEBAR_PHONE_ROW}<code>{d_phone}</code>'
+            f'<span style="color: #475569; margin: 0 2px;">|</span>'
+            f'{SVG_SIDEBAR_MAIL_ROW}<i>{d_email}</i>'
+            f'</span>'
             f'</div>'
         )
     sidebar_contacts_html = (
         '<div class="sidebar-contact-card">'
-        '<div style="font-weight: 700; color: #ffffff; margin-bottom: 6px; font-size: 0.85rem;">'
-        '📞 ĐẦU MỐI LIÊN HỆ PHÒNG BAN:'
+        f'<div style="font-weight: 700; color: #ffffff; margin-bottom: 6px; font-size: 0.85rem; display: flex; align-items: center; gap: 6px;">'
+        f'{SVG_SIDEBAR_PHONE_HEADER}<span>ĐẦU MỐI LIÊN HỆ PHÒNG BAN:</span>'
         '</div>'
         + "".join(dept_rows_html)
         + '</div>'
@@ -1101,7 +1280,9 @@ try:
     if "qa_chain" not in st.session_state:
         st.session_state.qa_chain = load_chain()
     qa_chain = st.session_state.qa_chain
-    auto_sync_knowledge_base()
+    if not st.session_state.get("kb_synced", False):
+        auto_sync_knowledge_base()
+        st.session_state.kb_synced = True
 except Exception as e:
     st.error(f"Lỗi khởi tạo hệ thống: {e}")
     st.stop()
@@ -1136,16 +1317,19 @@ def build_assistant_bubble_html(content: str, contact_html: str = "", elapsed_ti
     badge = get_verify_badge_html(elapsed_time)
     return f"{badge}\n\n{body}\n\n{contact_html}" if contact_html else f"{badge}\n\n{body}"
 
-CTSV_CONTACT_HTML = """<div class="contact-footer-card">
-  <b style="color: #005a30 !important;">📞 Phòng Công tác Sinh viên (VLUTE):</b>
+SVG_PHONE_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#005a30" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -3px; margin-right: 5px; flex-shrink: 0;"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>'
+SVG_LIGHTBULB_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#00703c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -3px; margin-right: 4px; flex-shrink: 0;"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>'
+
+CTSV_CONTACT_HTML = f"""<div class="contact-footer-card">
+  <b style="color: #005a30 !important;">{SVG_PHONE_ICON}Phòng Công tác Sinh viên (VLUTE):</b>
   <ul style="margin: 6px 0 0 0; padding-left: 20px; color: #334155 !important;">
     <li style="color: #334155 !important;">Vị trí: Tòa nhà A (Phòng A1.102 - Tầng trệt)</li>
     <li style="color: #334155 !important;">Điện thoại: (0270) 3862 436 | Email: ctsv@vlute.edu.vn</li>
   </ul>
 </div>"""
 
-KHTC_CONTACT_HTML = """<div class="contact-footer-card">
-  <b style="color: #005a30 !important;">📞 Phòng Kế hoạch - Tài chính (VLUTE):</b>
+KHTC_CONTACT_HTML = f"""<div class="contact-footer-card">
+  <b style="color: #005a30 !important;">{SVG_PHONE_ICON}Phòng Kế hoạch - Tài chính (VLUTE):</b>
   <ul style="margin: 6px 0 0 0; padding-left: 20px; color: #334155 !important;">
     <li style="color: #334155 !important;">Vị trí: Tòa nhà A (Tầng trệt)</li>
     <li style="color: #334155 !important;">Điện thoại: (0270) 3822 141 | Email: khtc@vlute.edu.vn</li>
@@ -1283,7 +1467,7 @@ def normalize_query_intent(query: str) -> str:
 # 2. TINH GỌN LỜI CHÀO MỞ ĐẦU
 # ==========================================
 WELCOME_CONTENT = (
-    "👋 **Xin chào! Mình là Lucas** – trợ lý hỗ trợ tra cứu Quy chế Đào tạo & Quy định sinh viên VLUTE.\n\n"
+    "**Xin chào! Mình là Lucas** – trợ lý hỗ trợ tra cứu Quy chế Đào tạo & Quy định sinh viên VLUTE.\n\n"
     "Bạn có thể chọn nhanh một trong các câu hỏi gợi ý bên dưới hoặc nhập trực tiếp thắc mắc về học bổng, miễn giảm học phí, công tác xã hội, kỷ luật hay học vụ!"
 )
 
@@ -1315,10 +1499,11 @@ def load_prompts_config() -> dict:
     return {"initial_prompts": [], "categories": {}}
 
 
-def get_random_welcome_prompts() -> list[dict]:
-    """Lấy ngẫu nhiên 4 câu hỏi gợi ý từ 16 câu trong categories (ưu tiên 1 câu mỗi nhóm chủ đề)."""
+def get_random_welcome_prompts(previous_queries=None) -> list[dict]:
+    """Lấy ngẫu nhiên 4 câu hỏi gợi ý từ 16 câu trong categories, luôn loại trừ bộ câu đang hiển thị."""
     config = load_prompts_config()
     categories = config.get("categories", {})
+    prev_set = {str(q).strip() for q in (previous_queries or []) if str(q).strip()}
     selected = []
     remaining_pool = []
 
@@ -1328,10 +1513,12 @@ def get_random_welcome_prompts() -> list[dict]:
             if isinstance(p, dict) and p.get("label") and p.get("query")
         ]
         if prompts:
-            chosen = random.choice(prompts)
+            candidates = [p for p in prompts if str(p.get("query")).strip() not in prev_set]
+            pool = candidates if candidates else prompts
+            chosen = random.choice(pool)
             selected.append(chosen)
             for p in prompts:
-                if p != chosen:
+                if p != chosen and str(p.get("query")).strip() not in prev_set:
                     remaining_pool.append(p)
 
     if len(selected) > 4:
@@ -1339,7 +1526,7 @@ def get_random_welcome_prompts() -> list[dict]:
     elif len(selected) < 4:
         fallback_pool = remaining_pool or [
             p for p in config.get("initial_prompts", [])
-            if isinstance(p, dict) and p.get("label") and p.get("query")
+            if isinstance(p, dict) and p.get("label") and p.get("query") and str(p.get("query")).strip() not in prev_set
         ]
         need = 4 - len(selected)
         if fallback_pool:
@@ -1358,8 +1545,13 @@ def submit_user_query(query_text: str):
 
 
 def shuffle_welcome_prompts():
-    """Callback đổi nhanh 4 câu hỏi gợi ý ngẫu nhiên trên màn hình chào mừng."""
-    st.session_state.pop("welcome_prompts", None)
+    """Callback đổi nhanh 4 câu hỏi gợi ý mới (khác 100% 4 câu hiện tại) và tăng bộ đếm animation."""
+    prev_queries = [
+        p.get("query", "") for p in st.session_state.get("welcome_prompts", [])
+        if isinstance(p, dict)
+    ]
+    st.session_state.welcome_prompts = get_random_welcome_prompts(previous_queries=prev_queries)
+    st.session_state.welcome_shuffle_count = int(st.session_state.get("welcome_shuffle_count", 0)) + 1
 
 def clean_snippet_text(text: str) -> str:
     """Làm sạch đoạn trích quy chế, loại bỏ các ký tự rác, dấu sao, lỗi chính tả từ quét PDF."""
@@ -1470,7 +1662,7 @@ def _strip_accents(text: str) -> str:
 def _build_contact_footer_html(dept_name: str, dept_location: str, dept_phone: str, dept_email: str) -> str:
     """Kết xuất khối HTML chân trang thông tin phòng ban theo chuẩn CSS giao diện nền sáng."""
     return f"""<div class="contact-footer-card">
-  <b style="color: #005a30 !important;">📞 {dept_name}:</b>
+  <b style="color: #005a30 !important;">{SVG_PHONE_ICON}{dept_name}:</b>
   <ul style="margin: 6px 0 0 0; padding-left: 20px; color: #334155 !important;">
     <li style="color: #334155 !important;">Vị trí: {dept_location}</li>
     <li style="color: #334155 !important;">Điện thoại: {dept_phone} | Email: {dept_email}</li>
@@ -1513,7 +1705,7 @@ def get_contact_footer(query: str, retrieved_docs=None, is_refusal: bool = False
 
     def _build_hoan_tra_footer() -> str:
         return f"""<div class="contact-footer-card">
-  <b style="color: #005a30 !important;">📞 Tuyến phối hợp xử lý (CTSV – Đào tạo – KHTC):</b>
+  <b style="color: #005a30 !important;">{SVG_PHONE_ICON}Tuyến phối hợp xử lý (CTSV – Đào tạo – KHTC):</b>
   <ul style="margin: 6px 0 0 0; padding-left: 20px; color: #334155 !important;">
     <li style="color: #334155 !important;"><b>1. {ctsv_dept['name']} (Tiếp nhận & tổng hợp đơn):</b> {ctsv_dept['location']} | ĐT: {ctsv_dept['phone']} | Email: {ctsv_dept['email']}</li>
     <li style="color: #334155 !important;"><b>2. {pdt_dept['name']} (Xác nhận học phí thừa):</b> {pdt_dept['location']} | ĐT: {pdt_dept['phone']} | Email: {pdt_dept['email']}</li>
@@ -1720,35 +1912,133 @@ def check_department_inquiry(query: str):
     return None
 
 
-def render_followup_suggestions(query_or_content: str, key_suffix: str = ""):
-    """Hiển thị tối đa 2 nút gợi ý liên quan theo chủ đề, dùng callback on_click để phản hồi tức thì."""
-    text_check = (query_or_content or "").lower()
+def render_followup_suggestions(
+    query_or_content: str,
+    key_suffix: str = "",
+    sources: list | None = None,
+    assistant_reply: str = "",
+    asked_queries: list | set | None = None,
+):
+    """Hiển thị tối đa 2 nút gợi ý liên quan theo chủ đề, chấm điểm ngữ cảnh tổng hợp & loại trừ mọi câu đã hỏi."""
+    q_text = (query_or_content or "").lower()
+    reply_text = (assistant_reply or "").lower()
+
+    raw_asked = []
+    if query_or_content:
+        raw_asked.append(query_or_content)
+    if asked_queries:
+        raw_asked.extend(asked_queries)
+    for msg in st.session_state.get("messages", []):
+        if msg.get("role") == "user" and msg.get("content"):
+            raw_asked.append(str(msg.get("content", "")))
+        elif msg.get("role") == "assistant" and msg.get("query"):
+            raw_asked.append(str(msg.get("query", "")))
+
+    asked_norms = {_strip_accents(x) for x in raw_asked if _strip_accents(x)}
+    asked_token_sets = [set(n.split("_")) for n in asked_norms if len(n.split("_")) >= 3]
+
+    def _is_already_asked(cand_q: str, cand_lbl: str = "") -> bool:
+        cq_norm = _strip_accents(cand_q)
+        if not cq_norm:
+            return False
+        if cq_norm in asked_norms:
+            return True
+        if any(min(len(cq_norm), len(a)) >= 18 and (cq_norm in a or a in cq_norm) for a in asked_norms):
+            return True
+        cq_tokens = set(cq_norm.split("_"))
+        cl_norm = _strip_accents(cand_lbl)
+        cl_tokens = set(cl_norm.split("_")) if cl_norm else set()
+        for atoks in asked_token_sets:
+            if len(cq_tokens) >= 3:
+                denom_q = min(len(cq_tokens), len(atoks))
+                if denom_q > 0 and (len(cq_tokens & atoks) / denom_q) >= 0.74:
+                    return True
+            if len(cl_tokens) >= 3:
+                denom_l = min(len(cl_tokens), len(atoks))
+                if denom_l > 0 and (len(cl_tokens & atoks) / denom_l) >= 0.70:
+                    return True
+        return False
+
+    doc_title = ""
+    doc_snippet = ""
+    doc_dept_key = ""
+    if sources and isinstance(sources, list) and len(sources) > 0:
+        src0 = sources[0]
+        if isinstance(src0, dict):
+            doc_title = str(src0.get("title") or src0.get("short_title") or "").lower()
+            doc_snippet = str(src0.get("snippet") or "")[:400].lower()
+            doc_dept_key = str(src0.get("dept_key") or "").lower().strip()
+        else:
+            meta = getattr(src0, "metadata", {}) or {}
+            doc_title = str(meta.get("title") or "").lower()
+            doc_snippet = str(getattr(src0, "page_content", "") or "")[:400].lower()
+            doc_dept_key = str(meta.get("dept_key") or "").lower().strip()
+
     config = load_prompts_config()
     categories = config.get("categories", {})
 
-    candidate_prompts = []
-    # 1. So khớp từ khóa để tìm danh mục phù hợp nhất
-    for _cat_key, cat_data in categories.items():
-        kws = cat_data.get("keywords", [])
-        if any(kw in text_check for kw in kws):
-            candidate_prompts = [(p["label"], p["query"]) for p in cat_data.get("prompts", [])]
-            break
+    best_cat_key = None
+    best_score = 0
+    # 1. Chấm điểm độ khớp từ khóa trên ngữ cảnh tổng hợp (ưu tiên trọng số cao cho title và query_or_content)
+    for cat_key, cat_data in categories.items():
+        kws = [str(kw).lower() for kw in cat_data.get("keywords", []) if kw]
+        score = 0
+        for kw in kws:
+            if doc_title and kw in doc_title:
+                score += 4
+            if q_text and kw in q_text:
+                score += 3
+            if reply_text and kw in reply_text:
+                score += 2
+            if doc_snippet and kw in doc_snippet:
+                score += 1
+        if score > best_score:
+            best_score = score
+            best_cat_key = cat_key
 
-    # Nếu không khớp nhóm nào, lấy mặc định từ initial_prompts
-    if not candidate_prompts:
+    # 2. Lớp dự phòng tổng quát theo dept_key tự động của sources[0] nếu chưa khớp rõ từ khóa
+    if not best_cat_key and doc_dept_key:
+        dept_to_category = {
+            "dao_tao": "hoc_vu_tot_nghiep",
+            "cntt": "hoc_vu_tot_nghiep",
+            "khtc": "hoc_phi",
+            "ctsv": "ctxh_ren_luyen",
+        }
+        mapped_cat = dept_to_category.get(doc_dept_key)
+        if mapped_cat in categories:
+            best_cat_key = mapped_cat
+
+    if best_cat_key and best_cat_key in categories:
+        candidate_prompts = [(p["label"], p["query"]) for p in categories[best_cat_key].get("prompts", [])]
+    else:
         candidate_prompts = [(p["label"], p["query"]) for p in config.get("initial_prompts", [])]
 
-    # 2. Lọc bỏ câu hỏi trùng lặp với câu vừa hỏi
-    filtered = [
-        (lbl, q) for lbl, q in candidate_prompts
-        if q.lower().strip("?") not in text_check and text_check not in q.lower()
-    ]
-    prompts_to_show = (filtered if len(filtered) >= 2 else candidate_prompts)[:2]
+    # 3. Lọc bỏ mọi câu hỏi đã từng hỏi trong phiên hiện tại (không bao giờ lặp lại câu trước)
+    prompts_to_show = []
+    seen_norms = set()
+
+    def _collect_prompts(pool):
+        for lbl, q in pool:
+            qn = _strip_accents(q)
+            if not _is_already_asked(q, lbl) and qn not in seen_norms:
+                prompts_to_show.append((lbl, q))
+                seen_norms.add(qn)
+            if len(prompts_to_show) >= 2:
+                break
+
+    _collect_prompts(candidate_prompts)
+    if len(prompts_to_show) < 2:
+        backup_pool = []
+        for ckey, cdata in categories.items():
+            if ckey != best_cat_key:
+                backup_pool.extend((p["label"], p["query"]) for p in cdata.get("prompts", []))
+        backup_pool.extend((p["label"], p["query"]) for p in config.get("initial_prompts", []))
+        _collect_prompts(backup_pool)
 
     if not prompts_to_show:
         return
 
-    st.markdown("<p style='font-size: 0.88rem; color: #00703c !important; margin-top: 10px; margin-bottom: 6px;'>💡 <b style='color: #00703c !important;'>Gợi ý câu hỏi liên quan bạn có thể quan tâm:</b></p>", unsafe_allow_html=True)
+    st.markdown(f"<p style='font-size: 0.88rem; color: #00703c !important; margin-top: 10px; margin-bottom: 6px; display: flex; align-items: center; gap: 4px;'>{SVG_LIGHTBULB_ICON}<b style='color: #00703c !important;'>Gợi ý câu hỏi liên quan bạn có thể quan tâm:</b></p>", unsafe_allow_html=True)
     cols = st.columns(len(prompts_to_show))
     for idx, (label, target_q) in enumerate(prompts_to_show):
         with cols[idx]:
@@ -1817,51 +2107,59 @@ for idx, message in enumerate(st.session_state.messages):
             msg_is_refusal = bool(message.get("is_refusal", is_refusal_answer(msg_content))) or is_refusal_answer(msg_content)
             old_marker_suffix = '\n\n<span class="chat-history-old-marker" style="display:none;"></span>' if (bool(current_user_query) or idx < last_assistant_idx) else ""
 
+            q_text = message.get("query") or (st.session_state.messages[idx - 1].get("content") if idx > 0 else "")
             if is_welcome_or_greeting or is_dept_inquiry:
                 st.markdown(build_assistant_bubble_html(msg_content, is_welcome_or_greeting=True) + old_marker_suffix, unsafe_allow_html=True)
-                if is_dept_inquiry and idx > 0 and idx == last_assistant_idx and not user_query:
-                    q_text = message.get("query") or (st.session_state.messages[idx - 1].get("content") if idx > 0 else "")
-                    render_followup_suggestions(q_text or msg_content, key_suffix=str(idx))
             elif not msg_is_refusal:
-                q_text = message.get("query") or (st.session_state.messages[idx - 1].get("content") if idx > 0 else "")
                 contact_html = message.get("contact") or get_contact_footer(q_text or "", retrieved_docs=message.get("sources"), is_refusal=False)
                 st.markdown(
                     build_assistant_bubble_html(msg_content, contact_html=contact_html, elapsed_time=message.get("elapsed_time"), is_refusal=False) + old_marker_suffix,
                     unsafe_allow_html=True
                 )
-                if idx > 0 and idx == last_assistant_idx and not user_query:
-                    render_followup_suggestions(q_text or msg_content, key_suffix=str(idx))
             else:
-                q_text = message.get("query") or (st.session_state.messages[idx - 1].get("content") if idx > 0 else "")
                 contact_html = message.get("contact") or get_contact_footer(q_text or "", retrieved_docs=None, is_refusal=True)
                 st.markdown(
                     build_assistant_bubble_html(msg_content or REFUSAL_MESSAGE, contact_html=contact_html, is_refusal=True) + old_marker_suffix,
                     unsafe_allow_html=True
                 )
-                if idx > 0 and idx == last_assistant_idx and not user_query:
-                    render_followup_suggestions(q_text or msg_content, key_suffix=str(idx))
+
+            if idx > 0 and idx == last_assistant_idx and (not is_welcome_or_greeting or is_dept_inquiry):
+                prev_followup_placeholder = st.empty()
+                if not current_user_query:
+                    with prev_followup_placeholder.container():
+                        render_followup_suggestions(
+                            q_text or msg_content,
+                            key_suffix=str(idx),
+                            sources=message.get("sources"),
+                            assistant_reply=msg_content,
+                        )
+                else:
+                    prev_followup_placeholder.empty()
 
 # ==========================================
 # KHỐI 4 CÂU HỎI GỢI Ý NGẪU NHIÊN (LƯỚI 2x2 KHI CHƯA BẮT ĐẦU HỎI)
 # ==========================================
 if len(st.session_state.messages) <= 1 and not current_user_query:
+    if "welcome_shuffle_count" not in st.session_state:
+        st.session_state.welcome_shuffle_count = 0
     if "welcome_prompts" not in st.session_state or not st.session_state.welcome_prompts:
         st.session_state.welcome_prompts = get_random_welcome_prompts()
 
     hdr_col1, hdr_col2 = st.columns([3, 1])
     with hdr_col1:
         st.markdown(
-            '<div class="quick-prompt-title" style="margin-bottom: 6px; padding-top: 6px;">💡 Gợi ý câu hỏi nhanh dành cho bạn:</div>',
+            f'<div class="quick-prompt-title" style="margin-bottom: 6px; padding-top: 6px;">{SVG_LIGHTBULB_ICON}Gợi ý câu hỏi nhanh dành cho bạn:</div>',
             unsafe_allow_html=True,
         )
     with hdr_col2:
         st.button(
-            "🔄 Đổi 4 gợi ý khác",
+            "↻ Đổi 4 gợi ý khác",
             key="shuffle_welcome_btn",
             use_container_width=True,
             on_click=shuffle_welcome_prompts,
         )
 
+    shuffle_count = int(st.session_state.get("welcome_shuffle_count", 0))
     welcome_items = st.session_state.welcome_prompts[:4]
     col1, col2 = st.columns(2)
     for i, item in enumerate(welcome_items):
@@ -1869,7 +2167,7 @@ if len(st.session_state.messages) <= 1 and not current_user_query:
         with target_col:
             st.button(
                 item["label"],
-                key=f"welcome_prompt_{i}",
+                key=f"welcome_prompt_v{shuffle_count}_{i}",
                 use_container_width=True,
                 on_click=submit_user_query,
                 args=(item["query"],)
@@ -1924,7 +2222,7 @@ if current_user_query:
                     "is_dept_inquiry": True,
                     "elapsed_time": None
                 })
-                render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx))
+                render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=[], assistant_reply=dept_reply)
 
             # 5. Tra cứu RAG nếu là câu hỏi quy chế
             else:
@@ -1949,7 +2247,7 @@ if current_user_query:
                             "is_greeting": False,
                             "elapsed_time": None
                         })
-                        render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx))
+                        render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=[], assistant_reply=no_doc_msg)
                     else:
                         badge_html = get_verify_badge_html()
                         streamed_chunks = []
@@ -1987,7 +2285,7 @@ if current_user_query:
                                 "is_greeting": False,
                                 "elapsed_time": None
                             })
-                            render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx))
+                            render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=sources_to_save, assistant_reply=full_answer)
                         elif is_refusal_answer(full_answer) or not full_answer:
                             full_answer = full_answer or REFUSAL_MESSAGE
                             contact_footer = get_contact_footer(rewritten_query, retrieved_docs=None, is_refusal=True)
@@ -2005,7 +2303,7 @@ if current_user_query:
                                 "is_greeting": False,
                                 "elapsed_time": None
                             })
-                            render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx))
+                            render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=[], assistant_reply=full_answer)
                         else:
                             contact_footer = get_contact_footer(rewritten_query, retrieved_docs=retrieved_docs, is_refusal=False)
                             status_placeholder.markdown(
@@ -2022,7 +2320,7 @@ if current_user_query:
                                 "is_greeting": False,
                                 "elapsed_time": elapsed_time
                             })
-                            render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx))
+                            render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=sources_to_save, assistant_reply=full_answer)
 
                 except Exception as e:
                     status_placeholder.empty()
@@ -2048,5 +2346,30 @@ if current_user_query:
                         traceback.print_exc()
                         status_placeholder.error(f"Lỗi: {e}")
     st.markdown('<div id="chat-scroll-anchor"></div>', unsafe_allow_html=True)
+    components.html(
+        f"""<!-- scroll-turn-{new_msg_idx} -->
+        <script>
+        (function() {{
+            function scrollToBottom() {{
+                const doc = window.parent.document;
+                const containers = [
+                    doc.querySelector('section[data-testid="stMain"]'),
+                    doc.querySelector('[data-testid="stAppViewContainer"]'),
+                    doc.scrollingElement || doc.documentElement
+                ];
+                containers.forEach(function(el) {{
+                    if (el && el.scrollHeight > el.clientHeight) {{
+                        el.scrollTo({{ top: el.scrollHeight, behavior: 'smooth' }});
+                    }}
+                }});
+            }}
+            requestAnimationFrame(function() {{
+                setTimeout(scrollToBottom, 100);
+                setTimeout(scrollToBottom, 350);
+            }});
+        }})();
+        </script>""",
+        height=0,
+    )
 else:
     st.markdown('<div id="chat-scroll-anchor"></div>', unsafe_allow_html=True)

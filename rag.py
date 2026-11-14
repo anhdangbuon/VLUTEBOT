@@ -410,8 +410,8 @@ class SmartRAGChain:
         # 5. Mở rộng ngữ cảnh liên tục có phân bổ công bằng cho Top-4 neo (tối đa 2-3 đoạn/neo)
         # Giúp không để neo đầu chiếm hết ngân sách và nối trọn vẹn Điều dài + Bảng vắt trang
         adjacent_extras = []
-        max_neighbor_adds = 6
-        max_total = max(k + max_neighbor_adds, 12)
+        max_neighbor_adds = 4
+        max_total = min(max(k, 4) + max_neighbor_adds, 8)
         for anchor_pos, anchor_idx in enumerate(selected_indices[:4]):
             if len(adjacent_extras) >= max_neighbor_adds:
                 break
@@ -890,11 +890,11 @@ class RotatingResilientLLM:
         self.preferred_model = preferred_model
         self._cloud_clients = {}
         self._groq_models = [
-            "qwen/qwen3.8-27b",
             "openai/gpt-oss-120b",
             "openai/gpt-oss-20b",
             "llama-3.3-70b-versatile",
             "llama-3.1-8b-instant",
+            "qwen/qwen3.8-27b",
             "gemma2-9b-it",
         ]
         self._dead_groq_models = _DEAD_GROQ_MODELS
@@ -912,7 +912,7 @@ class RotatingResilientLLM:
             )
         return self._cloud_clients[api_key]
 
-    def _get_groq_client(self, model_name: str = "qwen/qwen3.8-27b", temperature: float | None = None, max_tokens: int | None = None):
+    def _get_groq_client(self, model_name: str = "openai/gpt-oss-120b", temperature: float | None = None, max_tokens: int | None = None):
         groq_api_key = get_groq_api_key()
         if not groq_api_key:
             return None
@@ -929,7 +929,7 @@ class RotatingResilientLLM:
                 temperature=temp,
                 max_tokens=effective_mtok,
                 max_retries=0,
-                request_timeout=25,
+                request_timeout=7,
                 **extra_kwargs,
             )
         return _GROQ_CLIENTS_CACHE[cache_key]
@@ -944,7 +944,7 @@ class RotatingResilientLLM:
         print("[LLM ENGINE] Đang tạo phản hồi qua Groq LPU...")
         candidate_models = [m for m in self._groq_models if m not in _DEAD_GROQ_MODELS]
         if self.max_output_tokens <= 200 or self.preferred_model:
-            for fast_model in ("openai/gpt-oss-20b", "qwen/qwen3.8-27b"):
+            for fast_model in ("openai/gpt-oss-20b", "openai/gpt-oss-120b", "llama-3.1-8b-instant"):
                 if fast_model in candidate_models:
                     candidate_models.remove(fast_model)
                     candidate_models.insert(0, fast_model)
@@ -1119,11 +1119,11 @@ def get_llm(temperature: float = 0.0, max_output_tokens: int = 2048, preferred_m
     if groq_api_key:
         groq_llm = ChatGroq(
             api_key=groq_api_key,
-            model_name=preferred_model or "qwen/qwen3.8-27b",
+            model_name=preferred_model or "openai/gpt-oss-120b",
             temperature=temperature,
             max_tokens=max_output_tokens,
             max_retries=0,
-            request_timeout=25
+            request_timeout=7
         )
 
     local_llm = ChatOpenAI(
@@ -1203,7 +1203,9 @@ def rewrite_conversational_query(query: str, chat_history: list | None = None) -
 
     contextual_question_markers = [
         "bao lâu", "như thế nào", "ra sao", "nộp ở đâu", "nộp cho ai",
-        "gồm những gì", "bao nhiêu tiền", "mức tiền", "công thức tính"
+        "gồm những gì", "bao nhiêu tiền", "mức tiền", "công thức tính",
+        "đúng không", "phải không", "tức là", "nghĩa là", "vậy là",
+        "như vậy", "được không", "mấy buổi", "bao nhiêu buổi"
     ]
     has_contextual_marker = any(marker in q_lower for marker in contextual_question_markers)
 
@@ -1216,7 +1218,7 @@ def rewrite_conversational_query(query: str, chat_history: list | None = None) -
     has_standalone_subject = any(subj in q_lower for subj in standalone_subjects)
 
     needs_rewrite = has_explicit_marker or (
-        (has_contextual_marker or len(q_lower.split()) <= 7) and not has_standalone_subject
+        (has_contextual_marker or len(q_lower.split()) <= 15) and not has_standalone_subject
     )
     if not needs_rewrite:
         return raw_query
@@ -1234,6 +1236,7 @@ def rewrite_conversational_query(query: str, chat_history: list | None = None) -
         "từ ngữ cảnh hội thoại trước đó nếu câu hỏi dùng đại từ như 'nó', 'cái đó', 'mức này', 'vậy'... ).\n"
         "Quy tắc:\n"
         "- Chỉ trả về duy nhất câu hỏi đã viết lại bằng tiếng Việt, không giải thích, không ngoặc kép.\n"
+        "- Giữ nguyên đầy đủ các con số, giả định phép tính của sinh viên trong câu hỏi hiện tại và gắn thêm chủ ngữ/định mức từ lượt hội thoại trước.\n"
         "- Không tự bịa thông tin mới không có trong lịch sử.\n\n"
         f"Lịch sử hội thoại gần nhất:\n{history_block}\n\n"
         f"Câu hỏi hiện tại: {raw_query}\n"
@@ -1271,21 +1274,24 @@ def get_rag_chain():
     system_prompt = (
         "Bạn là trợ lý giải đáp thắc mắc về quy chế và học vụ cho sinh viên VLUTE.\n"
         "NGUYÊN TẮC TRẢ LỜI:\n"
-        "1. CHỈ sử dụng thông tin có trong phần 'Ngữ cảnh' được cung cấp để trả lời. Tuyệt đối không tự suy diễn hoặc dùng kiến thức ngoài tài liệu.\n"
+        "1. CHỈ sử dụng thông tin có trong tài liệu quy chế dưới đây để trả lời. Tuyệt đối không tự suy diễn hoặc dùng kiến thức ngoài tài liệu.\n"
         "2. Trả lời đúng trọng tâm và phân biệt rõ bản chất câu hỏi:\n"
         "   - Phân biệt rạch ròi giữa 'Miễn giảm học phí' (chế độ giảm trừ tiền học) và 'Trợ cấp xã hội / Hỗ trợ chi phí học tập' (các khoản chi trả tiền mặt/sinh hoạt phí).\n"
-        "   - Nếu người dùng hỏi về 'trợ cấp xã hội' hoặc 'hỗ trợ chi phí học tập' mà tài liệu cung cấp chỉ quy định về 'miễn giảm học phí' (hoặc chỉ nhắc đến giấy tờ 'Quyết định trợ cấp xã hội' như một thành phần hồ sơ minh chứng), hãy làm rõ điểm này: nêu rõ đối tượng được miễn giảm học phí theo quy định, đồng thời chỉ rõ văn bản hiện tại chưa quy định riêng về khoản tiền trợ cấp xã hội độc lập.\n"
+        "   - Nếu người dùng hỏi về 'trợ cấp xã hội' hoặc 'hỗ trợ chi phí học tập' mà tài liệu chỉ quy định về 'miễn giảm học phí' (hoặc chỉ nhắc đến giấy tờ 'Quyết định trợ cấp xã hội' như một thành phần hồ sơ minh chứng), hãy làm rõ điểm này: nêu rõ đối tượng được miễn giảm học phí theo quy định, đồng thời chỉ rõ văn bản hiện tại chưa quy định riêng về khoản tiền trợ cấp xã hội độc lập.\n"
+        "   - Đối soát toán học & định lượng tổng quát (áp dụng cho mọi văn bản hiện tại và tương lai như ngày CTXH, số tín chỉ, điểm trung bình, tỷ lệ miễn giảm, mức học bổng, thời hạn xử lý...): Bất cứ khi nào sinh viên đưa ra một phép tính, con số quy đổi hoặc giả định cụ thể, PHẢI kiểm tra phép nhân/chia/so sánh đó đối chiếu với định mức trong văn bản và nêu rõ kết quả đúng/sai bằng phép tính cụ thể (ví dụ: 12 buổi × 0,5 ngày = 6 ngày, chưa đủ 12 ngày; nếu tính theo mức 0,5 ngày/buổi thì cần 12 : 0,5 = 24 buổi mới đủ 12 ngày) trước khi giải thích các trường hợp ngoại lệ hoặc các mức quy đổi khác nhau trong quy định.\n"
         "   - Khi sinh viên hỏi 'có nợ môn hoặc nợ học phí thì được xét học bổng không?': Căn cứ Điều 17 (yêu cầu tối thiểu 17 tín chỉ, không có học phần nào dưới điểm C) và Điều 1 (hoàn thành nghĩa vụ học phí) để trả lời rõ ràng: Sinh viên nợ môn (dưới điểm C) hoặc chưa hoàn thành học phí sẽ KHÔNG đủ điều kiện xét cấp học bổng khuyến khích học tập. Tuyệt đối không trả về thông báo từ chối ngoài phạm vi dữ liệu đối với câu hỏi này.\n"
         "   - Khi sinh viên hỏi về điều kiện xét học bổng khuyến khích học tập (tín chỉ, điểm TBC, hoặc điểm rèn luyện theo Điều 17): Luôn nêu đầy đủ cả 3 tiêu chuẩn cốt lõi tại Điều 17 gồm: (1) Đăng ký tối thiểu 17 tín chỉ, (2) Điểm TBC học kỳ đạt từ 2,5 trở lên theo thang 4,0 (riêng Học bổng KKHT Mức 1 / SPKT yêu cầu từ 3,2 trở lên) và không có học phần dưới điểm C, (3) Xếp loại rèn luyện đạt từ loại Khá trở lên (riêng Mức 1 / SPKT yêu cầu từ loại Tốt trở lên).\n"
         "   - Khi sinh viên hỏi về mức tiền hoặc cách tính Học bổng KKHT Mức 1 (Học bổng SPKT) tại Điều 18: Nêu rõ công thức 'Học bổng KKHT Mức 1 (Học bổng SPKT) = Đơn giá học phí × 17 TC', trong đó 'Đơn giá học phí = Đơn giá học phí theo khối ngành VII (hệ đại trà)'.\n"
         "   - Khi đọc Bảng quy đổi ngày CTXH (Điều 8 Quyết định 55, Trang 9–10) bị tách cột qua 2 trang liên tiếp: đối chiếu theo mã số tương ứng gồm Mùa hè xanh (001101 - tham gia các đội hình chuyên), Tiếp sức mùa thi (001301), Tiếp sức tân sinh viên (001501) đều quy đổi 1 ngày CTXH / ngày tham gia (tối thiểu 5 giờ làm việc hoặc 1 ca trực theo phân công); Trực tiếp hiến máu tình nguyện (001202) quy đổi 1 ngày CTXH (theo Giấy xác nhận hiến máu); Hỗ trợ tổ chức hoạt động hiến máu tình nguyện (001201) quy đổi 0,5 ngày CTXH (theo Bảng phân công nhiệm vụ hỗ trợ).\n"
         "   - Khi đọc Phụ lục Khung xử lý kỷ luật sinh viên (Quyết định 1079, Trang 25–34, 4 cột mức kỷ luật theo thứ tự: Khiển trách | Cảnh cáo | Đình chỉ có thời hạn | Buộc thôi học): mục 4 (Học thay hoặc nhờ người khác học thay) xử lý từ Khiển trách đến Buộc thôi học tùy mức độ; mục 5 (Thi, kiểm tra thay hoặc nhờ thi, kiểm tra thay; làm thay, nhờ làm hoặc sao chép tiểu luận, đồ án, khóa luận tốt nghiệp) xử lý Đình chỉ học tập có thời hạn (vi phạm lần 1) và Buộc thôi học (vi phạm lần 2); mục 6 (Tổ chức học, thi, kiểm tra thay) xử lý Buộc thôi học ngay từ lần 1 (nếu nghiêm trọng giao cơ quan chức năng xử lý theo pháp luật).\n"
         "3. Phong cách trả lời:\n"
+        "   - Tuyệt đối KHÔNG dùng các cụm từ máy móc làm lộ kỹ thuật prompt như 'Dựa trên ngữ cảnh được cung cấp', 'Theo ngữ cảnh được cung cấp', 'Theo ngữ cảnh', 'Trong đoạn trích', 'Tài liệu cung cấp', 'Dựa vào đoạn văn bản trên'; thay vào đó diễn đạt tự nhiên như cán bộ tư vấn học vụ (ví dụ: 'Theo quy định hiện hành của Nhà trường...', 'Theo quy định tại VLUTE...', hoặc đi thẳng vào nội dung trả lời).\n"
         "   - Đi thẳng vào câu hỏi, diễn đạt tự nhiên, rõ ràng, súc tích.\n"
         "   - KHÔNG cần trích dẫn rườm rà số hiệu quyết định hay điều khoản trừ khi câu hỏi yêu cầu cụ thể.\n"
         "   - Trình bày dạng gạch đầu dòng ngắn gọn để sinh viên nắm bắt thông tin nhanh nhất.\n"
-        f"4. CHỈ trả về hằng số REFUSAL_MESSAGE duy nhất (không giải thích thêm) khi câu hỏi hoàn toàn nằm ngoài phạm vi các văn bản quy chế trong Ngữ cảnh (ví dụ: hỏi giá phòng ký túc xá, điểm chuẩn tuyển sinh, tuyến xe buýt, học phí 1 tín chỉ...). Nếu Ngữ cảnh đã có quy định liên quan đến chủ đề câu hỏi, tuyệt đối KHÔNG trả về REFUSAL_MESSAGE:\n{REFUSAL_MESSAGE}\n\n"
-        "Ngữ cảnh:\n{context}\n\n"
+        "   - Tuyệt đối KHÔNG dùng ký hiệu toán học LaTeX như '\\[ ... \\]', '\\( ... \\)', '$$ ... $$', '\\text', '\\frac', '\\div', '\\times'. Luôn viết phép tính bằng chữ và số thuần túy rõ ràng (ví dụ: 15 - 3 = 12 ngày còn thiếu; 12 : 0,5 = 24 buổi).\n"
+        f"4. CHỈ trả về hằng số REFUSAL_MESSAGE duy nhất (không giải thích thêm) khi câu hỏi hoàn toàn nằm ngoài phạm vi các văn bản quy chế tham khảo (ví dụ: hỏi giá phòng ký túc xá, điểm chuẩn tuyển sinh, tuyến xe buýt, học phí 1 tín chỉ...). Nếu tài liệu quy chế đã có quy định liên quan đến chủ đề câu hỏi, tuyệt đối KHÔNG trả về REFUSAL_MESSAGE:\n{REFUSAL_MESSAGE}\n\n"
+        "Nội dung quy chế tham khảo:\n{context}\n\n"
         "Câu hỏi: {input}\n\n"
         "Trả lời:"
     )
