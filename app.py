@@ -7,6 +7,7 @@ import base64
 import traceback
 import unicodedata
 import streamlit as st
+import streamlit.components.v1 as components
 from rag import get_rag_chain, DOC_CATALOG, extract_article_info, REFUSAL_MESSAGE, load_departments_config, rewrite_conversational_query
 
 st.set_page_config(
@@ -18,6 +19,7 @@ st.set_page_config(
 # ==========================================
 # CẤU HÌNH NHẬN DIỆN THƯƠNG HIỆU VLUTE
 # ==========================================
+@st.cache_data(show_spinner=False)
 def get_base64_image(image_path):
     if os.path.exists(image_path):
         with open(image_path, "rb") as img_file:
@@ -66,9 +68,40 @@ div[data-testid="stChatMessageContent"]:not(:has(*)) {
     padding: 0 !important;
 }
 
-/* Ẩn widget trạng thái và nút deploy góc phải để giao diện mượt mà */
-.stAppDeployButton, div[data-testid="stStatusWidget"] {
+/* Ẩn widget trạng thái, menu/header mặc định thừa và nút deploy để giao diện gọn như web app độc lập */
+div[data-testid="stElementContainer"]:has(iframe[height="0"]),
+iframe[height="0"] {
+    height: 0px !important;
+    min-height: 0px !important;
+    margin: 0px !important;
+    padding: 0px !important;
+    overflow: hidden !important;
+    border: none !important;
+}
+
+#MainMenu,
+footer,
+[data-testid="stDecoration"],
+.stAppDeployButton,
+div[data-testid="stStatusWidget"] {
     display: none !important;
+    visibility: hidden !important;
+}
+
+header[data-testid="stHeader"] {
+    background: transparent !important;
+    pointer-events: none !important;
+}
+
+header[data-testid="stHeader"] button,
+[data-testid="collapsedControl"],
+button[data-testid="stExpandSidebarButton"] {
+    pointer-events: auto !important;
+}
+
+/* Cuộn mượt toàn cục */
+html, body, [data-testid="stAppViewContainer"], section[data-testid="stMain"], .main {
+    scroll-behavior: smooth !important;
 }
 
 /* 0. Nền chung toàn trang & vùng nội dung chính */
@@ -77,8 +110,10 @@ div[data-testid="stChatMessageContent"]:not(:has(*)) {
     color: #1e293b !important;
 }
 
-.main .block-container {
+.main .block-container,
+div[data-testid="stAppViewBlockContainer"] {
     max-width: 820px !important;
+    padding-bottom: 120px !important;
 }
 
 /* 1. Header tinh gọn chiều cao 110-120px */
@@ -477,6 +512,17 @@ section[data-testid="stSidebar"] .stButton > button:hover {
 }
 
 /* 5. KHUNG TIN NHẮN VÀ BONG BÓNG CHAT (MAX-WIDTH: 720PX) */
+@keyframes fadeInBubble {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
 div[data-testid="stChatMessage"] {
     display: flex !important;
     align-items: flex-start !important;
@@ -485,6 +531,7 @@ div[data-testid="stChatMessage"] {
     width: 100% !important;
     background: transparent !important;
     padding: 0 !important;
+    animation: fadeInBubble 0.25s ease-out both;
 }
 
 div[data-testid="stChatMessage"]:not(:has([data-testid="chatAvatarIcon-user"])) {
@@ -544,6 +591,7 @@ div[data-testid="stChatMessageContent"] {
     box-shadow: 0 4px 14px rgba(0, 112, 60, 0.12) !important;
     word-break: normal !important;
     overflow-wrap: break-word !important;
+    transition: all 0.2s ease !important;
 }
 
 div[data-testid="stChatMessageContent"] ul {
@@ -574,7 +622,8 @@ div[data-testid="stChatMessageContent"] b {
     width: 100%;
     margin-bottom: 1.2rem;
     box-sizing: border-box;
-    padding-left: 48px; 
+    padding-left: 48px;
+    animation: fadeInBubble 0.22s ease-out both;
 }
 
 .user-bubble {
@@ -590,6 +639,32 @@ div[data-testid="stChatMessageContent"] b {
     font-size: 1rem !important;
     line-height: 1.6 !important;
     box-shadow: 0 4px 14px rgba(0, 115, 183, 0.18) !important;
+    transition: all 0.2s ease !important;
+}
+
+/* Thẻ chân trang liên hệ phòng ban có micro-interaction mượt */
+.contact-footer-card {
+    margin-top: 12px;
+    padding: 12px 16px;
+    background: #f8fafc;
+    border-radius: 8px;
+    border-left: 3.5px solid #ff9800;
+    color: #334155 !important;
+    transition: all 0.2s ease !important;
+}
+
+.contact-footer-card:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 90, 48, 0.12);
+    background: #f1f5f9;
+}
+
+.sidebar-contact-card {
+    transition: all 0.2s ease !important;
+}
+
+.sidebar-contact-card:hover {
+    border-color: #00a65a !important;
 }
 
 div[data-testid="stChatMessageContent"] p, .user-bubble p {
@@ -643,69 +718,61 @@ div[data-testid="stChatMessageContent"] div[data-testid="stExpander"] blockquote
     margin-bottom: 0px !important;
 }
 
-/* 6. Hoạt ảnh xoay bánh răng khi tìm kiếm */
-.thinking-track {
-    width: 100% !important;
-    min-width: 280px;
-    height: 36px;
-    position: relative;
-    overflow: hidden;
-    display: flex;
-    align-items: center;
-}
-
-.gears-slider {
-    position: absolute;
-    left: 0;
+/* 6. Hoạt ảnh chấm nhảy Typing Indicator trong lúc chờ token đầu tiên */
+.typing-indicator {
     display: inline-flex;
     align-items: center;
-    width: max-content;
-    animation: rollAcrossFull 3.5s ease-in-out infinite alternate;
+    gap: 10px;
+    padding: 4px 2px;
+    min-height: 28px;
 }
 
-.gear-icon {
-    font-size: 22px;
+.typing-dots {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.typing-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: #00703c;
     display: inline-block;
-    line-height: 1;
+    animation: typingBounce 1.4s infinite ease-in-out both;
 }
 
-.gear-main {
-    color: #00703c;
-    animation: rotateGearMain 3.5s ease-in-out infinite alternate;
-    transform-origin: center;
+.typing-dot:nth-child(1) {
+    animation-delay: -0.32s;
 }
 
-.gear-sub {
-    color: #e67e22;
-    font-size: 16px;
-    margin-left: -5px;
-    margin-top: -6px;
-    animation: rotateGearSub 3.5s ease-in-out infinite alternate;
-    transform-origin: center;
+.typing-dot:nth-child(2) {
+    animation-delay: -0.16s;
+    background-color: #00a65a;
 }
 
-.thinking-label {
-    font-size: 13px;
+.typing-dot:nth-child(3) {
+    animation-delay: 0s;
+    background-color: #e67e22;
+}
+
+.typing-label {
+    font-size: 0.88rem;
     color: #00703c;
     font-style: italic;
     font-weight: 500;
-    margin-left: 10px;
     white-space: nowrap;
 }
 
-@keyframes rollAcrossFull {
-    0% { transform: translateX(0px); }
-    100% { transform: translateX(calc(100% - 230px)); }
-}
-
-@keyframes rotateGearMain {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(720deg); }
-}
-
-@keyframes rotateGearSub {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(-720deg); }
+@keyframes typingBounce {
+    0%, 80%, 100% {
+        transform: scale(0.55) translateY(0px);
+        opacity: 0.4;
+    }
+    40% {
+        transform: scale(1) translateY(-4px);
+        opacity: 1;
+    }
 }
 
 /* 7. Nút bấm câu hỏi gợi ý nhanh */
@@ -843,14 +910,61 @@ button[data-testid="stExpandSidebarButton"],
 """, unsafe_allow_html=True)
 
 THINKING_HTML = """
-<div class="thinking-track">
-    <div class="gears-slider">
-        <span class="gear-icon gear-main">⚙️</span>
-        <span class="gear-icon gear-sub">⚙️</span>
-        <span class="thinking-label">Lucas đang tra cứu quy chế VLUTE...</span>
+<div class="typing-indicator" aria-label="Lucas đang soạn câu trả lời">
+    <div class="typing-dots">
+        <span class="typing-dot"></span>
+        <span class="typing-dot"></span>
+        <span class="typing-dot"></span>
     </div>
+    <span class="typing-label">Lucas đang tra cứu quy chế VLUTE...</span>
 </div>
 """
+
+def trigger_smooth_scroll(follow_stream: bool = False):
+    """Tự động cuộn mượt xuống cuối khung trò chuyện mà không làm chớp giao diện."""
+    observer_js = """
+        const mainContainer = doc.querySelector('[data-testid="stAppViewContainer"]') || doc.querySelector('section.main') || doc.documentElement;
+        if (mainContainer) {
+            let timer = null;
+            const obs = new MutationObserver(() => {
+                doScroll();
+                clearTimeout(timer);
+                timer = setTimeout(() => obs.disconnect(), 1800);
+            });
+            obs.observe(mainContainer, { childList: true, subtree: true, characterData: true });
+            setTimeout(() => obs.disconnect(), 18000);
+        }
+    """ if follow_stream else ""
+    components.html(
+        f"""
+        <script>
+        (function() {{
+            const doc = window.parent.document;
+            function doScroll() {{
+                const targets = [
+                    doc.querySelector('[data-testid="stAppViewContainer"]'),
+                    doc.querySelector('section.main'),
+                    doc.documentElement,
+                    doc.body
+                ].filter(Boolean);
+                targets.forEach(el => {{
+                    try {{
+                        el.scrollTo({{ top: el.scrollHeight, behavior: 'smooth' }});
+                    }} catch (e) {{
+                        el.scrollTop = el.scrollHeight;
+                    }}
+                }});
+                try {{
+                    window.parent.scrollTo({{ top: doc.body.scrollHeight, behavior: 'smooth' }});
+                }} catch (e) {{}}
+            }}
+            setTimeout(doScroll, 60);
+            {observer_js}
+        }})();
+        </script>
+        """,
+        height=0,
+    )
 
 # ==========================================
 # 1. HEADER TINH GỌN (110-120PX)
@@ -1016,7 +1130,7 @@ def build_assistant_bubble_html(content: str, contact_html: str = "", elapsed_ti
     badge = get_verify_badge_html(elapsed_time)
     return f"{badge}\n\n{body}\n\n{contact_html}" if contact_html else f"{badge}\n\n{body}"
 
-CTSV_CONTACT_HTML = """<div style="margin-top: 12px; padding: 12px 16px; background: #f8fafc; border-radius: 8px; border-left: 3.5px solid #ff9800; color: #334155 !important;">
+CTSV_CONTACT_HTML = """<div class="contact-footer-card">
   <b style="color: #005a30 !important;">📞 Phòng Công tác Sinh viên (VLUTE):</b>
   <ul style="margin: 6px 0 0 0; padding-left: 20px; color: #334155 !important;">
     <li style="color: #334155 !important;">Vị trí: Tòa nhà A (Phòng A1.102 - Tầng trệt)</li>
@@ -1024,7 +1138,7 @@ CTSV_CONTACT_HTML = """<div style="margin-top: 12px; padding: 12px 16px; backgro
   </ul>
 </div>"""
 
-KHTC_CONTACT_HTML = """<div style="margin-top: 12px; padding: 12px 16px; background: #f8fafc; border-radius: 8px; border-left: 3.5px solid #ff9800; color: #334155 !important;">
+KHTC_CONTACT_HTML = """<div class="contact-footer-card">
   <b style="color: #005a30 !important;">📞 Phòng Kế hoạch - Tài chính (VLUTE):</b>
   <ul style="margin: 6px 0 0 0; padding-left: 20px; color: #334155 !important;">
     <li style="color: #334155 !important;">Vị trí: Tòa nhà A (Tầng trệt)</li>
@@ -1036,9 +1150,9 @@ RATE_LIMIT_MESSAGE = "⚠️ Hệ thống tra cứu đang nhận lượng truy c
 
 
 def execute_rag_pipeline(query: str, chat_history: list | None = None):
-    """Thực thi trực tiếp (live) pipeline RAG không qua bộ nhớ đệm."""
+    """Thực thi trực tiếp (live) pipeline RAG sử dụng chain đã cache."""
     effective_query = rewrite_conversational_query(query, chat_history) if chat_history else query
-    chain = get_rag_chain()
+    chain = load_chain()
     docs = chain.filter_documents(effective_query, k=6)
     if not docs:
         return REFUSAL_MESSAGE, [], 0
@@ -1087,9 +1201,9 @@ def execute_rag_pipeline(query: str, chat_history: list | None = None):
 
 
 def stream_rag_pipeline(query: str, chat_history: list | None = None):
-    """Thực thi trực tiếp (live) luồng RAG streaming với k=6 đoạn trích."""
+    """Thực thi trực tiếp (live) luồng RAG streaming với k=6 đoạn trích từ chain đã cache."""
     effective_query = rewrite_conversational_query(query, chat_history) if chat_history else query
-    chain = get_rag_chain()
+    chain = load_chain()
     docs = chain.filter_documents(effective_query, k=6)
     if not docs:
         return None, [], 0, []
@@ -1311,7 +1425,7 @@ def _strip_accents(text: str) -> str:
 
 def _build_contact_footer_html(dept_name: str, dept_location: str, dept_phone: str, dept_email: str) -> str:
     """Kết xuất khối HTML chân trang thông tin phòng ban theo chuẩn CSS giao diện nền sáng."""
-    return f"""<div style="margin-top: 12px; padding: 12px 16px; background: #f8fafc; border-radius: 8px; border-left: 3.5px solid #ff9800; color: #334155 !important;">
+    return f"""<div class="contact-footer-card">
   <b style="color: #005a30 !important;">📞 {dept_name}:</b>
   <ul style="margin: 6px 0 0 0; padding-left: 20px; color: #334155 !important;">
     <li style="color: #334155 !important;">Vị trí: {dept_location}</li>
@@ -1354,7 +1468,7 @@ def get_contact_footer(query: str, retrieved_docs=None, is_refusal: bool = False
     })
 
     def _build_hoan_tra_footer() -> str:
-        return f"""<div style="margin-top: 12px; padding: 12px 16px; background: #f8fafc; border-radius: 8px; border-left: 3.5px solid #ff9800; color: #334155 !important;">
+        return f"""<div class="contact-footer-card">
   <b style="color: #005a30 !important;">📞 Tuyến phối hợp xử lý (CTSV – Đào tạo – KHTC):</b>
   <ul style="margin: 6px 0 0 0; padding-left: 20px; color: #334155 !important;">
     <li style="color: #334155 !important;"><b>1. {ctsv_dept['name']} (Tiếp nhận & tổng hợp đơn):</b> {ctsv_dept['location']} | ĐT: {ctsv_dept['phone']} | Email: {ctsv_dept['email']}</li>
@@ -1703,13 +1817,14 @@ if user_query:
 
     new_msg_idx = len(st.session_state.messages)
 
-    # 2. Mở ngay khung chat của Lucas và hiển thị hoạt ảnh bánh răng
+    # 2. Mở ngay khung chat của Lucas và hiển thị hoạt ảnh Typing Indicator
     with st.chat_message("assistant", avatar="lucas_avatar.png" if os.path.exists("lucas_avatar.png") else "🎓"):
         status_placeholder = st.empty()
         status_placeholder.markdown(THINKING_HTML, unsafe_allow_html=True)
+        trigger_smooth_scroll(follow_stream=True)
 
-        # Force Flush nhả GIL để WebSocket đẩy bong bóng người dùng và bánh răng lên màn hình trong 50ms
-        time.sleep(0.08)
+        # Force Flush nhả GIL để WebSocket đẩy bong bóng người dùng và typing indicator lên màn hình ngay lập tức
+        time.sleep(0.05)
 
         if is_greeting(current_user_query):
             greeting_reply = (
@@ -1781,13 +1896,18 @@ if user_query:
                         badge_html = get_verify_badge_html()
                         streamed_chunks = []
                         last_update = time.time()
+                        first_chunk_rendered = False
 
                         for chunk in stream_gen:
-                            streamed_chunks.append(str(chunk))
-                            if time.time() - last_update > 0.04:
+                            chunk_str = str(chunk)
+                            if not chunk_str:
+                                continue
+                            streamed_chunks.append(chunk_str)
+                            if (not first_chunk_rendered) or (time.time() - last_update > 0.035):
                                 current_text = "".join(streamed_chunks)
                                 status_placeholder.markdown(f"{badge_html}\n\n{current_text}", unsafe_allow_html=True)
                                 last_update = time.time()
+                                first_chunk_rendered = True
 
                         full_answer = "".join(streamed_chunks).strip()
                         elapsed_time = round(time.time() - start_time, 2)
@@ -1869,3 +1989,5 @@ if user_query:
                         import traceback
                         traceback.print_exc()
                         status_placeholder.error(f"Lỗi: {e}")
+
+    trigger_smooth_scroll(follow_stream=False)

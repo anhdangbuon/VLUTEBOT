@@ -31,6 +31,7 @@ SIMILARITY_THRESHOLD = 0.38
 STREAM_INTERRUPTED_NOTICE = "⚠️ *[Phản hồi bị gián đoạn giữa chừng do sự cố kết nối mô hình. Nội dung phía trên có thể chưa đầy đủ, bạn vui lòng gửi lại câu hỏi nhé!]*"
 
 
+@st.cache_data(show_spinner=False)
 def load_departments_config() -> dict:
     """Đọc cấu hình phòng ban tập trung từ tệp departments.json."""
     if DEPT_FILE.exists():
@@ -517,6 +518,9 @@ _GLOBAL_EMBEDDINGS = None
 _GLOBAL_VECTOR_DB = None
 _GLOBAL_LLM = None
 _GLOBAL_CHAIN = None
+_GLOBAL_REWRITER_LLM = None
+_DEAD_GROQ_MODELS = set()
+_GROQ_CLIENTS_CACHE = {}
 _CURRENT_KEY_INDEX = 0
 
 
@@ -608,6 +612,7 @@ def get_groq_api_key():
     return None
 
 
+@st.cache_resource(show_spinner=False)
 def get_embedding_model():
     """Luôn sử dụng mô hình SentenceTransformer để khớp 100% với dữ liệu ChromaDB đã lưu."""
     global _GLOBAL_EMBEDDINGS
@@ -631,6 +636,7 @@ def get_embedding_model():
     return _GLOBAL_EMBEDDINGS
 
 
+@st.cache_resource(show_spinner=False)
 def get_vector_db():
     """Khởi tạo kết nối ChromaDB với persist_directory có sẵn, chuyển đổi Cosine Distance sang Relevance Score [0, 1]."""
     global _GLOBAL_VECTOR_DB
@@ -650,26 +656,27 @@ def get_vector_db():
 class RotatingResilientLLM:
     """
     Lớp bọc LLM với Groq LPU làm Engine xử lý chính (Tier 1):
-    - TẦNG 1 (Mặc định): Groq API (llama-3.3-70b-versatile) - sinh chữ tốc độ cao ngay lập tức.
+    - TẦNG 1 (Mặc định): Groq API (xoay vòng tự động + giữ ấm client cache) - sinh chữ tốc độ cao.
     - TẦNG 2 (Dự phòng 1): Local LLM (LM Studio - http://127.0.0.1:1234/v1, model qwen/qwen3.5-4b).
     - TẦNG 2 (Dự phòng 2): Gemini (chỉ gọi nếu có key 'AIzaSy...' hợp lệ).
     - TẦNG 3: Báo lỗi quá tải an toàn (429 RESOURCE_EXHAUSTED).
     """
-    def __init__(self, local_llm, groq_llm=None, max_output_tokens: int = 1200, temperature: float = 0.2):
+    def __init__(self, local_llm, groq_llm=None, max_output_tokens: int = 1200, temperature: float = 0.2, preferred_model: str | None = None):
         self.local_llm = local_llm
         self.groq_llm = groq_llm
         self.max_output_tokens = max_output_tokens
         self.temperature = temperature
+        self.preferred_model = preferred_model
         self._cloud_clients = {}
         self._groq_models = [
-            "llama-3.3-70b-versatile",
             "openai/gpt-oss-120b",
-            "openai/gpt-oss-20b",
             "qwen/qwen3.8-27b",
+            "openai/gpt-oss-20b",
+            "llama-3.3-70b-versatile",
             "llama-3.1-8b-instant",
             "gemma2-9b-it",
         ]
-        self._dead_groq_models = set()
+        self._dead_groq_models = _DEAD_GROQ_MODELS
 
     def _get_cloud_client(self, api_key: str):
         if api_key not in self._cloud_clients:
@@ -690,14 +697,17 @@ class RotatingResilientLLM:
             return None
         temp = self.temperature if temperature is None else temperature
         mtok = self.max_output_tokens if max_tokens is None else max_tokens
-        return ChatGroq(
-            api_key=groq_api_key,
-            model_name=model_name,
-            temperature=temp,
-            max_tokens=mtok,
-            max_retries=0,
-            request_timeout=25
-        )
+        cache_key = (groq_api_key, model_name, float(temp), int(mtok))
+        if cache_key not in _GROQ_CLIENTS_CACHE:
+            _GROQ_CLIENTS_CACHE[cache_key] = ChatGroq(
+                api_key=groq_api_key,
+                model_name=model_name,
+                temperature=temp,
+                max_tokens=mtok,
+                max_retries=0,
+                request_timeout=25
+            )
+        return _GROQ_CLIENTS_CACHE[cache_key]
 
     def invoke(self, prompt, *args, **kwargs):
         global _CURRENT_KEY_INDEX
@@ -707,10 +717,16 @@ class RotatingResilientLLM:
 
         # TẦNG 1 (Engine chính): Ưu tiên gọi trực tiếp Groq LPU ngay từ đầu
         print("[LLM ENGINE] Đang tạo phản hồi qua Groq LPU...")
-        candidate_models = [m for m in self._groq_models if m not in self._dead_groq_models]
-        if self.max_output_tokens <= 200 and "qwen/qwen3.8-27b" in candidate_models:
-            candidate_models.remove("qwen/qwen3.8-27b")
-            candidate_models.insert(0, "qwen/qwen3.8-27b")
+        candidate_models = [m for m in self._groq_models if m not in _DEAD_GROQ_MODELS]
+        if self.max_output_tokens <= 200 or self.preferred_model:
+            for fast_model in ("openai/gpt-oss-20b", "qwen/qwen3.8-27b"):
+                if fast_model in candidate_models:
+                    candidate_models.remove(fast_model)
+                    candidate_models.insert(0, fast_model)
+            if self.preferred_model and self.preferred_model not in _DEAD_GROQ_MODELS:
+                if self.preferred_model in candidate_models:
+                    candidate_models.remove(self.preferred_model)
+                candidate_models.insert(0, self.preferred_model)
 
         for groq_model in candidate_models:
             groq_client = self._get_groq_client(model_name=groq_model)
@@ -727,7 +743,7 @@ class RotatingResilientLLM:
                     groq_err = g_err
                     err_msg = str(g_err).lower()
                     if any(tok in err_msg for tok in ("not_found", "does not exist", "404", "decommissioned", "model_not_found")):
-                        self._dead_groq_models.add(groq_model)
+                        _DEAD_GROQ_MODELS.add(groq_model)
                         continue
                     if any(tok in err_msg for tok in ("429", "rate_limit", "rate limit", "too many requests")):
                         if groq_model in self._groq_models:
@@ -781,7 +797,7 @@ class RotatingResilientLLM:
 
         # TẦNG 1 (Engine chính): Ưu tiên gọi trực tiếp Groq LPU ngay từ đầu
         print("[LLM ENGINE] Đang tạo phản hồi qua Groq LPU...")
-        candidate_models = [m for m in self._groq_models if m not in self._dead_groq_models]
+        candidate_models = [m for m in self._groq_models if m not in _DEAD_GROQ_MODELS]
         for groq_model in candidate_models:
             groq_client = self._get_groq_client(model_name=groq_model)
             if groq_client is not None:
@@ -805,7 +821,7 @@ class RotatingResilientLLM:
                         return
                     err_msg = str(g_err).lower()
                     if any(tok in err_msg for tok in ("not_found", "does not exist", "404", "decommissioned", "model_not_found")):
-                        self._dead_groq_models.add(groq_model)
+                        _DEAD_GROQ_MODELS.add(groq_model)
                         continue
                     if any(tok in err_msg for tok in ("429", "rate_limit", "rate limit", "too many requests")):
                         if groq_model in self._groq_models:
@@ -870,13 +886,13 @@ class RotatingResilientLLM:
         raise RuntimeError(f"429 RESOURCE_EXHAUSTED: {err_detail}") from (groq_err or local_err or gemini_err)
 
 
-def get_llm(temperature: float = 0.2, max_output_tokens: int = 1200):
+def get_llm(temperature: float = 0.2, max_output_tokens: int = 1200, preferred_model: str | None = None):
     groq_api_key = get_groq_api_key()
     groq_llm = None
     if groq_api_key:
         groq_llm = ChatGroq(
             api_key=groq_api_key,
-            model_name="llama-3.3-70b-versatile",
+            model_name=preferred_model or "openai/gpt-oss-120b",
             temperature=temperature,
             max_tokens=max_output_tokens,
             max_retries=0,
@@ -898,8 +914,19 @@ def get_llm(temperature: float = 0.2, max_output_tokens: int = 1200):
         local_llm=local_llm,
         groq_llm=groq_llm,
         max_output_tokens=max_output_tokens,
-        temperature=temperature
+        temperature=temperature,
+        preferred_model=preferred_model
     )
+
+
+@st.cache_resource(show_spinner=False)
+def get_rewriter_llm():
+    """Khởi tạo và cache LLM tốc độ cao dành riêng cho bước viết lại câu hỏi nối tiếp."""
+    global _GLOBAL_REWRITER_LLM
+    if _GLOBAL_REWRITER_LLM is not None:
+        return _GLOBAL_REWRITER_LLM
+    _GLOBAL_REWRITER_LLM = get_llm(temperature=0.0, max_output_tokens=100, preferred_model="llama-3.1-8b-instant")
+    return _GLOBAL_REWRITER_LLM
 
 
 def rewrite_conversational_query(query: str, chat_history: list | None = None) -> str:
@@ -987,13 +1014,15 @@ def rewrite_conversational_query(query: str, chat_history: list | None = None) -
     )
 
     try:
-        rewriter_llm = get_llm(temperature=0.0, max_output_tokens=120)
+        t_rw = time.time()
+        rewriter_llm = get_rewriter_llm()
         resp = rewriter_llm.invoke(rewrite_prompt)
         rewritten = getattr(resp, "content", str(resp)).strip()
         rewritten = re.sub(r"^(Câu hỏi độc lập|Câu hỏi viết lại)\s*:\s*", "", rewritten, flags=re.IGNORECASE)
         rewritten = rewritten.strip().strip('"').strip("'").splitlines()[0].strip()
         if rewritten and len(rewritten) >= 5:
-            print(f"[QUERY REWRITE] '{raw_query}' -> '{rewritten}'")
+            rw_elapsed = round(time.time() - t_rw, 3)
+            print(f"[QUERY REWRITE] ({rw_elapsed}s) '{raw_query}' -> '{rewritten}'")
             return rewritten
     except Exception as err:
         print(f"[QUERY REWRITE WARNING] Không thể viết lại câu hỏi: {err}")
@@ -1001,14 +1030,16 @@ def rewrite_conversational_query(query: str, chat_history: list | None = None) -
     return raw_query
 
 
+@st.cache_resource(show_spinner=False)
 def get_rag_chain():
-    """Khởi tạo hoặc trả về chain RAG đã được lưu trong bộ nhớ đệm (singleton cache)."""
+    """Khởi tạo hoặc trả về chain RAG đã được lưu trong bộ nhớ đệm (singleton + @st.cache_resource)."""
     global _GLOBAL_CHAIN
     if _GLOBAL_CHAIN is not None:
         return _GLOBAL_CHAIN
 
     vector_db = get_vector_db()
     llm = get_llm()
+    get_rewriter_llm()
 
     system_prompt = (
         "Bạn là trợ lý giải đáp thắc mắc về quy chế và học vụ cho sinh viên VLUTE.\n"

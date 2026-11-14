@@ -56,10 +56,11 @@ flowchart TD
    - Truy vấn **`similarity_search_with_relevance_scores` 1 lần duy nhất** trên CPU (gộp sẵn từ khóa tăng cường vào `search_query`), lọc theo ngưỡng tương đồng Cosine `SIMILARITY_THRESHOLD = 0.38`.
    - Định tuyến tệp nguồn (`target_source`) và truy xuất dự phòng có kiểm soát (`filter={"source": target_source}`) khi thiếu các điều khoản cốt lõi (học bổng Mức 1/SPKT, hoàn trả học phí `QT-SV-04`, hỗ trợ chi phí học tập `Điều 10–11`, CTXH, công tác sinh viên, ứng xử, ATTT).
    - Loại bỏ hoàn toàn các nghị quyết hành chính (`nghi_quyet_71.pdf`, `nghi_quyet_72.pdf`, `nghi_quyet_153.pdf`) khỏi kết quả và danh sách ingest (`EXCLUDED_FILES`).
-4. **`RotatingResilientLLM` đa tầng chịu lỗi:**
-   - **Tier 1 (Chính):** **Groq LPU** với danh sách model tự xoay vòng và ghi nhớ model khả dụng trên API key hiện tại (`llama-3.3-70b-versatile`, `openai/gpt-oss-120b`, `openai/gpt-oss-20b`, `qwen/qwen3.8-27b`).
+4. **`RotatingResilientLLM` đa tầng chịu lỗi & Caching tài nguyên (`@st.cache_resource`):**
+   - **Tier 1 (Chính):** **Groq LPU** với cơ chế giữ ấm client (`_GROQ_CLIENTS_CACHE`), bỏ qua nhanh model không khả dụng (`_DEAD_GROQ_MODELS`) và xoay vòng qua các model `openai/gpt-oss-120b`, `qwen/qwen3.8-27b`, `openai/gpt-oss-20b`, `llama-3.3-70b-versatile`, `llama-3.1-8b-instant`, `gemma2-9b-it`. Riêng `rewrite_conversational_query()` ưu tiên model nhẹ tốc độ cao (`llama-3.1-8b-instant` / `qwen/qwen3.8-27b`).
    - **Tier 2 (Dự phòng 1):** **Local LM Studio** (`http://127.0.0.1:1234/v1`, model `qwen/qwen3.5-4b`).
    - **Tier 2 (Dự phòng 2):** **Gemini** (`gemini-2.5-flash`) nếu có key hợp lệ.
+   - **Caching tài nguyên:** `get_embedding_model()`, `get_vector_db()`, `get_rag_chain()`, `get_rewriter_llm()`, `load_chain()` đều được cache qua `@st.cache_resource(show_spinner=False)`.
 5. **Giao diện Streamlit chuẩn VLUTE (`app.py`):**
    - Header hiển thị logo VLUTE (`logo_vlute.png`), avatar Lucas (`lucas_avatar.png`), và 3 huy hiệu trạng thái.
    - Hiển thị huy hiệu **`✅ Đã đối soát thành công (Xs)`** ở đầu câu trả lời hợp lệ (tự động ẩn khi trả về `REFUSAL_MESSAGE`).
@@ -90,9 +91,6 @@ D:\VLUTEBOT\
 ├── .streamlit/
 │   ├── config.toml                 # Cấu hình server và giao diện sáng (#00703c)
 │   └── secrets.toml                # Lưu API key (GROQ_API_KEY) - không commit
-├── .vscode/
-│   ├── settings.json               # Cấu hình Python virtualenv trong VS Code
-│   └── launch.json                 # Cấu hình Run/Debug Streamlit
 ├── data/                           # Kho PDF nguồn (7 quy chế nạp vào DB + 3 nghị quyết bị loại trừ)
 │   ├── xet_cap_hoc_bong.pdf
 │   ├── quy_dinh_mien_giam_hoc_phi.pdf
@@ -114,12 +112,9 @@ D:\VLUTEBOT\
 ├── ingest.py                       # Script trích xuất PDF (PyMuPDF) và xây dựng ChromaDB
 ├── departments.json                # Danh bạ 4 phòng ban/trung tâm dùng cho Sidebar & Footer
 ├── prompts.json                    # Danh sách gợi ý đầu trang và theo 5 chủ đề
-├── scan_project.py                 # Script quét cây thư mục, data/ và AST mã nguồn
-├── project_overview.txt            # Báo cáo cấu trúc dự án được sinh bởi scan_project.py
 ├── requirements.txt                # Danh mục thư viện phụ thuộc
 ├── logo_vlute.png                  # Logo trường VLUTE
 ├── lucas_avatar.png                # Avatar trợ lý Lucas
-├── crop_avatar.py                  # Tiện ích cắt ảnh đại diện Lucas
 └── README.md                       # Tài liệu tổng quan dự án
 ```
 
@@ -154,13 +149,10 @@ streamlit run app.py --server.port 8501
 ```
 Truy cập trình duyệt tại: **`http://localhost:8501`**
 
-### 5. Chạy Đánh giá Định lượng & Quét Cấu trúc Dự án
+### 5. Chạy Đánh giá Định lượng RAG
 ```powershell
 # Chạy đánh giá tự động 35 câu hỏi RAG và xuất evaluation/eval_results.csv
 python evaluation/run_eval.py
-
-# Làm mới báo cáo cấu trúc project_overview.txt
-python scan_project.py
 ```
 
 ---
