@@ -98,9 +98,10 @@ button[data-testid="stExpandSidebarButton"] {
 }
 
 /* Cuộn mượt & CSS overflow-anchor (không dùng JS iframe) */
-html, body, [data-testid="stAppViewContainer"], section[data-testid="stMain"], .main {
+html, body, [data-testid="stAppViewContainer"], [data-testid="stMainBlockContainer"], section[data-testid="stMain"], .main {
     scroll-behavior: smooth !important;
     overflow-anchor: auto !important;
+    scroll-padding-bottom: 130px !important;
 }
 
 div[data-testid="stChatMessage"],
@@ -525,11 +526,11 @@ section[data-testid="stSidebar"] .stButton > button:hover {
 @keyframes fadeInBubble {
     from {
         opacity: 0;
-        transform: translateY(6px);
+        transform: translate3d(0, 6px, 0);
     }
     to {
         opacity: 1;
-        transform: translateY(0);
+        transform: translate3d(0, 0, 0);
     }
 }
 
@@ -541,7 +542,6 @@ div[data-testid="stChatMessage"] {
     width: 100% !important;
     background: transparent !important;
     padding: 0 !important;
-    animation: fadeInBubble 0.25s ease-out both;
 }
 
 div[data-testid="stChatMessage"]:not(:has([data-testid="chatAvatarIcon-user"])) {
@@ -556,6 +556,7 @@ div[data-testid="stChatMessageAvatar"] {
     height: 48px !important;
     min-width: 48px !important;
     min-height: 48px !important;
+    aspect-ratio: 1 / 1 !important;
     margin-top: 2px !important;
     border-radius: 50% !important;
     background-color: transparent !important;
@@ -576,6 +577,7 @@ div[data-testid="stChatMessage"] img {
     min-height: 48px !important;
     max-width: 48px !important;
     max-height: 48px !important;
+    aspect-ratio: 1 / 1 !important;
     border-radius: 50% !important;
     object-fit: cover !important;
     transform: none !important;
@@ -593,6 +595,7 @@ div[data-testid="stChatMessageContent"] {
     border-radius: 20px !important;
     padding: 13px 20px !important;
     max-width: 720px !important;
+    min-height: 54px !important;
     width: fit-content !important;
     color: #1e293b !important;
     box-sizing: border-box !important;
@@ -633,7 +636,6 @@ div[data-testid="stChatMessageContent"] b {
     margin-bottom: 1.2rem;
     box-sizing: border-box;
     padding-left: 48px;
-    animation: fadeInBubble 0.22s ease-out both;
 }
 
 .user-bubble {
@@ -650,6 +652,24 @@ div[data-testid="stChatMessageContent"] b {
     line-height: 1.6 !important;
     box-shadow: 0 4px 14px rgba(0, 115, 183, 0.18) !important;
     transition: all 0.2s ease !important;
+}
+
+/* Chỉ tạo chuyển động 60fps mượt cho tin nhắn cuối cùng, chân trang và nút gợi ý liên quan */
+div[data-testid="stChatMessage"]:last-of-type,
+.chat-row-user:last-of-type,
+.contact-footer-card,
+div[data-testid="stChatMessageContent"] div[data-testid="stHorizontalBlock"] {
+    animation: fadeInBubble 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
+    will-change: transform, opacity;
+}
+
+/* Triệt tiêu hoàn toàn hiện tượng nháy lại tin nhắn cũ trong lịch sử hội thoại */
+.chat-row-user.chat-history-old,
+div[data-testid="stChatMessage"]:has(.chat-history-old-marker),
+div[data-testid="stChatMessage"]:has(.chat-history-old-marker) .contact-footer-card,
+div[data-testid="stChatMessage"]:has(.chat-history-old-marker) div[data-testid="stHorizontalBlock"] {
+    animation: none !important;
+    will-change: auto !important;
 }
 
 /* Thẻ chân trang liên hệ phòng ban có micro-interaction mượt */
@@ -1336,6 +1356,11 @@ if "pending_user_query" not in st.session_state:
 def submit_user_query(query_text: str):
     st.session_state.pending_user_query = query_text
 
+
+def shuffle_welcome_prompts():
+    """Callback đổi nhanh 4 câu hỏi gợi ý ngẫu nhiên trên màn hình chào mừng."""
+    st.session_state.pop("welcome_prompts", None)
+
 def clean_snippet_text(text: str) -> str:
     """Làm sạch đoạn trích quy chế, loại bỏ các ký tự rác, dấu sao, lỗi chính tả từ quét PDF."""
     if not text:
@@ -1767,6 +1792,10 @@ else:
 # ==========================================
 # HIỂN THỊ LỊCH SỬ TIN NHẮN (OPTIMISTIC RENDER TỨC THÌ < 0.3S)
 # ==========================================
+last_user_idx = max(
+    (i for i, m in enumerate(st.session_state.messages) if m.get("role") == "user"),
+    default=-1
+)
 last_assistant_idx = max(
     (i for i, m in enumerate(st.session_state.messages) if m.get("role") == "assistant"),
     default=-1
@@ -1775,8 +1804,9 @@ last_assistant_idx = max(
 for idx, message in enumerate(st.session_state.messages):
     if message["role"] == "user":
         safe_content = html.escape(message["content"]).replace("\n", "<br>")
+        row_cls = "chat-row-user chat-history-old" if idx < last_user_idx else "chat-row-user"
         st.markdown(
-            f'<div class="chat-row-user"><div class="user-bubble">{safe_content}</div></div>',
+            f'<div class="{row_cls}"><div class="user-bubble">{safe_content}</div></div>',
             unsafe_allow_html=True
         )
     else:
@@ -1785,9 +1815,10 @@ for idx, message in enumerate(st.session_state.messages):
             is_welcome_or_greeting = (idx == 0) or bool(message.get("is_greeting", False))
             is_dept_inquiry = bool(message.get("is_dept_inquiry", False))
             msg_is_refusal = bool(message.get("is_refusal", is_refusal_answer(msg_content))) or is_refusal_answer(msg_content)
+            old_marker_suffix = '\n\n<span class="chat-history-old-marker" style="display:none;"></span>' if (bool(current_user_query) or idx < last_assistant_idx) else ""
 
             if is_welcome_or_greeting or is_dept_inquiry:
-                st.markdown(build_assistant_bubble_html(msg_content, is_welcome_or_greeting=True), unsafe_allow_html=True)
+                st.markdown(build_assistant_bubble_html(msg_content, is_welcome_or_greeting=True) + old_marker_suffix, unsafe_allow_html=True)
                 if is_dept_inquiry and idx > 0 and idx == last_assistant_idx and not user_query:
                     q_text = message.get("query") or (st.session_state.messages[idx - 1].get("content") if idx > 0 else "")
                     render_followup_suggestions(q_text or msg_content, key_suffix=str(idx))
@@ -1795,7 +1826,7 @@ for idx, message in enumerate(st.session_state.messages):
                 q_text = message.get("query") or (st.session_state.messages[idx - 1].get("content") if idx > 0 else "")
                 contact_html = message.get("contact") or get_contact_footer(q_text or "", retrieved_docs=message.get("sources"), is_refusal=False)
                 st.markdown(
-                    build_assistant_bubble_html(msg_content, contact_html=contact_html, elapsed_time=message.get("elapsed_time"), is_refusal=False),
+                    build_assistant_bubble_html(msg_content, contact_html=contact_html, elapsed_time=message.get("elapsed_time"), is_refusal=False) + old_marker_suffix,
                     unsafe_allow_html=True
                 )
                 if idx > 0 and idx == last_assistant_idx and not user_query:
@@ -1804,7 +1835,7 @@ for idx, message in enumerate(st.session_state.messages):
                 q_text = message.get("query") or (st.session_state.messages[idx - 1].get("content") if idx > 0 else "")
                 contact_html = message.get("contact") or get_contact_footer(q_text or "", retrieved_docs=None, is_refusal=True)
                 st.markdown(
-                    build_assistant_bubble_html(msg_content or REFUSAL_MESSAGE, contact_html=contact_html, is_refusal=True),
+                    build_assistant_bubble_html(msg_content or REFUSAL_MESSAGE, contact_html=contact_html, is_refusal=True) + old_marker_suffix,
                     unsafe_allow_html=True
                 )
                 if idx > 0 and idx == last_assistant_idx and not user_query:
@@ -1817,7 +1848,20 @@ if len(st.session_state.messages) <= 1 and not current_user_query:
     if "welcome_prompts" not in st.session_state or not st.session_state.welcome_prompts:
         st.session_state.welcome_prompts = get_random_welcome_prompts()
 
-    st.markdown('<div class="quick-prompt-title">💡 Gợi ý câu hỏi nhanh dành cho bạn:</div>', unsafe_allow_html=True)
+    hdr_col1, hdr_col2 = st.columns([3, 1])
+    with hdr_col1:
+        st.markdown(
+            '<div class="quick-prompt-title" style="margin-bottom: 6px; padding-top: 6px;">💡 Gợi ý câu hỏi nhanh dành cho bạn:</div>',
+            unsafe_allow_html=True,
+        )
+    with hdr_col2:
+        st.button(
+            "🔄 Đổi 4 gợi ý khác",
+            key="shuffle_welcome_btn",
+            use_container_width=True,
+            on_click=shuffle_welcome_prompts,
+        )
+
     welcome_items = st.session_state.welcome_prompts[:4]
     col1, col2 = st.columns(2)
     for i, item in enumerate(welcome_items):
