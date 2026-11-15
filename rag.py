@@ -1213,7 +1213,10 @@ def rewrite_conversational_query(query: str, chat_history: list | None = None) -
         "học bổng", "kkht", "spkt", "miễn giảm học phí", "miễn, giảm học phí",
         "hỗ trợ chi phí học tập", "hoàn trả học phí", "học phí thừa", "qt-sv-04",
         "công tác xã hội", "ctxh", "công tác sinh viên", "kỷ luật", "ban cán sự",
-        "quy tắc ứng xử", "an toàn thông tin", "mật khẩu", "nghị quyết"
+        "quy tắc ứng xử", "an toàn thông tin", "mật khẩu", "nghị quyết",
+        "thi hộ", "thi thay", "học thay", "phòng thi", "khiển trách",
+        "cảnh cáo", "đình chỉ", "buộc thôi học", "điểm rèn luyện",
+        "khóa luận", "tốt nghiệp"
     ]
     has_standalone_subject = any(subj in q_lower for subj in standalone_subjects)
 
@@ -1276,6 +1279,7 @@ def get_rag_chain():
         "NGUYÊN TẮC TRẢ LỜI:\n"
         "1. CHỈ sử dụng thông tin có trong tài liệu quy chế dưới đây để trả lời. Tuyệt đối không tự suy diễn hoặc dùng kiến thức ngoài tài liệu.\n"
         "2. Trả lời đúng trọng tâm và phân biệt rõ bản chất câu hỏi:\n"
+        "   - Tách bạch từng hành vi/điều kiện đối với câu hỏi ghép nhiều vế (áp dụng tổng quát cho mọi văn bản quy chế hiện tại và tương lai): Khi sinh viên hỏi câu ghép nhắc đến nhiều hành vi, đối tượng hoặc trường hợp cùng lúc (ví dụ: vừa hỏi hành vi thi hộ vừa hỏi hành vi mang tài liệu vào phòng thi, hoặc hỏi gộp nhiều diện đối tượng/mức quy định), BẮT BUỘC phân tích và trình bày tách riêng từng ý/gạch đầu dòng theo đúng điều khoản hoặc dòng bảng quy định của từng hành vi/đối tượng đó. Tuyệt đối không gộp chung hoặc áp nhầm khung xử lý/định mức của mục này sang mục khác; nếu một ý thuộc quy định có trong tài liệu còn ý kia thuộc văn bản khác hoặc chưa được đề cập trong đoạn trích hiện tại thì phải tách bạch và nêu rõ cho từng ý.\n"
         "   - Phân biệt rạch ròi giữa 'Miễn giảm học phí' (chế độ giảm trừ tiền học) và 'Trợ cấp xã hội / Hỗ trợ chi phí học tập' (các khoản chi trả tiền mặt/sinh hoạt phí).\n"
         "   - Nếu người dùng hỏi về 'trợ cấp xã hội' hoặc 'hỗ trợ chi phí học tập' mà tài liệu chỉ quy định về 'miễn giảm học phí' (hoặc chỉ nhắc đến giấy tờ 'Quyết định trợ cấp xã hội' như một thành phần hồ sơ minh chứng), hãy làm rõ điểm này: nêu rõ đối tượng được miễn giảm học phí theo quy định, đồng thời chỉ rõ văn bản hiện tại chưa quy định riêng về khoản tiền trợ cấp xã hội độc lập.\n"
         "   - Đối soát toán học & định lượng tổng quát (áp dụng cho mọi văn bản hiện tại và tương lai như ngày CTXH, số tín chỉ, điểm trung bình, tỷ lệ miễn giảm, mức học bổng, thời hạn xử lý...): Bất cứ khi nào sinh viên đưa ra một phép tính, con số quy đổi hoặc giả định cụ thể, PHẢI kiểm tra phép nhân/chia/so sánh đó đối chiếu với định mức trong văn bản và nêu rõ kết quả đúng/sai bằng phép tính cụ thể (ví dụ: 12 buổi × 0,5 ngày = 6 ngày, chưa đủ 12 ngày; nếu tính theo mức 0,5 ngày/buổi thì cần 12 : 0,5 = 24 buổi mới đủ 12 ngày) trước khi giải thích các trường hợp ngoại lệ hoặc các mức quy đổi khác nhau trong quy định.\n"

@@ -1175,6 +1175,7 @@ def reset_chat_history():
     st.session_state.messages = []
     st.session_state.pending_user_query = None
     st.session_state.kb_synced = False
+    st.session_state.greeting_turn_count = 0
     prev_queries = [
         p.get("query", "") for p in st.session_state.get("welcome_prompts", [])
         if isinstance(p, dict)
@@ -1271,6 +1272,23 @@ with st.sidebar:
 # ==========================================
 # KHỞI TẠO VÀ CACHE RAG CHAIN
 # ==========================================
+ANSWER_CACHE_TTL = 1800
+
+
+@st.cache_resource(show_spinner=False)
+def get_answer_cache() -> dict:
+    """Bộ nhớ đệm lưu câu trả lời đã đối soát thành công (khóa _strip_accents(rewritten_query), TTL 1800s)."""
+    return {}
+
+
+def ensure_kb_synced_and_fresh_cache() -> dict:
+    """Kiểm tra đồng bộ thư mục data/ và xóa cache câu trả lời ngay nếu phát hiện văn bản thêm/sửa/xóa."""
+    sync_res = auto_sync_knowledge_base()
+    if isinstance(sync_res, dict) and sync_res.get("changed"):
+        get_answer_cache().clear()
+    return sync_res
+
+
 @st.cache_resource(show_spinner=False)
 def load_chain():
     """Nạp chuỗi RAG Lucas một lần duy nhất vào bộ nhớ cache toàn cục (Singleton)."""
@@ -1281,7 +1299,7 @@ try:
         st.session_state.qa_chain = load_chain()
     qa_chain = st.session_state.qa_chain
     if not st.session_state.get("kb_synced", False):
-        auto_sync_knowledge_base()
+        ensure_kb_synced_and_fresh_cache()
         st.session_state.kb_synced = True
 except Exception as e:
     st.error(f"Lỗi khởi tạo hệ thống: {e}")
@@ -1500,7 +1518,7 @@ def load_prompts_config() -> dict:
 
 
 def get_random_welcome_prompts(previous_queries=None) -> list[dict]:
-    """Lấy ngẫu nhiên 4 câu hỏi gợi ý từ 16 câu trong categories, luôn loại trừ bộ câu đang hiển thị."""
+    """Lấy ngẫu nhiên 4 câu hỏi gợi ý từ 24 câu trong categories, luôn loại trừ bộ câu đang hiển thị."""
     config = load_prompts_config()
     categories = config.get("categories", {})
     prev_set = {str(q).strip() for q in (previous_queries or []) if str(q).strip()}
@@ -1623,6 +1641,12 @@ def render_sources(sources_list):
 # PHÂN LOẠI CÂU HỎI VÀ ĐẦU MỐI LIÊN HỆ
 # ==========================================
 GREETING_KEYWORDS = ["chào", "hello", "hi", "bạn là ai", "tên gì", "giới thiệu", "alo", "lucas", "xin chào", "hey", "ad"]
+GREETING_REPLIES = [
+    "Chào bạn! Mình là Lucas – trợ lý học vụ VLUTE. Hôm nay bạn muốn tra cứu quy định về học bổng, học phí, công tác xã hội hay học vụ? *(Bạn có thể bấm chọn nhanh gợi ý bên dưới hoặc nhập trực tiếp câu hỏi nhé!)*",
+    "Xin chào! Rất vui được đồng hành cùng bạn. Bạn đang quan tâm đến chế độ chính sách, điểm rèn luyện hay quy chế đào tạo tại VLUTE? *(Hãy chọn một gợi ý bên dưới hoặc gõ câu hỏi cụ thể nhé!)*",
+    "Chào bạn nhé! Lucas luôn sẵn sàng hỗ trợ bạn giải đáp các quy định về khóa luận, tốt nghiệp hay kỷ luật sinh viên VLUTE. *(Bạn có thể tham khảo các câu hỏi gợi ý bên dưới hoặc đặt câu hỏi trực tiếp cho mình!)*",
+    "Chào bạn! Mình có thể giúp gì cho bạn hôm nay? Bạn cứ nhập thắc mắc về học vụ, miễn giảm học phí, học bổng hoặc chọn nhanh một chủ đề gợi ý ngay bên dưới nhé!",
+]
 
 def is_greeting(query: str) -> bool:
     """Nhận diện nhanh các câu chào hỏi xã giao bằng ranh giới từ (\\b) để tránh khớp nhầm."""
@@ -1912,52 +1936,106 @@ def check_department_inquiry(query: str):
     return None
 
 
-def render_followup_suggestions(
+_FOLLOWUP_Q_STOPWORDS = frozenset({
+    "ai", "nao", "nhung", "cac", "cua", "va", "hoac", "duoc", "la", "gi",
+    "the", "ra", "sao", "bao", "nhieu", "theo", "hien", "hanh", "nhu", "co",
+    "bi", "xin", "cho", "tai", "voi", "trong", "ve", "de", "den", "hay",
+    "thi", "ma", "sinh", "vien", "nha", "truong", "quy", "dinh", "xem",
+    "xet", "thuoc", "dien", "dieu", "o", "dau",
+})
+
+
+def _content_tokens(text: str) -> set[str]:
+    """Trích tập từ khóa nội dung đã bỏ dấu và loại bỏ từ dừng câu hỏi chung."""
+    return {t for t in _strip_accents(text).split("_") if t and t not in _FOLLOWUP_Q_STOPWORDS}
+
+
+def _build_chronological_asked_turns(
+    messages: list | None,
+    query_or_content: str = "",
+    asked_queries: list | set | None = None,
+) -> list[dict]:
+    """Tạo danh sách các lượt hỏi theo thứ tự thời gian từ cũ đến mới để phục vụ chống lặp & LRU recycling."""
+    turns = []
+    msg_list = messages or []
+    idx = 0
+    while idx < len(msg_list):
+        msg = msg_list[idx]
+        if isinstance(msg, dict) and msg.get("role") == "user" and msg.get("content"):
+            texts = [str(msg.get("content", ""))]
+            if idx + 1 < len(msg_list) and isinstance(msg_list[idx + 1], dict):
+                nxt = msg_list[idx + 1]
+                if nxt.get("role") == "assistant" and nxt.get("query"):
+                    texts.append(str(nxt.get("query", "")))
+            turns.append(texts)
+        idx += 1
+
+    # Gộp/bổ sung asked_queries truyền ngoài (nếu chưa trùng lượt nào hiện có)
+    seen_all_norms = {_strip_accents(t) for grp in turns for t in grp if _strip_accents(t)}
+    for extra in (asked_queries or []):
+        en = _strip_accents(str(extra or ""))
+        if en and en not in seen_all_norms:
+            turns.append([str(extra)])
+            seen_all_norms.add(en)
+
+    # Đảm bảo câu hỏi hiện tại nằm ở lượt mới nhất
+    cur_norm = _strip_accents(query_or_content)
+    if cur_norm:
+        if turns:
+            last_norms = {_strip_accents(t) for t in turns[-1] if _strip_accents(t)}
+            if cur_norm not in last_norms:
+                turns[-1].append(query_or_content)
+        else:
+            turns.append([query_or_content])
+
+    compiled = []
+    for grp in turns:
+        norms = {_strip_accents(t) for t in grp if _strip_accents(t)}
+        token_sets = [_content_tokens(t) for t in grp if len(_content_tokens(t)) >= 3]
+        if norms:
+            compiled.append({"norms": norms, "token_sets": token_sets})
+    return compiled
+
+
+def _last_asked_turn_index(cand_q: str, cand_lbl: str, compiled_turns: list[dict]) -> int:
+    """Trả về chỉ số lượt gần nhất đã hỏi câu ứng viên (cũ -> mới), hoặc -1 nếu chưa từng hỏi."""
+    cq_norm = _strip_accents(cand_q)
+    if not cq_norm:
+        return -1
+    cq_tokens = _content_tokens(cand_q)
+    cl_tokens = _content_tokens(cand_lbl)
+
+    for t_idx in range(len(compiled_turns) - 1, -1, -1):
+        turn = compiled_turns[t_idx]
+        t_norms = turn["norms"]
+        if cq_norm in t_norms:
+            return t_idx
+        if any(min(len(cq_norm), len(an)) >= 18 and (cq_norm in an or an in cq_norm) for an in t_norms):
+            return t_idx
+        for atoks in turn["token_sets"]:
+            if len(cq_tokens) >= 3:
+                inter_q = len(cq_tokens & atoks)
+                if (inter_q / min(len(cq_tokens), len(atoks))) >= 0.80 and (inter_q / max(len(cq_tokens), len(atoks))) >= 0.45:
+                    return t_idx
+            if len(cl_tokens) >= 3:
+                inter_l = len(cl_tokens & atoks)
+                if (inter_l / min(len(cl_tokens), len(atoks))) >= 0.85 and (inter_l / len(cl_tokens)) >= 0.60:
+                    return t_idx
+    return -1
+
+
+def _select_followup_prompts(
     query_or_content: str,
-    key_suffix: str = "",
+    config: dict,
+    messages: list | None = None,
     sources: list | None = None,
     assistant_reply: str = "",
     asked_queries: list | set | None = None,
-):
-    """Hiển thị tối đa 2 nút gợi ý liên quan theo chủ đề, chấm điểm ngữ cảnh tổng hợp & loại trừ mọi câu đã hỏi."""
+    limit: int = 2,
+) -> list[tuple[str, str]]:
+    """Chọn 2 nút gợi ý theo 3 tầng: (1) chưa hỏi cùng nhóm, (2) chưa hỏi nhóm khác, (3) LRU Recycling câu cũ nhất."""
     q_text = (query_or_content or "").lower()
     reply_text = (assistant_reply or "").lower()
-
-    raw_asked = []
-    if query_or_content:
-        raw_asked.append(query_or_content)
-    if asked_queries:
-        raw_asked.extend(asked_queries)
-    for msg in st.session_state.get("messages", []):
-        if msg.get("role") == "user" and msg.get("content"):
-            raw_asked.append(str(msg.get("content", "")))
-        elif msg.get("role") == "assistant" and msg.get("query"):
-            raw_asked.append(str(msg.get("query", "")))
-
-    asked_norms = {_strip_accents(x) for x in raw_asked if _strip_accents(x)}
-    asked_token_sets = [set(n.split("_")) for n in asked_norms if len(n.split("_")) >= 3]
-
-    def _is_already_asked(cand_q: str, cand_lbl: str = "") -> bool:
-        cq_norm = _strip_accents(cand_q)
-        if not cq_norm:
-            return False
-        if cq_norm in asked_norms:
-            return True
-        if any(min(len(cq_norm), len(a)) >= 18 and (cq_norm in a or a in cq_norm) for a in asked_norms):
-            return True
-        cq_tokens = set(cq_norm.split("_"))
-        cl_norm = _strip_accents(cand_lbl)
-        cl_tokens = set(cl_norm.split("_")) if cl_norm else set()
-        for atoks in asked_token_sets:
-            if len(cq_tokens) >= 3:
-                denom_q = min(len(cq_tokens), len(atoks))
-                if denom_q > 0 and (len(cq_tokens & atoks) / denom_q) >= 0.74:
-                    return True
-            if len(cl_tokens) >= 3:
-                denom_l = min(len(cl_tokens), len(atoks))
-                if denom_l > 0 and (len(cl_tokens & atoks) / denom_l) >= 0.70:
-                    return True
-        return False
 
     doc_title = ""
     doc_snippet = ""
@@ -1974,12 +2052,11 @@ def render_followup_suggestions(
             doc_snippet = str(getattr(src0, "page_content", "") or "")[:400].lower()
             doc_dept_key = str(meta.get("dept_key") or "").lower().strip()
 
-    config = load_prompts_config()
     categories = config.get("categories", {})
 
     best_cat_key = None
     best_score = 0
-    # 1. Chấm điểm độ khớp từ khóa trên ngữ cảnh tổng hợp (ưu tiên trọng số cao cho title và query_or_content)
+    # Chấm điểm độ khớp từ khóa trên ngữ cảnh tổng hợp (ưu tiên trọng số cao cho title và query_or_content)
     for cat_key, cat_data in categories.items():
         kws = [str(kw).lower() for kw in cat_data.get("keywords", []) if kw]
         score = 0
@@ -1996,7 +2073,7 @@ def render_followup_suggestions(
             best_score = score
             best_cat_key = cat_key
 
-    # 2. Lớp dự phòng tổng quát theo dept_key tự động của sources[0] nếu chưa khớp rõ từ khóa
+    # Lớp dự phòng tổng quát theo dept_key tự động của sources[0] nếu chưa khớp rõ từ khóa
     if not best_cat_key and doc_dept_key:
         dept_to_category = {
             "dao_tao": "hoc_vu_tot_nghiep",
@@ -2009,31 +2086,89 @@ def render_followup_suggestions(
             best_cat_key = mapped_cat
 
     if best_cat_key and best_cat_key in categories:
-        candidate_prompts = [(p["label"], p["query"]) for p in categories[best_cat_key].get("prompts", [])]
+        primary_raw = [(p["label"], p["query"]) for p in categories[best_cat_key].get("prompts", [])]
     else:
-        candidate_prompts = [(p["label"], p["query"]) for p in config.get("initial_prompts", [])]
+        primary_raw = [(p["label"], p["query"]) for p in config.get("initial_prompts", [])]
 
-    # 3. Lọc bỏ mọi câu hỏi đã từng hỏi trong phiên hiện tại (không bao giờ lặp lại câu trước)
-    prompts_to_show = []
-    seen_norms = set()
+    secondary_raw = []
+    for ckey, cdata in categories.items():
+        if ckey != best_cat_key:
+            secondary_raw.extend((p["label"], p["query"]) for p in cdata.get("prompts", []))
+    secondary_raw.extend((p["label"], p["query"]) for p in config.get("initial_prompts", []))
 
-    def _collect_prompts(pool):
-        for lbl, q in pool:
+    compiled_turns = _build_chronological_asked_turns(messages, query_or_content, asked_queries)
+
+    # Chuẩn hóa kho ứng viên không trùng lặp nội bộ (cat_priority: 0=cùng nhóm, 1=nhóm khác)
+    all_candidates = []
+    catalog_norms = set()
+    for cat_prio, pool in ((0, primary_raw), (1, secondary_raw)):
+        for order_idx, (lbl, q) in enumerate(pool):
             qn = _strip_accents(q)
-            if not _is_already_asked(q, lbl) and qn not in seen_norms:
-                prompts_to_show.append((lbl, q))
-                seen_norms.add(qn)
-            if len(prompts_to_show) >= 2:
-                break
+            if qn and qn not in catalog_norms:
+                catalog_norms.add(qn)
+                last_idx = _last_asked_turn_index(q, lbl, compiled_turns)
+                all_candidates.append((last_idx, cat_prio, order_idx, lbl, q, qn))
 
-    _collect_prompts(candidate_prompts)
-    if len(prompts_to_show) < 2:
-        backup_pool = []
-        for ckey, cdata in categories.items():
-            if ckey != best_cat_key:
-                backup_pool.extend((p["label"], p["query"]) for p in cdata.get("prompts", []))
-        backup_pool.extend((p["label"], p["query"]) for p in config.get("initial_prompts", []))
-        _collect_prompts(backup_pool)
+    prompts_to_show = []
+    selected_norms = set()
+
+    def _add_candidate(lbl: str, q: str, qn: str):
+        prompts_to_show.append((lbl, q))
+        selected_norms.add(qn)
+
+    # Tầng 1 & Tầng 2: Ưu tiên các câu chưa từng hỏi (cùng nhóm trước, nhóm khác sau)
+    for target_prio in (0, 1):
+        for last_idx, cat_prio, _order_idx, lbl, q, qn in all_candidates:
+            if cat_prio == target_prio and last_idx == -1 and qn not in selected_norms:
+                _add_candidate(lbl, q, qn)
+                if len(prompts_to_show) >= limit:
+                    return prompts_to_show
+
+    # Tầng 3 (LRU Recycling): Đã hỏi hết toàn kho -> lấy lại câu hỏi từ lâu nhất ở đầu phiên (trừ 4 câu gần nhất)
+    total_turns = len(compiled_turns)
+    recent_cutoff = max(0, total_turns - 4)
+    remaining = [item for item in all_candidates if item[5] not in selected_norms]
+
+    # 3a. Ứng viên hỏi trước recent_cutoff (ngoài 4 câu vừa hỏi gần nhất), xếp từ cũ nhất đến mới hơn
+    lru_eligible = sorted(
+        (item for item in remaining if 0 <= item[0] < recent_cutoff),
+        key=lambda x: (x[0], x[1], x[2]),
+    )
+    for _last_idx, _cat_prio, _order_idx, lbl, q, qn in lru_eligible:
+        _add_candidate(lbl, q, qn)
+        if len(prompts_to_show) >= limit:
+            return prompts_to_show
+
+    # 3b. Dự phòng an toàn nếu phiên có <= 4 lượt mà vẫn chưa đủ 2 nút: tránh lượt mới nhất rồi mới tới toàn bộ còn lại
+    fallback_sorted = sorted(
+        remaining,
+        key=lambda x: (1 if x[0] >= max(0, total_turns - 1) else 0, x[0], x[1], x[2]),
+    )
+    for _last_idx, _cat_prio, _order_idx, lbl, q, qn in fallback_sorted:
+        _add_candidate(lbl, q, qn)
+        if len(prompts_to_show) >= limit:
+            break
+
+    return prompts_to_show
+
+
+def render_followup_suggestions(
+    query_or_content: str,
+    key_suffix: str = "",
+    sources: list | None = None,
+    assistant_reply: str = "",
+    asked_queries: list | set | None = None,
+):
+    """Hiển thị luôn đủ 2 nút gợi ý liên quan theo cơ chế xoay vòng 3 tầng (cùng nhóm -> nhóm khác -> LRU Recycling)."""
+    prompts_to_show = _select_followup_prompts(
+        query_or_content=query_or_content,
+        config=load_prompts_config(),
+        messages=st.session_state.get("messages", []),
+        sources=sources,
+        assistant_reply=assistant_reply,
+        asked_queries=asked_queries,
+        limit=2,
+    )
 
     if not prompts_to_show:
         return
@@ -2123,7 +2258,7 @@ for idx, message in enumerate(st.session_state.messages):
                     unsafe_allow_html=True
                 )
 
-            if idx > 0 and idx == last_assistant_idx and (not is_welcome_or_greeting or is_dept_inquiry):
+            if idx > 0 and idx == last_assistant_idx:
                 prev_followup_placeholder = st.empty()
                 if not current_user_query:
                     with prev_followup_placeholder.container():
@@ -2183,10 +2318,9 @@ if current_user_query:
         time.sleep(0.01)
 
         if is_greeting(current_user_query):
-            greeting_reply = (
-                "Chào bạn! Mình có thể hỗ trợ bạn tra cứu quy chế nào hôm nay? "
-                "*(Bạn có thể chọn các gợi ý nhanh ở trên hoặc gõ câu hỏi cụ thể nhé!)*"
-            )
+            greeting_idx = int(st.session_state.get("greeting_turn_count", 0)) % len(GREETING_REPLIES)
+            greeting_reply = GREETING_REPLIES[greeting_idx]
+            st.session_state.greeting_turn_count = greeting_idx + 1
             status_placeholder.markdown(
                 build_assistant_bubble_html(greeting_reply, is_welcome_or_greeting=True),
                 unsafe_allow_html=True
@@ -2201,9 +2335,21 @@ if current_user_query:
                 "is_greeting": True,
                 "elapsed_time": None
             })
+            render_followup_suggestions(current_user_query, key_suffix=str(new_msg_idx), sources=[], assistant_reply=greeting_reply)
         else:
             canonical_query = normalize_query_intent(current_user_query)
-            rewritten_query = rewrite_conversational_query(canonical_query, recent_chat_history)
+            ensure_kb_synced_and_fresh_cache()
+            answer_cache = get_answer_cache()
+            canonical_cache_key = _strip_accents(canonical_query)
+            canonical_cached = answer_cache.get(canonical_cache_key) if canonical_cache_key else None
+            if canonical_cached and (time.time() - float(canonical_cached.get("timestamp", 0))) > ANSWER_CACHE_TTL:
+                answer_cache.pop(canonical_cache_key, None)
+                canonical_cached = None
+
+            if canonical_cached and canonical_cached.get("answer"):
+                rewritten_query = canonical_query
+            else:
+                rewritten_query = rewrite_conversational_query(canonical_query, recent_chat_history)
             dept_reply = check_department_inquiry(rewritten_query) if "check_department_inquiry" in globals() else None
 
             if dept_reply:
@@ -2224,78 +2370,50 @@ if current_user_query:
                 })
                 render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=[], assistant_reply=dept_reply)
 
-            # 5. Tra cứu RAG nếu là câu hỏi quy chế
+            # 5. Tra cứu RAG nếu là câu hỏi quy chế (kiểm tra Answer Cache tự làm mới theo data/ trước khi gọi LLM)
             else:
                 try:
-                    start_time = time.time()
-                    stream_gen, sources_to_save, num_docs, retrieved_docs = stream_rag_pipeline(rewritten_query)
+                    cache_key = _strip_accents(rewritten_query)
+                    cached_entry = answer_cache.get(cache_key) if cache_key else None
+                    if cached_entry and (time.time() - float(cached_entry.get("timestamp", 0))) > ANSWER_CACHE_TTL:
+                        answer_cache.pop(cache_key, None)
+                        cached_entry = None
 
-                    if not num_docs or not stream_gen:
-                        no_doc_msg = REFUSAL_MESSAGE
-                        contact_footer = get_contact_footer(rewritten_query, retrieved_docs=None, is_refusal=True)
+                    if cached_entry and cached_entry.get("answer"):
+                        cached_answer = cached_entry["answer"]
+                        cached_contact = cached_entry.get("contact") or get_contact_footer(rewritten_query, retrieved_docs=None, is_refusal=False)
+                        cached_sources = cached_entry.get("sources") or []
+                        cached_elapsed = 0.05
                         status_placeholder.markdown(
-                            build_assistant_bubble_html(no_doc_msg, contact_html=contact_footer, is_refusal=True),
+                            build_assistant_bubble_html(cached_answer, contact_html=cached_contact, elapsed_time=cached_elapsed, is_refusal=False),
                             unsafe_allow_html=True
                         )
                         st.session_state.messages.append({
                             "role": "assistant",
-                            "content": no_doc_msg,
-                            "contact": contact_footer,
-                            "sources": [],
+                            "content": cached_answer,
+                            "contact": cached_contact,
+                            "sources": cached_sources,
                             "query": rewritten_query,
-                            "is_refusal": True,
+                            "is_refusal": False,
                             "is_greeting": False,
-                            "elapsed_time": None
+                            "elapsed_time": cached_elapsed
                         })
-                        render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=[], assistant_reply=no_doc_msg)
+                        print(f"[ANSWER CACHE HIT] key='{cache_key}' (0.05s)")
+                        render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=cached_sources, assistant_reply=cached_answer)
                     else:
-                        badge_html = get_verify_badge_html()
-                        streamed_chunks = []
-                        last_update = time.time()
-                        first_chunk_rendered = False
+                        start_time = time.time()
+                        stream_gen, sources_to_save, num_docs, retrieved_docs = stream_rag_pipeline(rewritten_query)
 
-                        for chunk in stream_gen:
-                            chunk_str = str(chunk)
-                            if not chunk_str:
-                                continue
-                            streamed_chunks.append(chunk_str)
-                            if (not first_chunk_rendered) or (time.time() - last_update > 0.035):
-                                current_text = "".join(streamed_chunks)
-                                status_placeholder.markdown(f"{badge_html}\n\n{current_text}", unsafe_allow_html=True)
-                                last_update = time.time()
-                                first_chunk_rendered = True
-
-                        full_answer = "".join(streamed_chunks).strip()
-                        elapsed_time = round(time.time() - start_time, 2)
-                        is_interrupted = "Phản hồi bị gián đoạn giữa chừng do sự cố kết nối mô hình" in full_answer
-
-                        if is_interrupted:
-                            contact_footer = get_contact_footer(rewritten_query, retrieved_docs=retrieved_docs, is_refusal=True)
-                            status_placeholder.markdown(
-                                build_assistant_bubble_html(full_answer, contact_html=contact_footer, is_refusal=True),
-                                unsafe_allow_html=True
-                            )
-                            st.session_state.messages.append({
-                                "role": "assistant",
-                                "content": full_answer,
-                                "contact": contact_footer,
-                                "sources": [],
-                                "query": rewritten_query,
-                                "is_refusal": True,
-                                "is_greeting": False,
-                                "elapsed_time": None
-                            })
-                            render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=sources_to_save, assistant_reply=full_answer)
-                        elif is_refusal_answer(full_answer) or not full_answer:
-                            full_answer = full_answer or REFUSAL_MESSAGE
+                        if not num_docs or not stream_gen:
+                            no_doc_msg = REFUSAL_MESSAGE
                             contact_footer = get_contact_footer(rewritten_query, retrieved_docs=None, is_refusal=True)
                             status_placeholder.markdown(
-                                build_assistant_bubble_html(full_answer, contact_html=contact_footer, is_refusal=True),
+                                build_assistant_bubble_html(no_doc_msg, contact_html=contact_footer, is_refusal=True),
                                 unsafe_allow_html=True
                             )
                             st.session_state.messages.append({
                                 "role": "assistant",
-                                "content": full_answer,
+                                "content": no_doc_msg,
                                 "contact": contact_footer,
                                 "sources": [],
                                 "query": rewritten_query,
@@ -2303,24 +2421,90 @@ if current_user_query:
                                 "is_greeting": False,
                                 "elapsed_time": None
                             })
-                            render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=[], assistant_reply=full_answer)
+                            render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=[], assistant_reply=no_doc_msg)
                         else:
-                            contact_footer = get_contact_footer(rewritten_query, retrieved_docs=retrieved_docs, is_refusal=False)
-                            status_placeholder.markdown(
-                                build_assistant_bubble_html(full_answer, contact_html=contact_footer, elapsed_time=elapsed_time, is_refusal=False),
-                                unsafe_allow_html=True
-                            )
-                            st.session_state.messages.append({
-                                "role": "assistant",
-                                "content": full_answer,
-                                "contact": contact_footer,
-                                "sources": sources_to_save,
-                                "query": rewritten_query,
-                                "is_refusal": False,
-                                "is_greeting": False,
-                                "elapsed_time": elapsed_time
-                            })
-                            render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=sources_to_save, assistant_reply=full_answer)
+                            badge_html = get_verify_badge_html()
+                            streamed_chunks = []
+                            last_update = time.time()
+                            first_chunk_rendered = False
+
+                            for chunk in stream_gen:
+                                chunk_str = str(chunk)
+                                if not chunk_str:
+                                    continue
+                                streamed_chunks.append(chunk_str)
+                                if (not first_chunk_rendered) or (time.time() - last_update > 0.035):
+                                    current_text = "".join(streamed_chunks)
+                                    status_placeholder.markdown(f"{badge_html}\n\n{current_text}", unsafe_allow_html=True)
+                                    last_update = time.time()
+                                    first_chunk_rendered = True
+
+                            full_answer = "".join(streamed_chunks).strip()
+                            elapsed_time = round(time.time() - start_time, 2)
+                            is_interrupted = "Phản hồi bị gián đoạn giữa chừng do sự cố kết nối mô hình" in full_answer
+
+                            if is_interrupted:
+                                contact_footer = get_contact_footer(rewritten_query, retrieved_docs=retrieved_docs, is_refusal=True)
+                                status_placeholder.markdown(
+                                    build_assistant_bubble_html(full_answer, contact_html=contact_footer, is_refusal=True),
+                                    unsafe_allow_html=True
+                                )
+                                st.session_state.messages.append({
+                                    "role": "assistant",
+                                    "content": full_answer,
+                                    "contact": contact_footer,
+                                    "sources": [],
+                                    "query": rewritten_query,
+                                    "is_refusal": True,
+                                    "is_greeting": False,
+                                    "elapsed_time": None
+                                })
+                                render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=sources_to_save, assistant_reply=full_answer)
+                            elif is_refusal_answer(full_answer) or not full_answer:
+                                full_answer = full_answer or REFUSAL_MESSAGE
+                                contact_footer = get_contact_footer(rewritten_query, retrieved_docs=None, is_refusal=True)
+                                status_placeholder.markdown(
+                                    build_assistant_bubble_html(full_answer, contact_html=contact_footer, is_refusal=True),
+                                    unsafe_allow_html=True
+                                )
+                                st.session_state.messages.append({
+                                    "role": "assistant",
+                                    "content": full_answer,
+                                    "contact": contact_footer,
+                                    "sources": [],
+                                    "query": rewritten_query,
+                                    "is_refusal": True,
+                                    "is_greeting": False,
+                                    "elapsed_time": None
+                                })
+                                render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=[], assistant_reply=full_answer)
+                            else:
+                                contact_footer = get_contact_footer(rewritten_query, retrieved_docs=retrieved_docs, is_refusal=False)
+                                status_placeholder.markdown(
+                                    build_assistant_bubble_html(full_answer, contact_html=contact_footer, elapsed_time=elapsed_time, is_refusal=False),
+                                    unsafe_allow_html=True
+                                )
+                                if cache_key:
+                                    cache_record = {
+                                        "answer": full_answer,
+                                        "contact": contact_footer,
+                                        "sources": sources_to_save,
+                                        "timestamp": time.time(),
+                                    }
+                                    answer_cache[cache_key] = cache_record
+                                    if rewritten_query == canonical_query and canonical_cache_key and canonical_cache_key != cache_key:
+                                        answer_cache[canonical_cache_key] = cache_record
+                                st.session_state.messages.append({
+                                    "role": "assistant",
+                                    "content": full_answer,
+                                    "contact": contact_footer,
+                                    "sources": sources_to_save,
+                                    "query": rewritten_query,
+                                    "is_refusal": False,
+                                    "is_greeting": False,
+                                    "elapsed_time": elapsed_time
+                                })
+                                render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=sources_to_save, assistant_reply=full_answer)
 
                 except Exception as e:
                     status_placeholder.empty()
@@ -2341,6 +2525,7 @@ if current_user_query:
                             "is_greeting": False,
                             "elapsed_time": None
                         })
+                        render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=[], assistant_reply=RATE_LIMIT_MESSAGE)
                     else:
                         import traceback
                         traceback.print_exc()

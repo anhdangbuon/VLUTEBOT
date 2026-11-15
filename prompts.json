@@ -1,25 +1,25 @@
 {
   "initial_prompts": [
     {
-      "label": "🏆 Điều kiện xét học bổng khuyến khích?",
+      "label": "◈ Điều kiện xét học bổng khuyến khích?",
       "query": "Sinh viên cần đạt bao nhiêu tín chỉ và điểm rèn luyện thế nào để được xét học bổng khuyến khích học tập?"
     },
     {
-      "label": "🎁 Đối tượng được miễn giảm học phí?",
+      "label": "◈ Đối tượng được miễn, giảm học phí?",
       "query": "Những đối tượng sinh viên nào được hưởng chính sách miễn, giảm học phí theo quy định hiện hành?"
     },
     {
-      "label": "🩸 Hiến máu & Mùa hè xanh đổi bao nhiêu ngày CTXH?",
+      "label": "◈ Quy đổi ngày CTXH hiến máu, MHX?",
       "query": "Tham gia hiến máu tình nguyện hoặc chiến dịch Mùa hè xanh được quy đổi thành bao nhiêu ngày CTXH?"
     },
     {
-      "label": "🎓 Điều kiện ngày CTXH để làm khóa luận & tốt nghiệp?",
+      "label": "◈ Số ngày CTXH xét làm khóa luận, TN?",
       "query": "Sinh viên cần hoàn thành tối thiểu bao nhiêu ngày CTXH để đăng ký học phần tốt nghiệp và xét tốt nghiệp?"
     }
   ],
   "categories": {
     "hoc_bong": {
-      "name": "🎓 Học bổng & Khen thưởng",
+      "name": "◈ Học bổng & Khen thưởng",
       "keywords": [
         "học bổng",
         "kkht",
@@ -32,29 +32,39 @@
         "mức 1",
         "mức 2",
         "mức 3",
-        "mức 4"
+        "mức 4",
+        "danh hiệu",
+        "thủ khoa"
       ],
       "prompts": [
         {
-          "label": "🏆 Điều kiện xét học bổng khuyến khích?",
+          "label": "◈ Điều kiện xét học bổng khuyến khích?",
           "query": "Sinh viên cần đạt bao nhiêu tín chỉ và điểm rèn luyện thế nào để được xét học bổng khuyến khích học tập?"
         },
         {
-          "label": "🎓 Công thức tính tiền học bổng Mức 1–4?",
+          "label": "◈ Công thức tính học bổng Mức 1–4?",
           "query": "Mức tiền học bổng KKHT Mức 1 (SPKT), Mức 2, Mức 3 và Mức 4 tại Điều 18 được tính cụ thể như thế nào?"
         },
         {
-          "label": "⚠️ Nợ môn hoặc nợ học phí có được xét học bổng?",
+          "label": "◈ Nợ môn, nợ học phí có xét học bổng?",
           "query": "Sinh viên có môn bị điểm dưới C hoặc nợ học phí thì có được tham gia xét học bổng không?"
         },
         {
-          "label": "💛 Quy định xét học bổng vượt khó?",
+          "label": "◈ Điều kiện xét học bổng vượt khó?",
           "query": "Điều kiện xét học bổng vượt khó dành cho sinh viên có hoàn cảnh gia đình khó khăn quy định ở Chương VI như thế nào?"
+        },
+        {
+          "label": "◈ Tiêu chuẩn danh hiệu SV Xuất sắc, Giỏi?",
+          "query": "Tiêu chuẩn điểm trung bình chung và điểm rèn luyện để đạt danh hiệu Sinh viên Xuất sắc, Sinh viên Giỏi, Sinh viên Khá định kỳ theo Điều 8 là gì?"
+        },
+        {
+          "label": "◈ Tiêu chuẩn khen thưởng Thủ khoa khóa?",
+          "query": "Tiêu chuẩn xét khen thưởng Thủ khoa tuyển sinh và Thủ khoa khóa học khi tốt nghiệp tại Điều 10 được quy định như thế nào?"
         }
       ]
     },
     "hoc_phi": {
-      "name": "💰 Học phí & Miễn giảm",
+      "name": "◈ Học phí & Miễn giảm",
       "keywords": [
         "học phí",
         "miễn giảm",
@@ -65,29 +75,40 @@
         "chi phí học tập",
         "dân tộc",
         "hộ nghèo",
-        "bm-kh-10"
+        "bm-kh-10",
+        "70%",
+        "50%",
+        "dừng cấp"
       ],
       "prompts": [
         {
-          "label": "🎁 Đối tượng được miễn giảm học phí?",
+          "label": "◈ Đối tượng được miễn, giảm học phí?",
           "query": "Những đối tượng sinh viên nào được hưởng chính sách miễn, giảm học phí theo quy định hiện hành?"
         },
         {
-          "label": "📝 Hồ sơ miễn giảm học phí & nơi nộp?",
+          "label": "◈ Hồ sơ miễn giảm học phí & nơi nộp?",
           "query": "Hồ sơ xin miễn giảm học phí cần chuẩn bị những giấy tờ gì và nộp ở đâu, trong thời hạn bao lâu?"
         },
         {
-          "label": "💵 Hỗ trợ chi phí học tập SV dân tộc hộ nghèo?",
+          "label": "◈ Hỗ trợ chi phí SV dân tộc hộ nghèo?",
           "query": "Mức hỗ trợ chi phí học tập đối với sinh viên dân tộc thiểu số thuộc hộ nghèo hoặc cận nghèo là bao nhiêu?"
         },
         {
-          "label": "💰 Thủ tục & biểu mẫu hoàn trả học phí thừa?",
+          "label": "◈ Thủ tục & mẫu đơn hoàn trả học phí?",
           "query": "Quy trình hoàn trả học phí thừa QT-SV-04 gồm những đợt nào, dùng mẫu đơn gì và thời gian chuyển khoản bao lâu?"
+        },
+        {
+          "label": "◈ Ai được giảm 70% và 50% học phí?",
+          "query": "Những đối tượng sinh viên nào thuộc diện được giảm 70% học phí và giảm 50% học phí theo Điều 6 và Điều 7?"
+        },
+        {
+          "label": "◈ Trường hợp bị dừng hỗ trợ chi phí học?",
+          "query": "Sinh viên đang hưởng chế độ miễn giảm học phí hoặc hỗ trợ chi phí học tập sẽ bị dừng cấp kinh phí trong những trường hợp nào theo Điều 9 và Điều 14?"
         }
       ]
     },
     "ctxh_ren_luyen": {
-      "name": "🤝 Công tác xã hội & Rèn luyện",
+      "name": "◈ Công tác xã hội & Rèn luyện",
       "keywords": [
         "công tác xã hội",
         "ctxh",
@@ -98,29 +119,39 @@
         "ban cán sự",
         "trừ ngày",
         "hội thảo",
-        "tình nguyện"
+        "tình nguyện",
+        "miễn, giảm ngày",
+        "đánh giá kết quả"
       ],
       "prompts": [
         {
-          "label": "🩸 Hiến máu & Mùa hè xanh đổi bao nhiêu ngày CTXH?",
+          "label": "◈ Quy đổi ngày CTXH hiến máu, MHX?",
           "query": "Tham gia hiến máu tình nguyện hoặc chiến dịch Mùa hè xanh được quy đổi thành bao nhiêu ngày CTXH?"
         },
         {
-          "label": "📅 Phân bổ 12 ngày CTXH theo từng năm học?",
+          "label": "◈ Phân bổ 12 ngày CTXH theo năm học?",
           "query": "12 ngày công tác xã hội của sinh viên đại học chính quy được phân bổ cụ thể từ năm nhất đến năm tư như thế nào?"
         },
         {
-          "label": "⚠️ Bỏ không đi hoặc vắng họp bị trừ bao nhiêu ngày CTXH?",
+          "label": "◈ Đăng ký không đi bị trừ ngày CTXH?",
           "query": "Sinh viên đăng ký tham gia hoạt động CTXH mà không đi hoặc vắng họp chi đoàn bị trừ bao nhiêu ngày CTXH?"
         },
         {
-          "label": "⭐ Quyền lợi cộng điểm rèn luyện của Ban cán sự lớp?",
+          "label": "◈ Quyền lợi điểm rèn luyện Ban cán sự?",
           "query": "Nhiệm vụ và quyền lợi ưu tiên (cộng điểm rèn luyện) của Ban cán sự lớp được quy định như thế nào?"
+        },
+        {
+          "label": "◈ Đối tượng được miễn, giảm ngày CTXH?",
+          "query": "Những đối tượng sinh viên nào được xem xét miễn hoặc giảm số ngày công tác xã hội theo Điều 5 Quy định chuẩn tham gia hoạt động CTXH?"
+        },
+        {
+          "label": "◈ Đánh giá Đạt và Không đạt ngày CTXH?",
+          "query": "Cách đánh giá kết quả công tác xã hội Đạt, Không đạt và thời điểm xét điều kiện CTXH theo Điều 12 được quy định ra sao?"
         }
       ]
     },
     "hoc_vu_tot_nghiep": {
-      "name": "📋 Học vụ & Tốt nghiệp",
+      "name": "◈ Học vụ & Tốt nghiệp",
       "keywords": [
         "tốt nghiệp",
         "khóa luận",
@@ -135,24 +166,34 @@
         "mật khẩu",
         "an toàn thông tin",
         "usb",
-        "email"
+        "email",
+        "khiếu nại",
+        "nghiêm cấm"
       ],
       "prompts": [
         {
-          "label": "📌 Cần bao nhiêu ngày CTXH để làm khóa luận & tốt nghiệp?",
+          "label": "◈ Số ngày CTXH xét làm khóa luận, TN?",
           "query": "Sinh viên cần đạt tối thiểu bao nhiêu ngày CTXH mới được đăng ký học phần tốt nghiệp và xét công nhận tốt nghiệp?"
         },
         {
-          "label": "❌ Khung xử lý kỷ luật thi hộ & gian lận thi cử?",
+          "label": "◈ Kỷ luật thi hộ & gian lận thi cử?",
           "query": "Theo Phụ lục khung xử lý kỷ luật QĐ 1079, sinh viên thi hộ hoặc nhờ người thi hộ và mang tài liệu vào phòng thi bị xử lý thế nào?"
         },
         {
-          "label": "⏳ Thời gian chấm dứt hiệu lực kỷ luật & trang phục đến trường?",
+          "label": "◈ Hiệu lực kỷ luật & quy tắc trang phục?",
           "query": "Sinh viên bị kỷ luật khiển trách hoặc cảnh cáo sau bao lâu được chấm dứt hiệu lực, và quy định trang phục đến trường thế nào?"
         },
         {
-          "label": "🔐 Quy định mật khẩu, email & quét virus USB (QĐ 979)?",
+          "label": "◈ Quy định mật khẩu, email & USB?",
           "query": "Sinh viên được cấp email tên miền gì, bao lâu phải đổi mật khẩu định kỳ và quy định dùng USB/thiết bị lưu trữ ngoài ra sao?"
+        },
+        {
+          "label": "◈ Quyền khiếu nại khen thưởng, kỷ luật?",
+          "query": "Sinh viên có quyền khiếu nại về kết quả khen thưởng hoặc quyết định kỷ luật trong thời hạn bao lâu và gửi đơn đến đâu theo Điều 13?"
+        },
+        {
+          "label": "◈ Hành vi nghiêm cấm về an toàn mạng?",
+          "query": "Những hành vi nào bị nghiêm cấm đối với người sử dụng hệ thống thông tin và mạng máy tính của Nhà trường theo Điều 4 Quy chế an toàn thông tin?"
         }
       ]
     }
