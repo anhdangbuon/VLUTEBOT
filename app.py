@@ -13,6 +13,7 @@ from rag import (
     get_rag_chain,
     DOC_CATALOG,
     extract_article_info,
+    clip_context_text,
     REFUSAL_MESSAGE,
     load_departments_config,
     rewrite_conversational_query,
@@ -98,20 +99,22 @@ button[data-testid="stExpandSidebarButton"] {
     pointer-events: auto !important;
 }
 
-/* Cuộn mượt & CSS overflow-anchor (không dùng JS iframe) */
-html, body, [data-testid="stAppViewContainer"], [data-testid="stMainBlockContainer"], section[data-testid="stMain"], .main {
-    scroll-behavior: smooth !important;
-    overflow-anchor: auto !important;
-    scroll-padding-bottom: 130px !important;
+/* Tắt hoàn toàn scroll anchoring mặc định của trình duyệt để tránh giật ngược thanh cuộn khi bật thẻ liên hệ & nút gợi ý */
+html, body, [data-testid="stAppViewContainer"], [data-testid="stMainBlockContainer"], .main {
+    overflow-anchor: none !important;
+}
+
+section[data-testid="stMain"] {
+    overflow-anchor: none !important;
 }
 
 div[data-testid="stChatMessage"],
-.chat-row-user {
+.chat-row-user,
+#chat-scroll-anchor {
     overflow-anchor: none !important;
 }
 
 #chat-scroll-anchor {
-    overflow-anchor: auto !important;
     height: 16px !important;
     width: 100% !important;
 }
@@ -128,17 +131,40 @@ div[data-testid="stElementContainer"]:has(iframe[height="0"]) {
 
 /* 0. Nền chung toàn trang & vùng nội dung chính */
 .stApp {
-    background-color: #f4f6f9 !important;
+    background-color: #f6f9f8 !important;
+    background-image:
+        radial-gradient(circle at 50% 0%, rgba(0, 112, 60, 0.055) 0%, transparent 56%),
+        radial-gradient(rgba(15, 23, 42, 0.045) 1px, transparent 1px) !important;
+    background-size: 100% 100%, 22px 22px !important;
     color: #1e293b !important;
 }
 
 .main .block-container,
-div[data-testid="stAppViewBlockContainer"] {
+div[data-testid="stAppViewBlockContainer"],
+div[data-testid="stMainBlockContainer"] {
     max-width: 820px !important;
-    padding-bottom: 160px !important;
+    padding-bottom: 200px !important;
 }
 
-/* 1. Header tinh gọn chiều cao 110-120px */
+/* 1. Header tinh gọn chiều cao 110-120px & hiệu ứng mở màn 60fps không nảy trục dọc */
+@keyframes headerEnter {
+    from {
+        opacity: 0.96;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes badgePopIn {
+    from {
+        opacity: 0.96;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
 .vlute-portal-header {
     background: linear-gradient(135deg, #005a30 0%, #00733c 100%);
     border-radius: 12px;
@@ -153,6 +179,8 @@ div[data-testid="stAppViewBlockContainer"] {
     min-height: 110px;
     max-height: 120px;
     box-sizing: border-box;
+    animation: headerEnter 0.18s ease-out both;
+    will-change: opacity;
 }
 
 /* Logo nằm bên TRÁI */
@@ -238,7 +266,9 @@ div[data-testid="stAppViewBlockContainer"] {
     align-items: center;
     gap: 6px;
     box-shadow: 0 2px 5px rgba(0, 141, 76, 0.18);
-    transition: all 0.2s ease;
+    transition: box-shadow 0.2s ease, border-color 0.2s ease, background-color 0.2s ease !important;
+    animation: badgePopIn 0.18s ease-out both;
+    will-change: opacity;
 }
 
 .vlute-nav-badge:hover {
@@ -522,11 +552,12 @@ section[data-testid="stSidebar"] b {
 .sidebar-link-item svg {
     stroke: #00a65a;
     flex-shrink: 0;
-    transition: stroke 0.2s ease;
+    transition: stroke 0.2s ease, transform 0.2s ease;
 }
 
 .sidebar-link-item:hover svg {
     stroke: #ffffff !important;
+    transform: translateX(2px) scale(1.08);
 }
 
 section[data-testid="stSidebar"] .stButton > button {
@@ -562,16 +593,38 @@ section[data-testid="stSidebar"] .stButton > button:hover {
     color: white !important;
 }
 
+section[data-testid="stSidebar"] .stButton > button:active {
+    transform: scale(0.96) !important;
+}
+
 /* 5. KHUNG TIN NHẮN VÀ BONG BÓNG CHAT (MAX-WIDTH: 720PX) */
 @keyframes fadeInBubble {
     from {
-        opacity: 0;
+        opacity: 0.92;
         transform: translate3d(0, 6px, 0);
     }
     to {
         opacity: 1;
         transform: translate3d(0, 0, 0);
     }
+}
+
+@keyframes avatarPulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(0, 166, 90, 0.45);
+    }
+    70% {
+        box-shadow: 0 0 0 8px rgba(0, 166, 90, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(0, 166, 90, 0);
+    }
+}
+
+div[data-testid="stChatMessage"]:has(.typing-indicator) div[data-testid="stChatMessageAvatar"] img,
+div[data-testid="stChatMessage"]:has(.typing-indicator) [data-testid="stChatMessageAvatarCustom"],
+div[data-testid="stChatMessage"]:has(.typing-indicator) img {
+    animation: avatarPulse 1.4s cubic-bezier(0.16, 1, 0.3, 1) infinite !important;
 }
 
 div[data-testid="stChatMessage"] {
@@ -623,7 +676,7 @@ div[data-testid="stChatMessage"] img {
     transform: none !important;
     border: none !important;
     background: transparent !important;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.15) !important;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
     display: inline-block !important;
 }
 
@@ -644,7 +697,7 @@ div[data-testid="stChatMessageContent"] {
     box-shadow: 0 4px 14px rgba(0, 112, 60, 0.12) !important;
     word-break: normal !important;
     overflow-wrap: break-word !important;
-    transition: all 0.2s ease !important;
+    transition: box-shadow 0.2s ease, border-color 0.2s ease, background-color 0.2s ease !important;
 }
 
 div[data-testid="stChatMessageContent"] ul {
@@ -691,24 +744,37 @@ div[data-testid="stChatMessageContent"] b {
     font-size: 1rem !important;
     line-height: 1.6 !important;
     box-shadow: 0 4px 14px rgba(0, 115, 183, 0.18) !important;
-    transition: all 0.2s ease !important;
+    transition: box-shadow 0.2s ease, border-color 0.2s ease, background-color 0.2s ease !important;
 }
 
-/* Chỉ tạo chuyển động 60fps mượt cho tin nhắn cuối cùng, chân trang và nút gợi ý liên quan */
+/* Bong bóng người dùng hiển thị rõ 100% ngay khung hình đầu tiên, không nháy mờ */
+.chat-row-user,
+.chat-row-user:last-of-type {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+}
+
+/* Chuyển động 1 nhịp êm ái (0.22s, không nháy trắng, đồng thời không lệch nhịp chân trang/gợi ý) */
 div[data-testid="stChatMessage"]:last-of-type,
-.chat-row-user:last-of-type,
 .contact-footer-card,
 div[data-testid="stChatMessageContent"] div[data-testid="stHorizontalBlock"] {
-    animation: fadeInBubble 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation: fadeInBubble 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
     will-change: transform, opacity;
 }
 
-/* Triệt tiêu hoàn toàn hiện tượng nháy lại tin nhắn cũ trong lịch sử hội thoại */
+/* Triệt tiêu hoàn toàn hiện tượng nháy lại tin nhắn cũ và cô lập bố cục trình duyệt */
+.chat-row-user.chat-history-old,
+div[data-testid="stChatMessage"]:has(.chat-history-old-marker) {
+    contain: layout style;
+}
+
 .chat-row-user.chat-history-old,
 div[data-testid="stChatMessage"]:has(.chat-history-old-marker),
 div[data-testid="stChatMessage"]:has(.chat-history-old-marker) .contact-footer-card,
 div[data-testid="stChatMessage"]:has(.chat-history-old-marker) div[data-testid="stHorizontalBlock"] {
     animation: none !important;
+    animation-delay: 0s !important;
     will-change: auto !important;
 }
 
@@ -885,7 +951,7 @@ div[data-testid="stHorizontalBlock"] button {
     padding: 7px 12px !important;
     text-align: left !important;
     box-shadow: 0 2px 4px rgba(0, 112, 60, 0.08) !important;
-    transition: all 0.2s ease !important;
+    transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.2s ease, box-shadow 0.22s ease, border-color 0.2s ease !important;
     white-space: normal !important;
     height: auto !important;
 }
@@ -903,8 +969,12 @@ div[data-testid="stHorizontalBlock"] button [data-testid="stMarkdownContainer"] 
 div[data-testid="stHorizontalBlock"] button:hover {
     background-color: #00703c !important;
     color: #ffffff !important;
-    box-shadow: 0 4px 8px rgba(0, 112, 60, 0.22) !important;
-    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(0, 112, 60, 0.22) !important;
+    transform: translate3d(0, -2px, 0) !important;
+}
+
+div[data-testid="stHorizontalBlock"] button:active {
+    transform: translate3d(0, 0, 0) scale(0.98) !important;
 }
 
 div[data-testid="stHorizontalBlock"] button:hover p,
@@ -912,22 +982,23 @@ div[data-testid="stHorizontalBlock"] button:hover span {
     color: #ffffff !important;
 }
 
-/* Hiệu ứng chuyển động 60fps từng thẻ cho 4 nút gợi ý chào mừng */
+/* Hiệu ứng xuất hiện đồng bộ cho 4 nút gợi ý chào mừng (không dịch chuyển trục dọc) */
 @keyframes promptCardIn {
     from {
-        opacity: 0;
-        transform: translate3d(0, 10px, 0) scale(0.98);
+        opacity: 0.96;
     }
     to {
         opacity: 1;
-        transform: translate3d(0, 0, 0) scale(1);
     }
 }
 
 [class*="st-key-welcome_prompt_"] button {
-    animation: promptCardIn 0.18s cubic-bezier(0.22, 1, 0.36, 1) both !important;
-    animation-delay: 0ms !important;
-    will-change: transform, opacity;
+    animation: promptCardIn 0.18s ease-out both;
+    will-change: opacity;
+}
+
+[class*="st-key-shuffle_welcome_btn"] button:active {
+    transform: scale(0.96) !important;
 }
 
 /* Đảm bảo nút gợi ý bên trong tin nhắn bot có chữ rõ nét, không bị đè màu trắng */
@@ -945,9 +1016,27 @@ div[data-testid="stChatMessageContent"] div[data-testid="stHorizontalBlock"] but
     color: #ffffff !important;
 }
 
-/* Khung chat input */
+/* Lớp chuyển sắc mờ ở đáy màn hình & khung chat input */
+div[data-testid="stBottom"] {
+    background: linear-gradient(to bottom, rgba(246, 249, 248, 0) 0%, rgba(246, 249, 248, 0.92) 32%, #f6f9f8 100%) !important;
+}
+
+div[data-testid="stBottom"] > div,
+div[data-testid="stBottomBlockContainer"] {
+    background: transparent !important;
+}
+
 div[data-testid="stChatInput"] {
     border-radius: 12px !important;
+}
+
+div[data-testid="stChatInput"] > div {
+    transition: box-shadow 0.25s ease, border-color 0.25s ease !important;
+}
+
+div[data-testid="stChatInput"] > div:focus-within {
+    border-color: #00703c !important;
+    box-shadow: 0 0 0 3px rgba(0, 112, 60, 0.15), 0 6px 18px rgba(0, 112, 60, 0.10) !important;
 }
 
 div[data-testid="stChatInput"] textarea:focus {
@@ -1041,6 +1130,43 @@ THINKING_HTML = """
     <span class="typing-label">Lucas đang tra cứu quy chế VLUTE...</span>
 </div>
 """
+
+# ==========================================
+# KHỞI TẠO VÀ CACHE RAG CHAIN TRƯỚC KHI VẼ GIAO DIỆN
+# ==========================================
+ANSWER_CACHE_TTL = 1800
+
+
+@st.cache_resource(show_spinner=False)
+def get_answer_cache() -> dict:
+    """Bộ nhớ đệm lưu câu trả lời đã đối soát thành công (khóa _strip_accents(rewritten_query), TTL 1800s)."""
+    return {}
+
+
+def ensure_kb_synced_and_fresh_cache() -> dict:
+    """Kiểm tra đồng bộ thư mục data/ và xóa cache câu trả lời ngay nếu phát hiện văn bản thêm/sửa/xóa."""
+    sync_res = auto_sync_knowledge_base()
+    if isinstance(sync_res, dict) and sync_res.get("changed"):
+        get_answer_cache().clear()
+    return sync_res
+
+
+@st.cache_resource(show_spinner=False)
+def load_chain():
+    """Nạp chuỗi RAG Lucas một lần duy nhất vào bộ nhớ cache toàn cục (Singleton)."""
+    return get_rag_chain()
+
+
+try:
+    if "qa_chain" not in st.session_state:
+        st.session_state.qa_chain = load_chain()
+    qa_chain = st.session_state.qa_chain
+    if not st.session_state.get("kb_synced", False):
+        ensure_kb_synced_and_fresh_cache()
+        st.session_state.kb_synced = True
+except Exception as e:
+    st.error(f"Lỗi khởi tạo hệ thống: {e}")
+    st.stop()
 
 # ==========================================
 # 1. HEADER TINH GỌN (110-120PX)
@@ -1185,7 +1311,7 @@ def reset_chat_history():
 with st.sidebar:
     if LOGO_B64:
         st.markdown(f"""
-        <div style="display: flex; justify-content: center; align-items: center; width: 100%; padding-top: 8px; margin-bottom: 8px; margin-top: 2px;">
+        <div style="display: flex; justify-content: center; align-items: center; width: 100%; padding-top: 14px; margin-bottom: 8px; margin-top: 6px;">
             <img src="data:image/png;base64,{LOGO_B64}" style="width: 95px; height: 95px; object-fit: contain; filter: drop-shadow(0 3px 8px rgba(0,0,0,0.4));" alt="Logo VLUTE" />
         </div>
         <div style="text-align: center; color: #ffffff; font-weight: 800; font-size: 0.92rem; letter-spacing: 0.3px; margin-bottom: 4px; line-height: 1.35;">
@@ -1269,42 +1395,6 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-# ==========================================
-# KHỞI TẠO VÀ CACHE RAG CHAIN
-# ==========================================
-ANSWER_CACHE_TTL = 1800
-
-
-@st.cache_resource(show_spinner=False)
-def get_answer_cache() -> dict:
-    """Bộ nhớ đệm lưu câu trả lời đã đối soát thành công (khóa _strip_accents(rewritten_query), TTL 1800s)."""
-    return {}
-
-
-def ensure_kb_synced_and_fresh_cache() -> dict:
-    """Kiểm tra đồng bộ thư mục data/ và xóa cache câu trả lời ngay nếu phát hiện văn bản thêm/sửa/xóa."""
-    sync_res = auto_sync_knowledge_base()
-    if isinstance(sync_res, dict) and sync_res.get("changed"):
-        get_answer_cache().clear()
-    return sync_res
-
-
-@st.cache_resource(show_spinner=False)
-def load_chain():
-    """Nạp chuỗi RAG Lucas một lần duy nhất vào bộ nhớ cache toàn cục (Singleton)."""
-    return get_rag_chain()
-
-try:
-    if "qa_chain" not in st.session_state:
-        st.session_state.qa_chain = load_chain()
-    qa_chain = st.session_state.qa_chain
-    if not st.session_state.get("kb_synced", False):
-        ensure_kb_synced_and_fresh_cache()
-        st.session_state.kb_synced = True
-except Exception as e:
-    st.error(f"Lỗi khởi tạo hệ thống: {e}")
-    st.stop()
-
 VERIFY_BADGE_HTML = """<div style="display: inline-flex; align-items: center; background: #e8f5e9; color: #2e7d32; font-size: 13px; font-weight: 600; padding: 4px 12px; border-radius: 16px; margin-bottom: 8px;">
 ✅ Đã đối soát thành công - Được trích từ quy chế liên quan
 </div>"""
@@ -1357,24 +1447,19 @@ KHTC_CONTACT_HTML = f"""<div class="contact-footer-card">
 RATE_LIMIT_MESSAGE = "⚠️ Hệ thống tra cứu đang nhận lượng truy cập cao trong cùng thời điểm. Bạn vui lòng đợi khoảng 30–60 giây rồi thử hỏi lại nhé!"
 
 
-def execute_rag_pipeline(query: str, chat_history: list | None = None):
-    """Thực thi trực tiếp (live) pipeline RAG sử dụng chain đã cache."""
-    effective_query = rewrite_conversational_query(query, chat_history) if chat_history else query
-    chain = load_chain()
-    docs = chain.filter_documents(effective_query, k=6)
-    if not docs:
-        return REFUSAL_MESSAGE, [], 0
-
+def _build_rag_prompt_and_sources(effective_query: str, docs: list, chain):
+    """Chuẩn bị prompt ngữ cảnh giới hạn độ dài đoạn trích (<= 750 ký tự) và danh sách nguồn đối soát."""
     context_parts = []
     sources = []
     for doc in docs:
         src_file = os.path.basename(doc.metadata.get("source", "Tài liệu"))
         title = doc.metadata.get("title", src_file)
         page = doc.metadata.get("page", 1)
+        raw_content = doc.page_content.strip()
         article = extract_article_info(doc.page_content)
 
         header_line = f"--- [VĂN BẢN: {doc.metadata.get('title', src_file)} | Năm ban hành: {doc.metadata.get('year', 'Chưa rõ')} | Số hiệu: {doc.metadata.get('doc_code', '')} | Trang {page}] ---"
-        context_parts.append(f"{header_line}\n{doc.page_content}")
+        context_parts.append(f"{header_line}\n{clip_context_text(raw_content)}")
 
         sources.append({
             "file": src_file,
@@ -1388,11 +1473,23 @@ def execute_rag_pipeline(query: str, chat_history: list | None = None):
             "dept_email": doc.metadata.get("dept_email", "ctsv@vlute.edu.vn"),
             "page": page,
             "article": article,
-            "snippet": doc.page_content.strip()
+            "snippet": raw_content
         })
 
     context_str = "\n\n".join(context_parts)
     formatted_prompt = chain.prompt.format(context=context_str, input=effective_query)
+    return formatted_prompt, sources
+
+
+def execute_rag_pipeline(query: str, chat_history: list | None = None):
+    """Thực thi trực tiếp (live) pipeline RAG sử dụng chain đã cache."""
+    effective_query = rewrite_conversational_query(query, chat_history) if chat_history else query
+    chain = load_chain()
+    docs = chain.filter_documents(effective_query, k=6)
+    if not docs:
+        return REFUSAL_MESSAGE, [], 0
+
+    formatted_prompt, sources = _build_rag_prompt_and_sources(effective_query, docs, chain)
 
     try:
         response_obj = chain.llm.invoke(formatted_prompt)
@@ -1416,34 +1513,7 @@ def stream_rag_pipeline(query: str, chat_history: list | None = None):
     if not docs:
         return None, [], 0, []
 
-    context_parts = []
-    sources = []
-    for doc in docs:
-        src_file = os.path.basename(doc.metadata.get("source", "Tài liệu"))
-        title = doc.metadata.get("title", src_file)
-        page = doc.metadata.get("page", 1)
-        article = extract_article_info(doc.page_content)
-
-        header_line = f"--- [VĂN BẢN: {doc.metadata.get('title', src_file)} | Năm ban hành: {doc.metadata.get('year', 'Chưa rõ')} | Số hiệu: {doc.metadata.get('doc_code', '')} | Trang {page}] ---"
-        context_parts.append(f"{header_line}\n{doc.page_content}")
-
-        sources.append({
-            "file": src_file,
-            "title": title,
-            "short_title": title,
-            "dept": doc.metadata.get("dept_name", "VLUTE"),
-            "dept_key": doc.metadata.get("dept_key", "ctsv"),
-            "dept_name": doc.metadata.get("dept_name", "Phòng Công tác Sinh viên (VLUTE)"),
-            "dept_location": doc.metadata.get("dept_location", "Tòa nhà A (Phòng A1.102 - Tầng trệt)"),
-            "dept_phone": doc.metadata.get("dept_phone", "(0270) 3862 436"),
-            "dept_email": doc.metadata.get("dept_email", "ctsv@vlute.edu.vn"),
-            "page": page,
-            "article": article,
-            "snippet": doc.page_content.strip()
-        })
-
-    context_str = "\n\n".join(context_parts)
-    formatted_prompt = chain.prompt.format(context=context_str, input=effective_query)
+    formatted_prompt, sources = _build_rag_prompt_and_sources(effective_query, docs, chain)
 
     def generate_content_stream():
         yielded_any = False
@@ -1476,10 +1546,46 @@ def stream_rag_pipeline(query: str, chat_history: list | None = None):
 
 
 def normalize_query_intent(query: str) -> str:
-    """Làm sạch khoảng trắng thừa của câu hỏi, giữ nguyên nội dung câu hỏi để chạy trực tiếp qua RAG."""
+    """Làm sạch khoảng trắng, lọc từ gọi bot & mở rộng viết tắt quy chế ở câu hỏi ngắn."""
     if not query:
         return ""
-    return re.sub(r"\s+", " ", query.strip())
+    cleaned = re.sub(r"\s+", " ", query.strip())
+    words = cleaned.split()
+    if len(words) <= 5 and not is_greeting(cleaned):
+        q_lower = cleaned.lower()
+        has_vocative = any(
+            re.search(rf"\b{v}\b", q_lower)
+            for v in ("lucas", "alo", "ad", "chào", "ơi")
+        )
+        if has_vocative:
+            q_punct = "?" if cleaned.endswith("?") else ""
+            stripped = re.sub(
+                r"\b(?:xin\s+chào|chào|hello|hi|hey|lucas|alo|ad|ơi)\b",
+                " ",
+                cleaned,
+                flags=re.IGNORECASE,
+            )
+            stripped = re.sub(r"^[\s\,\.\:\!\?\-]+|[\s\,\.\:\!\?\-]+$", "", stripped)
+            stripped = re.sub(r"\s+", " ", stripped).strip()
+            if stripped:
+                acronym_map = {
+                    "ctxh": "Công tác xã hội (CTXH)",
+                    "kkht": "Học bổng khuyến khích học tập (KKHT)",
+                    "ctsv": "Công tác sinh viên (CTSV)",
+                    "attt": "An toàn thông tin (ATTT)",
+                    "khtc": "Kế hoạch tài chính (KHTC)",
+                }
+                for abbr, full_name in acronym_map.items():
+                    stripped = re.sub(
+                        rf"\b{abbr}\b",
+                        full_name,
+                        stripped,
+                        flags=re.IGNORECASE,
+                    )
+                if len(stripped.split()) <= 6 and not re.search(r"(?i)\b(quy\s+định|quy\s+chế|về)\b", stripped):
+                    stripped = f"Quy định về {stripped}"
+                return f"{stripped}{q_punct}"
+    return cleaned
 
 # ==========================================
 # 2. TINH GỌN LỜI CHÀO MỞ ĐẦU
@@ -1652,16 +1758,25 @@ def is_greeting(query: str) -> bool:
     """Nhận diện nhanh các câu chào hỏi xã giao bằng ranh giới từ (\\b) để tránh khớp nhầm."""
     clean = query.lower().strip()
     words = clean.split()
-    duty_keywords = ["học bổng", "học phí", "tín chỉ", "cảnh báo", "điểm", "rút môn", "thôi học", "miễn giảm", "bảo hiểm", "quy chế", "điều"]
+    duty_keywords = [
+        "học bổng", "học phí", "tín chỉ", "cảnh báo", "điểm", "rút môn",
+        "thôi học", "miễn giảm", "bảo hiểm", "quy chế", "điều",
+        "ctxh", "công tác xã hội", "kỷ luật", "thi hộ", "thi thay",
+        "học thay", "tốt nghiệp", "khóa luận", "rèn luyện", "hoàn trả",
+        "hồ sơ", "thủ tục", "mật khẩu", "email", "trang phục", "ứng xử",
+        "ban cán sự", "khiếu nại", "vượt khó",
+    ]
     if len(words) <= 4 and any(re.search(rf"\b{re.escape(k)}\b", clean) for k in GREETING_KEYWORDS):
         if not any(dk in clean for dk in duty_keywords):
             return True
     return False
 
 def is_refusal_answer(text: str) -> bool:
-    """Kiểm tra xem phản hồi của mô hình có phải là câu từ chối ngoài phạm vi dữ liệu hoặc thông báo quá tải hay không."""
+    """Kiểm tra xem phản hồi của mô hình có phải là câu từ chối ngoài phạm vi dữ liệu, quá tải hoặc bị gián đoạn giữa chừng hay không."""
     t = (text or "").lower().strip()
     if not t:
+        return True
+    if "phản hồi bị gián đoạn giữa chừng" in t:
         return True
     if "lượng truy cập cao" in t or "đợi khoảng 30–60 giây" in t:
         return True
@@ -2379,6 +2494,10 @@ if current_user_query:
                         answer_cache.pop(cache_key, None)
                         cached_entry = None
 
+                    if cached_entry and cached_entry.get("answer") and is_refusal_answer(cached_entry.get("answer")):
+                        answer_cache.pop(cache_key, None)
+                        cached_entry = None
+
                     if cached_entry and cached_entry.get("answer"):
                         cached_answer = cached_entry["answer"]
                         cached_contact = cached_entry.get("contact") or get_contact_footer(rewritten_query, retrieved_docs=None, is_refusal=False)
@@ -2433,7 +2552,7 @@ if current_user_query:
                                 if not chunk_str:
                                     continue
                                 streamed_chunks.append(chunk_str)
-                                if (not first_chunk_rendered) or (time.time() - last_update > 0.035):
+                                if (not first_chunk_rendered) or (time.time() - last_update > 0.065):
                                     current_text = "".join(streamed_chunks)
                                     status_placeholder.markdown(f"{badge_html}\n\n{current_text}", unsafe_allow_html=True)
                                     last_update = time.time()
@@ -2441,7 +2560,7 @@ if current_user_query:
 
                             full_answer = "".join(streamed_chunks).strip()
                             elapsed_time = round(time.time() - start_time, 2)
-                            is_interrupted = "Phản hồi bị gián đoạn giữa chừng do sự cố kết nối mô hình" in full_answer
+                            is_interrupted = "phản hồi bị gián đoạn giữa chừng" in full_answer.lower()
 
                             if is_interrupted:
                                 contact_footer = get_contact_footer(rewritten_query, retrieved_docs=retrieved_docs, is_refusal=True)
@@ -2530,31 +2649,78 @@ if current_user_query:
                         import traceback
                         traceback.print_exc()
                         status_placeholder.error(f"Lỗi: {e}")
-    st.markdown('<div id="chat-scroll-anchor"></div>', unsafe_allow_html=True)
-    components.html(
-        f"""<!-- scroll-turn-{new_msg_idx} -->
-        <script>
-        (function() {{
-            function scrollToBottom() {{
-                const doc = window.parent.document;
-                const containers = [
-                    doc.querySelector('section[data-testid="stMain"]'),
-                    doc.querySelector('[data-testid="stAppViewContainer"]'),
-                    doc.scrollingElement || doc.documentElement
-                ];
-                containers.forEach(function(el) {{
-                    if (el && el.scrollHeight > el.clientHeight) {{
-                        el.scrollTo({{ top: el.scrollHeight, behavior: 'smooth' }});
-                    }}
-                }});
-            }}
-            requestAnimationFrame(function() {{
-                setTimeout(scrollToBottom, 100);
-                setTimeout(scrollToBottom, 350);
-            }});
-        }})();
-        </script>""",
-        height=0,
-    )
-else:
-    st.markdown('<div id="chat-scroll-anchor"></div>', unsafe_allow_html=True)
+st.markdown('<div id="chat-scroll-anchor"></div>', unsafe_allow_html=True)
+components.html(
+    """<script>
+    (function() {
+        var parentWin = window.parent;
+        var doc = parentWin.document;
+        if (parentWin.__vluteScrollObserverAttached) {
+            return;
+        }
+
+        function attachScrollObserver() {
+            var mainEl = doc.querySelector('section[data-testid="stMain"]');
+            if (!mainEl) {
+                return false;
+            }
+            if (parentWin.__vluteScrollObserverAttached) {
+                return true;
+            }
+            parentWin.__vluteScrollObserverAttached = true;
+
+            var scrollScheduled = false;
+
+            function flushScroll() {
+                scrollScheduled = false;
+                if (doc.querySelectorAll('.chat-row-user').length === 0) {
+                    return;
+                }
+                if (mainEl.scrollHeight > mainEl.clientHeight) {
+                    mainEl.scrollTop = mainEl.scrollHeight;
+                }
+            }
+
+            var observer = new MutationObserver(function(mutations) {
+                if (doc.querySelectorAll('.chat-row-user').length === 0) {
+                    return;
+                }
+                var hasChatMutation = false;
+                for (var i = 0; i < mutations.length; i++) {
+                    var target = mutations[i].target;
+                    var el = target && target.nodeType === 1 ? target : (target ? target.parentElement : null);
+                    if (!el) continue;
+                    if (
+                        el.closest('[data-testid="stChatMessage"]') ||
+                        el.closest('[data-testid="stMainBlockContainer"]') ||
+                        el.id === 'chat-scroll-anchor'
+                    ) {
+                        hasChatMutation = true;
+                        break;
+                    }
+                }
+                if (hasChatMutation && !scrollScheduled) {
+                    scrollScheduled = true;
+                    parentWin.requestAnimationFrame(flushScroll);
+                }
+            });
+
+            observer.observe(mainEl, {
+                childList: true,
+                subtree: true,
+                characterData: true
+            });
+            return true;
+        }
+
+        if (!attachScrollObserver()) {
+            var retry = setInterval(function() {
+                if (attachScrollObserver()) {
+                    clearInterval(retry);
+                }
+            }, 80);
+        }
+    })();
+    </script>""",
+    height=0,
+)

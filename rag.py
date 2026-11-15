@@ -211,13 +211,185 @@ class SmartRAGChain:
             return True
         return bool(re.search(r"(?i)\b(phụ lục|biểu mẫu|bảng\s+\d|như sau\s*:)", text))
 
-    def filter_documents(self, query: str, k: int = 6):
+    @staticmethod
+    def _prepare_retrieval_query(q_clean: str) -> str:
+        """Chuẩn hóa câu truy vấn tìm kiếm tổng quát: loại bỏ từ gọi bot và mở rộng viết tắt quy chế nếu câu quá ngắn."""
+        s = re.sub(r"\s+", " ", (q_clean or "").strip())
+        if not s:
+            return ""
+        words = s.split()
+        if len(words) <= 5:
+            q_punct = "?" if s.endswith("?") else ""
+            stripped = re.sub(r"\b(?:lucas|alo|ad|ơi)\b", " ", s, flags=re.IGNORECASE)
+            stripped = re.sub(r"^[\s\,\.\:\!\?\-]+|[\s\,\.\:\!\?\-]+$", "", stripped)
+            stripped = re.sub(r"\s+", " ", stripped).strip()
+            if stripped:
+                s = stripped
+                acronym_expansions = (
+                    ("ctxh", "công tác xã hội", "công tác xã hội (CTXH)"),
+                    ("kkht", "khuyến khích học tập", "học bổng khuyến khích học tập (KKHT)"),
+                    ("ctsv", "công tác sinh viên", "công tác sinh viên (CTSV)"),
+                    ("attt", "an toàn thông tin", "an toàn thông tin (ATTT)"),
+                    ("khtc", "kế hoạch tài chính", "kế hoạch tài chính (KHTC)"),
+                )
+                s_low = s.lower()
+                for abbr, full_check, full_label in acronym_expansions:
+                    if full_check not in s_low and re.search(rf"\b{abbr}\b", s_low):
+                        s = re.sub(rf"\b{abbr}\b", full_label, s, flags=re.IGNORECASE)
+                        s_low = s.lower()
+                if len(s.split()) <= 5 and not re.search(r"(?i)\b(quy\s+định|quy\s+chế)\b", s):
+                    s = f"quy định về {s}"
+                if q_punct and not s.endswith("?"):
+                    s = f"{s}{q_punct}"
+        return s
+
+    @staticmethod
+    def _split_compound_clauses(query: str) -> list[str]:
         """
-        Truy xuất Hybrid Search tổng quát:
+        Chỉ tách vế khi câu hỏi thực sự hỏi 2 hành vi hoặc 2 quy định độc lập
+        (ví dụ nối bởi '; ', ' đồng thời ', câu hỏi phụ 'nếu/khi/còn...', hoặc 2 động từ hành vi
+        riêng biệt như 'không đi hoặc vắng họp', 'thi hộ và mang tài liệu'); KHÔNG tách
+        các cụm liệt kê điều kiện cùng một chế độ (như 'tín chỉ và điểm rèn luyện',
+        'điểm dưới C hoặc nợ học phí').
+        """
+        q = re.sub(r"\s+", " ", (query or "").strip())
+        if not q or len(q.split()) < 6:
+            return []
+
+        q_punct = "?" if q.endswith("?") else ""
+        q_body = q.rstrip("?.! ").strip()
+
+        fixed_phrases = (
+            "cán bộ, giảng viên và người học",
+            "an toàn thông tin và an ninh mạng",
+            "học bổng và khen thưởng",
+            "khóa luận và tốt nghiệp",
+            "khen thưởng và kỷ luật",
+            "đồ án và khóa luận",
+            "tiểu luận và đồ án",
+            "quyền lợi và nghĩa vụ",
+            "nhiệm vụ và quyền hạn",
+            "quyền và nghĩa vụ",
+            "đoàn phí và hội phí",
+            "chi đoàn và chi hội",
+            "học phí và lệ phí",
+            "miễn hoặc giảm",
+            "miễn và giảm",
+            "miễn, giảm",
+        )
+        protected = q_body
+        restore_map = {}
+        for idx, phrase in enumerate(fixed_phrases):
+            token = f"__FIXEDPHRASE{idx}__"
+            pattern = re.compile(re.escape(phrase), flags=re.IGNORECASE)
+            if pattern.search(protected):
+                def _store(match, tok=token):
+                    restore_map[tok] = match.group(0)
+                    return tok
+                protected = pattern.sub(_store, protected, count=1)
+
+        def _restore_and_clean(raw_list: list[str]) -> list[str]:
+            cleaned_parts = []
+            for raw_p in raw_list:
+                restored = raw_p
+                for tok, orig in restore_map.items():
+                    restored = restored.replace(tok, orig)
+                cleaned = re.sub(r"^[\s,\-:;]+|[\s,\-:;]+$", "", restored).strip()
+                if not cleaned:
+                    return []
+                cleaned_parts.append(cleaned)
+            return cleaned_parts
+
+        # Ưu tiên 1: Dấu phân tách câu hỏi ghép rõ ràng ('; ' hoặc ' đồng thời ')
+        strong_parts = re.split(
+            r"\s*(?:[;,]\s*\bđồng\s+thời\b|\bđồng\s+thời\b|;\s*)\s*",
+            protected,
+            flags=re.IGNORECASE,
+        )
+        is_strong_split = 2 <= len(strong_parts) <= 3
+        parts: list[str] = []
+
+        if is_strong_split:
+            cand_parts = _restore_and_clean(strong_parts)
+            if cand_parts and all(len(tokenize_vietnamese_for_bm25(p, include_bigrams=False)) >= 3 for p in cand_parts):
+                parts = cand_parts
+        else:
+            # Ưu tiên 2: Liên từ mềm ('hoặc' / 'hay' / 'và') chỉ tách khi thực sự là 2 hành vi hoặc 2 mệnh đề hỏi
+            soft_parts = re.split(r"\s*(?:\bhoặc\b|\bhay\b|\bvà\b)\s*", protected, flags=re.IGNORECASE)
+            if not (2 <= len(soft_parts) <= 3):
+                return []
+            cand_parts = _restore_and_clean(soft_parts)
+            if not cand_parts or any(len(re.findall(r"[^\W_]+", p)) < 2 for p in cand_parts):
+                return []
+
+            behavior_verb_re = re.compile(
+                r"(?i)\b(?:"
+                r"không\s+đi|đi\s+muộn|đi\s+trễ|vắng|nghỉ|bỏ\s+(?:thi|học|họp|sinh\s+hoạt)|"
+                r"thi\s+hộ|thi\s+thay|học\s+hộ|học\s+thay|nhờ\s+(?:thi|học|làm)|"
+                r"mang(?:\s+tài\s+liệu)?|đem(?:\s+tài\s+liệu)?|sử\s+dụng(?:\s+tài\s+liệu|\s+điện\s+thoại)?|"
+                r"gian\s+lận|làm\s+giả|giả\s+mạo|sao\s+chép|đánh\s+nhau|gây\s+rối|xúc\s+phạm|"
+                r"tổ\s+chức|đăng\s+tải|chia\s+sẻ|tiết\s+lộ|khai\s+man|chiếm\s+đoạt|hủy\s+hoại|"
+                r"xâm\s+phạm|vi\s+phạm|hiến\s+máu|tham\s+gia(?!\s+xét)|rút\s+môn|bảo\s+lưu|"
+                r"nộp\s+muộn|chậm\s+nộp|trốn|chống\s+đối|tuyên\s+truyền"
+                r")\b"
+            )
+            interrogative_re = re.compile(
+                r"(?i)\b(?:bao\s+nhiêu|mấy|thế\s+nào|như\s+thế\s+nào|ra\s+sao|mức\s+nào|gồm\s+những\s+gì|ở\s+đâu)\b"
+            )
+            cond_start_re = re.compile(r"^(?:nếu|khi|trường\s+hợp|còn)\b", flags=re.IGNORECASE)
+
+            all_have_behavior_verb = all(behavior_verb_re.search(p) for p in cand_parts)
+            dual_question_clauses = (
+                bool(interrogative_re.search(cand_parts[0]))
+                and any(bool(cond_start_re.match(p)) or bool(interrogative_re.search(p)) for p in cand_parts[1:])
+            )
+            if not (all_have_behavior_verb or dual_question_clauses):
+                return []
+            parts = cand_parts
+
+        if not parts:
+            return []
+
+        subj_match = re.match(
+            r"^(?:(?:khi|nếu|trường\s+hợp)\s+)?(?:sinh\s+viên|người\s+học)\b",
+            parts[0],
+            flags=re.IGNORECASE,
+        )
+        shared_subj = subj_match.group(0).strip() if subj_match else ""
+
+        tail_match = re.search(
+            r"\b((?:thì\s+)?(?:sẽ\s+|có\s+)?(?:bị|được|phải)\s+(?:trừ|cộng|xử\s+lý|xử\s+phạt|kỷ\s+luật|miễn|giảm|hoàn|tính|xét|nộp|hưởng|làm|chịu)\b.{0,50}|(?:quy\s+định|xử\s+lý|tính|xét)\s+(?:như\s+thế\s+nào|thế\s+nào|ra\s+sao)|bao\s+nhiêu\b.{0,30}|như\s+thế\s+nào|thế\s+nào|ra\s+sao|gồm\s+những\s+gì)$",
+            parts[-1],
+            flags=re.IGNORECASE,
+        )
+        shared_tail = ""
+        if tail_match and len(tail_match.group(0)) < len(parts[-1]) * 0.72:
+            shared_tail = tail_match.group(0).strip()
+
+        enriched = []
+        for i, part in enumerate(parts):
+            clause = part
+            if i > 0 and shared_subj and not re.match(r"^(?:khi|nếu|trường\s+hợp|sinh\s+viên|người\s+học)\b", clause, flags=re.IGNORECASE):
+                clause = f"{shared_subj} {clause}"
+            if i < len(parts) - 1 and shared_tail:
+                c_low = clause.lower()
+                if not any(m in c_low for m in ("bao nhiêu", "thế nào", "ra sao", "gồm những gì", "bị trừ", "bị xử lý", "kỷ luật")):
+                    clause = f"{clause} {shared_tail}"
+            clause = re.sub(r"\s+", " ", clause).strip()
+            if len(tokenize_vietnamese_for_bm25(clause, include_bigrams=False)) < 3:
+                return []
+            if q_punct and not clause.endswith("?"):
+                clause = f"{clause}{q_punct}"
+            enriched.append(clause)
+        return enriched
+
+    def _retrieve_single_query(self, q_str: str, k: int = 6):
+        """
+        Truy xuất Hybrid Search đơn cho một vế/câu hỏi:
         Dense Vector (ChromaDB) + Lexical BM25 (rank_bm25) + Reciprocal Rank Fusion (RRF)
         + Mở rộng tự động trang liền kề cho bảng biểu/phụ lục vắt trang + Dual Refusal Gate.
         """
-        q_clean = (query or "").strip()
+        q_clean = self._prepare_retrieval_query(q_str)
         q_lower = q_clean.lower()
         if not q_lower:
             self.last_retrieval_debug = {"reason": "empty_query", "accepted": False}
@@ -411,7 +583,7 @@ class SmartRAGChain:
         # Giúp không để neo đầu chiếm hết ngân sách và nối trọn vẹn Điều dài + Bảng vắt trang
         adjacent_extras = []
         max_neighbor_adds = 4
-        max_total = min(max(k, 4) + max_neighbor_adds, 8)
+        max_total = 7
         for anchor_pos, anchor_idx in enumerate(selected_indices[:4]):
             if len(adjacent_extras) >= max_neighbor_adds:
                 break
@@ -423,28 +595,38 @@ class SmartRAGChain:
                 page_num = 1
             same_page_indices = page_map.get((src_name, page_num), [])
             is_table_like = self._looks_like_table_or_split_page(anchor_doc.page_content, len(same_page_indices))
+            starts_with_heading = bool(re.match(r"^\s*(?:Điều\s+\d+|Chương\s+)", anchor_doc.page_content, flags=re.IGNORECASE))
 
             neighbor_candidates = []
+            # Khi đoạn neo không bắt đầu bằng tiêu đề Điều/Chương, luôn ưu tiên đưa đoạn liền trước (-1)
+            # cùng file nguồn lên đầu danh sách để nối trọn vẹn phần đầu các điều dài vắt qua trang
+            has_prev_same_src = False
+            if anchor_idx - 1 >= 0:
+                prv_src = os.path.basename(str(docs_corpus[anchor_idx - 1].metadata.get("source", ""))).lower()
+                if prv_src == src_name:
+                    has_prev_same_src = True
+                    if not starts_with_heading:
+                        neighbor_candidates.append(anchor_idx - 1)
+
             # Các đoạn cùng trang để giữ đủ Khoản a, b, c của cùng một Điều
             for sibling_idx in same_page_indices:
-                if sibling_idx != anchor_idx:
+                if sibling_idx != anchor_idx and sibling_idx not in neighbor_candidates:
                     neighbor_candidates.append(sibling_idx)
-            # Nối tiếp trang kế tiếp (+1), ưu tiên kèm đoạn liền trước (-1) nếu là đầu trang/bảng vắt trang, rồi mới tới (+2, +3)
+            # Nối tiếp trang kế tiếp (+1), bổ sung đoạn liền trước (-1) nếu là bảng/đầu trang khi đã có tiêu đề
             tail_base = same_page_indices[-1] if same_page_indices else anchor_idx
             if tail_base + 1 < len(docs_corpus):
                 nxt_src = os.path.basename(str(docs_corpus[tail_base + 1].metadata.get("source", ""))).lower()
-                if nxt_src == src_name:
+                if nxt_src == src_name and (tail_base + 1) not in neighbor_candidates:
                     neighbor_candidates.append(tail_base + 1)
-            if anchor_idx - 1 >= 0:
-                prv_src = os.path.basename(str(docs_corpus[anchor_idx - 1].metadata.get("source", ""))).lower()
-                if prv_src == src_name and (is_table_like or (same_page_indices and anchor_idx == same_page_indices[0])):
+            if has_prev_same_src and (anchor_idx - 1) not in neighbor_candidates:
+                if is_table_like or (same_page_indices and anchor_idx == same_page_indices[0]):
                     neighbor_candidates.append(anchor_idx - 1)
             extra_forward_steps = (2, 3) if anchor_pos == 0 else (2,)
             for step in extra_forward_steps:
                 cand_idx = tail_base + step
                 if cand_idx < len(docs_corpus):
                     nxt_src = os.path.basename(str(docs_corpus[cand_idx].metadata.get("source", ""))).lower()
-                    if nxt_src == src_name:
+                    if nxt_src == src_name and cand_idx not in neighbor_candidates:
                         neighbor_candidates.append(cand_idx)
 
             per_anchor_cap = 3 if anchor_pos == 0 else 2
@@ -473,6 +655,64 @@ class SmartRAGChain:
             return extra_dense_docs[:k]
         return result_docs
 
+    def filter_documents(self, query: str, k: int = 6):
+        """
+        Truy xuất Hybrid Search tổng quát (hỗ trợ cả câu đơn lẫn câu hỏi ghép nhiều vế):
+        Với câu hỏi ghép nhiều hành vi/quy định độc lập, truy xuất cho cả câu đầy đủ lẫn
+        từng vế con rồi trộn xen kẽ (round-robin, khử trùng lặp) tối đa 7 đoạn trích.
+        """
+        primary_docs = self._retrieve_single_query(query, k=k)
+        primary_debug = dict(self.last_retrieval_debug)
+
+        sub_clauses = self._split_compound_clauses(query)
+        if not sub_clauses:
+            self.last_retrieval_debug = primary_debug
+            return primary_docs
+
+        clause_doc_lists = []
+        for clause in sub_clauses:
+            c_docs = self._retrieve_single_query(clause, k=k)
+            if c_docs:
+                clause_doc_lists.append(c_docs)
+
+        all_lists = ([primary_docs] if primary_docs else []) + clause_doc_lists
+        if not all_lists:
+            self.last_retrieval_debug = primary_debug
+            return []
+
+        merged_docs = []
+        seen_keys = set()
+        max_merged = 7
+        max_len = max(len(lst) for lst in all_lists)
+
+        for pos in range(max_len):
+            for lst in all_lists:
+                if pos >= len(lst):
+                    continue
+                doc = lst[pos]
+                src_name = os.path.basename(str(doc.metadata.get("source", ""))).lower()
+                try:
+                    page_num = int(doc.metadata.get("page", 1))
+                except Exception:
+                    page_num = 1
+                dedup_key = (src_name, page_num, doc.page_content.strip())
+                if dedup_key in seen_keys:
+                    continue
+                seen_keys.add(dedup_key)
+                merged_docs.append(doc)
+                if len(merged_docs) >= max_merged:
+                    break
+            if len(merged_docs) >= max_merged:
+                break
+
+        self.last_retrieval_debug = {
+            **primary_debug,
+            "accepted": bool(merged_docs),
+            "compound_clauses": sub_clauses,
+            "merged_count": len(merged_docs),
+        }
+        return merged_docs
+
     def invoke(self, inputs):
         if isinstance(inputs, str):
             inputs = {"input": inputs}
@@ -495,7 +735,7 @@ class SmartRAGChain:
             src_file = os.path.basename(doc.metadata.get("source", "Tài liệu"))
             page = doc.metadata.get("page", 1)
             header_line = f"--- [VĂN BẢN: {doc.metadata.get('title', src_file)} | Năm ban hành: {doc.metadata.get('year', 'Chưa rõ')} | Số hiệu: {doc.metadata.get('doc_code', '')} | Trang {page}] ---"
-            context_parts.append(f"{header_line}\n{doc.page_content}")
+            context_parts.append(f"{header_line}\n{clip_context_text(doc.page_content)}")
 
         context_str = "\n\n".join(context_parts)
         formatted_prompt = self.prompt.format(context=context_str, input=query)
@@ -527,6 +767,17 @@ _LAST_DATA_DIR_SIGNATURE = None
 _DEAD_GROQ_MODELS = set()
 _GROQ_CLIENTS_CACHE = {}
 _CURRENT_KEY_INDEX = 0
+_CURRENT_GROQ_KEY_INDEX = 0
+
+MAX_CONTEXT_SNIPPET_CHARS = 750
+
+
+def clip_context_text(text: str, max_chars: int = MAX_CONTEXT_SNIPPET_CHARS) -> str:
+    """Giới hạn độ dài mỗi đoạn trích đưa vào prompt LLM để tiết kiệm token và tránh chạm trần TPM."""
+    clean = str(text or "").strip()
+    if len(clean) <= max_chars:
+        return clean
+    return clean[:max_chars].rstrip() + "..."
 
 # Tham số tổng quát cho Hybrid Search (Dense + BM25 + RRF + Dual Refusal Gate)
 HYBRID_RRF_K = 20
@@ -569,7 +820,7 @@ _BM25_STOPWORDS = frozenset({
     "bao", "nhiêu", "làm", "gồm", "vậy", "nhé", "nhỉ", "ạ", "ơi", "vì",
     "trên", "dưới", "sau", "trước", "giữa", "bằng", "nơi", "nhất", "hơn", "kém",
     "từng", "mỗi", "mọi", "tất", "cả", "còn", "hỏi", "xin", "cho_biết", "biết",
-    "thế_nào", "như_thế", "như_nào", "ra_sao", "có_thể", "hay_không",
+    "thế_nào", "như_thế", "như_nào", "ra_sao", "có_thể", "hay_không", "lucas", "ad",
 })
 
 
@@ -809,28 +1060,39 @@ def get_google_api_key():
     return keys[idx]
 
 
-def get_groq_api_key():
-    """Đọc GROQ_API_KEY từ st.secrets hoặc biến môi trường os.getenv('GROQ_API_KEY')."""
+def get_all_groq_api_keys() -> list[str]:
+    """Đọc danh sách Groq API key từ GROQ_API_KEYS / GROQ_API_KEY trong st.secrets hoặc biến môi trường."""
+    raw_keys = []
     try:
         if hasattr(st, "secrets"):
-            if "GROQ_API_KEY" in st.secrets:
-                keys = _parse_keys_value(st.secrets["GROQ_API_KEY"])
-                if keys:
-                    return keys[0]
-            if "GROQ_API_KEYS" in st.secrets:
-                keys = _parse_keys_value(st.secrets["GROQ_API_KEYS"])
-                if keys:
-                    return keys[0]
+            for sec_name in ("GROQ_API_KEYS", "GROQ_API_KEY"):
+                if sec_name in st.secrets:
+                    raw_keys.extend(_parse_keys_value(st.secrets[sec_name]))
     except Exception:
         pass
 
-    for env_name in ("GROQ_API_KEY", "GROQ_API_KEYS"):
+    for env_name in ("GROQ_API_KEYS", "GROQ_API_KEY"):
         env_val = os.getenv(env_name)
         if env_val:
-            keys = _parse_keys_value(env_val)
-            if keys:
-                return keys[0]
-    return None
+            raw_keys.extend(_parse_keys_value(env_val))
+
+    return _parse_keys_value(raw_keys)
+
+
+def get_groq_api_key():
+    """
+    Lấy Groq API key theo cơ chế Round-Robin khi cấu hình nhiều key (GROQ_API_KEYS);
+    tương thích 100% khi chỉ cấu hình 1 key GROQ_API_KEY.
+    """
+    global _CURRENT_GROQ_KEY_INDEX
+    keys = get_all_groq_api_keys()
+    if not keys:
+        return None
+    if len(keys) == 1:
+        return keys[0]
+    idx = _CURRENT_GROQ_KEY_INDEX % len(keys)
+    _CURRENT_GROQ_KEY_INDEX = (_CURRENT_GROQ_KEY_INDEX + 1) % len(keys)
+    return keys[idx]
 
 
 @st.cache_resource(show_spinner=False)
@@ -891,11 +1153,10 @@ class RotatingResilientLLM:
         self._cloud_clients = {}
         self._groq_models = [
             "openai/gpt-oss-120b",
+            "qwen/qwen3.8-27b",
             "openai/gpt-oss-20b",
             "llama-3.3-70b-versatile",
             "llama-3.1-8b-instant",
-            "qwen/qwen3.8-27b",
-            "gemma2-9b-it",
         ]
         self._dead_groq_models = _DEAD_GROQ_MODELS
 
@@ -918,10 +1179,11 @@ class RotatingResilientLLM:
             return None
         temp = self.temperature if temperature is None else temperature
         mtok = self.max_output_tokens if max_tokens is None else max_tokens
-        is_gpt_oss = "gpt-oss" in model_name and int(mtok) > 200
-        effective_mtok = max(int(mtok), 2500) if is_gpt_oss else int(mtok)
+        timeout_sec = 4.5 if int(mtok) <= 200 else 10.0
+        is_gpt_oss = "gpt-oss" in model_name
+        effective_mtok = max(int(mtok), 600 if int(mtok) <= 200 else 2500) if is_gpt_oss else int(mtok)
         extra_kwargs = {"reasoning_effort": "low"} if is_gpt_oss else {}
-        cache_key = (groq_api_key, model_name, float(temp), effective_mtok, is_gpt_oss)
+        cache_key = (groq_api_key, model_name, float(temp), effective_mtok, is_gpt_oss, timeout_sec)
         if cache_key not in _GROQ_CLIENTS_CACHE:
             _GROQ_CLIENTS_CACHE[cache_key] = ChatGroq(
                 api_key=groq_api_key,
@@ -929,10 +1191,26 @@ class RotatingResilientLLM:
                 temperature=temp,
                 max_tokens=effective_mtok,
                 max_retries=0,
-                request_timeout=7,
+                request_timeout=timeout_sec,
                 **extra_kwargs,
             )
         return _GROQ_CLIENTS_CACHE[cache_key]
+
+    def _promote_groq_model(self, groq_model: str):
+        if groq_model in self._groq_models and groq_model != self._groq_models[0]:
+            self._groq_models.remove(groq_model)
+            self._groq_models.insert(0, groq_model)
+
+    def _handle_groq_error(self, groq_model: str, err: Exception):
+        """Phân loại lỗi Groq và xoay vòng model tức thì (0ms, không ngủ)."""
+        err_msg = str(err).lower()
+        if any(tok in err_msg for tok in ("not_found", "does not exist", "404", "decommissioned", "model_not_found")):
+            _DEAD_GROQ_MODELS.add(groq_model)
+            return
+        if any(tok in err_msg for tok in ("429", "rate_limit", "rate limit", "too many requests")):
+            if groq_model in self._groq_models:
+                self._groq_models.remove(groq_model)
+                self._groq_models.append(groq_model)
 
     def invoke(self, prompt, *args, **kwargs):
         global _CURRENT_KEY_INDEX
@@ -961,21 +1239,12 @@ class RotatingResilientLLM:
                 groq_resp = groq_client.invoke(prompt, *args, **kwargs)
                 groq_content = getattr(groq_resp, "content", str(groq_resp))
                 if groq_content and str(groq_content).strip():
-                    if self.max_output_tokens > 200 and groq_model in self._groq_models and groq_model != self._groq_models[0]:
-                        self._groq_models.remove(groq_model)
-                        self._groq_models.insert(0, groq_model)
+                    if self.max_output_tokens > 200:
+                        self._promote_groq_model(groq_model)
                     return groq_resp
             except Exception as g_err:
                 groq_err = g_err
-                err_msg = str(g_err).lower()
-                if any(tok in err_msg for tok in ("not_found", "does not exist", "404", "decommissioned", "model_not_found")):
-                    _DEAD_GROQ_MODELS.add(groq_model)
-                    continue
-                if any(tok in err_msg for tok in ("429", "rate_limit", "rate limit", "too many requests")):
-                    if groq_model in self._groq_models:
-                        self._groq_models.remove(groq_model)
-                        self._groq_models.append(groq_model)
-                    time.sleep(0.5)
+                self._handle_groq_error(groq_model, g_err)
                 continue
 
         # TẦNG 2 (Dự phòng 1): Chuyển tiếp sang Local LM Studio (Qwen 4B)
@@ -1036,9 +1305,7 @@ class RotatingResilientLLM:
                         yielded_groq = True
                         yield chunk
                 if yielded_groq:
-                    if groq_model in self._groq_models and groq_model != self._groq_models[0]:
-                        self._groq_models.remove(groq_model)
-                        self._groq_models.insert(0, groq_model)
+                    self._promote_groq_model(groq_model)
                     return
                 continue
             except Exception as g_err:
@@ -1046,15 +1313,7 @@ class RotatingResilientLLM:
                 if yielded_groq:
                     yield f"\n\n{STREAM_INTERRUPTED_NOTICE}"
                     return
-                err_msg = str(g_err).lower()
-                if any(tok in err_msg for tok in ("not_found", "does not exist", "404", "decommissioned", "model_not_found")):
-                    _DEAD_GROQ_MODELS.add(groq_model)
-                    continue
-                if any(tok in err_msg for tok in ("429", "rate_limit", "rate limit", "too many requests")):
-                    if groq_model in self._groq_models:
-                        self._groq_models.remove(groq_model)
-                        self._groq_models.append(groq_model)
-                    time.sleep(0.5)
+                self._handle_groq_error(groq_model, g_err)
                 continue
 
         # TẦNG 2 (Dự phòng 1): Chuyển tiếp sang Local LM Studio (Qwen 4B)
@@ -1123,7 +1382,7 @@ def get_llm(temperature: float = 0.0, max_output_tokens: int = 2048, preferred_m
             temperature=temperature,
             max_tokens=max_output_tokens,
             max_retries=0,
-            request_timeout=7
+            request_timeout=4.5 if int(max_output_tokens) <= 200 else 10.0
         )
 
     local_llm = ChatOpenAI(
@@ -1152,7 +1411,7 @@ def get_rewriter_llm():
     global _GLOBAL_REWRITER_LLM
     if _GLOBAL_REWRITER_LLM is not None:
         return _GLOBAL_REWRITER_LLM
-    _GLOBAL_REWRITER_LLM = get_llm(temperature=0.0, max_output_tokens=100, preferred_model="llama-3.1-8b-instant")
+    _GLOBAL_REWRITER_LLM = get_llm(temperature=0.0, max_output_tokens=100, preferred_model="qwen/qwen3.8-27b")
     return _GLOBAL_REWRITER_LLM
 
 
@@ -1216,9 +1475,16 @@ def rewrite_conversational_query(query: str, chat_history: list | None = None) -
         "quy tắc ứng xử", "an toàn thông tin", "mật khẩu", "nghị quyết",
         "thi hộ", "thi thay", "học thay", "phòng thi", "khiển trách",
         "cảnh cáo", "đình chỉ", "buộc thôi học", "điểm rèn luyện",
-        "khóa luận", "tốt nghiệp"
+        "khóa luận", "tốt nghiệp", "danh hiệu", "xuất sắc", "sinh viên giỏi",
+        "khen thưởng", "quy định", "quy chế", "quy trình", "thông báo", "hướng dẫn"
     ]
-    has_standalone_subject = any(subj in q_lower for subj in standalone_subjects)
+    has_article_or_section_ref = bool(
+        re.search(r"\b(?:điều|khoản|mục|chương|phụ\s+lục|biểu\s+mẫu|mẫu)\s+[ivxlcdm\d]+", q_lower)
+    )
+    has_standalone_subject = (
+        any(subj in q_lower for subj in standalone_subjects)
+        or has_article_or_section_ref
+    )
 
     needs_rewrite = has_explicit_marker or (
         (has_contextual_marker or len(q_lower.split()) <= 15) and not has_standalone_subject
@@ -1286,6 +1552,7 @@ def get_rag_chain():
         "   - Khi sinh viên hỏi 'có nợ môn hoặc nợ học phí thì được xét học bổng không?': Căn cứ Điều 17 (yêu cầu tối thiểu 17 tín chỉ, không có học phần nào dưới điểm C) và Điều 1 (hoàn thành nghĩa vụ học phí) để trả lời rõ ràng: Sinh viên nợ môn (dưới điểm C) hoặc chưa hoàn thành học phí sẽ KHÔNG đủ điều kiện xét cấp học bổng khuyến khích học tập. Tuyệt đối không trả về thông báo từ chối ngoài phạm vi dữ liệu đối với câu hỏi này.\n"
         "   - Khi sinh viên hỏi về điều kiện xét học bổng khuyến khích học tập (tín chỉ, điểm TBC, hoặc điểm rèn luyện theo Điều 17): Luôn nêu đầy đủ cả 3 tiêu chuẩn cốt lõi tại Điều 17 gồm: (1) Đăng ký tối thiểu 17 tín chỉ, (2) Điểm TBC học kỳ đạt từ 2,5 trở lên theo thang 4,0 (riêng Học bổng KKHT Mức 1 / SPKT yêu cầu từ 3,2 trở lên) và không có học phần dưới điểm C, (3) Xếp loại rèn luyện đạt từ loại Khá trở lên (riêng Mức 1 / SPKT yêu cầu từ loại Tốt trở lên).\n"
         "   - Khi sinh viên hỏi về mức tiền hoặc cách tính Học bổng KKHT Mức 1 (Học bổng SPKT) tại Điều 18: Nêu rõ công thức 'Học bổng KKHT Mức 1 (Học bổng SPKT) = Đơn giá học phí × 17 TC', trong đó 'Đơn giá học phí = Đơn giá học phí theo khối ngành VII (hệ đại trà)'.\n"
+        "   - Cấm tự đặt ví dụ giả định cho mọi văn bản quy chế: Chỉ nêu đúng công thức, tỷ lệ và con số được quy định nguyên văn trong tài liệu; tuyệt đối KHÔNG tự đặt ví dụ tính thử bằng số tiền, điểm số hay định mức giả định (như tự lấy đơn giá tín chỉ giả định để nhân thử) khi sinh viên không đưa ra con số cụ thể để tính, giúp câu trả lời cô đọng và chuẩn xác cho mọi quy chế hiện tại lẫn về sau.\n"
         "   - Khi đọc Bảng quy đổi ngày CTXH (Điều 8 Quyết định 55, Trang 9–10) bị tách cột qua 2 trang liên tiếp: đối chiếu theo mã số tương ứng gồm Mùa hè xanh (001101 - tham gia các đội hình chuyên), Tiếp sức mùa thi (001301), Tiếp sức tân sinh viên (001501) đều quy đổi 1 ngày CTXH / ngày tham gia (tối thiểu 5 giờ làm việc hoặc 1 ca trực theo phân công); Trực tiếp hiến máu tình nguyện (001202) quy đổi 1 ngày CTXH (theo Giấy xác nhận hiến máu); Hỗ trợ tổ chức hoạt động hiến máu tình nguyện (001201) quy đổi 0,5 ngày CTXH (theo Bảng phân công nhiệm vụ hỗ trợ).\n"
         "   - Khi đọc Phụ lục Khung xử lý kỷ luật sinh viên (Quyết định 1079, Trang 25–34, 4 cột mức kỷ luật theo thứ tự: Khiển trách | Cảnh cáo | Đình chỉ có thời hạn | Buộc thôi học): mục 4 (Học thay hoặc nhờ người khác học thay) xử lý từ Khiển trách đến Buộc thôi học tùy mức độ; mục 5 (Thi, kiểm tra thay hoặc nhờ thi, kiểm tra thay; làm thay, nhờ làm hoặc sao chép tiểu luận, đồ án, khóa luận tốt nghiệp) xử lý Đình chỉ học tập có thời hạn (vi phạm lần 1) và Buộc thôi học (vi phạm lần 2); mục 6 (Tổ chức học, thi, kiểm tra thay) xử lý Buộc thôi học ngay từ lần 1 (nếu nghiêm trọng giao cơ quan chức năng xử lý theo pháp luật).\n"
         "3. Phong cách trả lời:\n"
