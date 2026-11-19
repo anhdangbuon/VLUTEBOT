@@ -10,6 +10,7 @@ import math
 import json
 import time
 import socket
+import threading
 import unicodedata
 from pathlib import Path
 try:
@@ -91,76 +92,6 @@ def ensure_doc_department_metadata(doc, departments: dict = None):
     doc.metadata.setdefault("dept_email", matched_info.get("email", "ctsv@vlute.edu.vn"))
     return doc
 
-
-# =======================================================
-# DANH MỤC LIÊN HỆ PHÒNG BAN & METADATA MỞ RỘNG LINH HOẠT
-# (Đảm bảo tương thích 100% với app.py đồng thời hỗ trợ Dynamic RAG)
-# =======================================================
-DOC_CATALOG = {
-    "xet_cap_hoc_bong.pdf": {
-        "title": "Quy định xét cấp học bổng, khen thưởng & trợ cấp học tập (QĐ 201/QĐ-ĐHSPKTVL)",
-        "short_title": "QĐ Xét cấp Học bổng & Khen thưởng",
-        "year": "2025",
-        "category": "hoc_bong",
-        "dept": "Phòng Công tác Sinh viên (A1.102)",
-        "hotline": "(0270) 3862 436 - ctsv@vlute.edu.vn",
-        "keywords": ["học bổng", "khen thưởng", "trợ cấp", "khuyến khích học tập", "xuất sắc", "giỏi", "khá", "điểm rèn luyện", "xét học bổng"]
-    },
-    "quy_dinh_mien_giam_hoc_phi.pdf": {
-        "title": "Quy định chế độ chính sách miễn giảm học phí SV (QĐ 904/QĐ-ĐHSPKTVL)",
-        "short_title": "QĐ Miễn giảm Học phí Sinh viên",
-        "year": "2025",
-        "category": "hoc_phi",
-        "dept": "Phòng Kế hoạch - Tài chính & Phòng CTSV",
-        "hotline": "(0270) 3822 141 - khtc@vlute.edu.vn",
-        "keywords": ["miễn giảm", "giảm học phí", "chế độ chính sách", "hộ nghèo", "dân tộc", "con thương binh", "khuyết tật", "hỗ trợ chi phí"]
-    },
-    "quy_trinh_hoan_tra_hoc_phi.pdf": {
-        "title": "Quy trình hoàn trả học phí thừa cho sinh viên (QT-SV-04)",
-        "short_title": "Quy trình Hoàn trả Học phí Thừa",
-        "year": "2024",
-        "category": "hoc_phi",
-        "dept": "Phòng Kế hoạch - Tài chính",
-        "hotline": "(0270) 3822 141 - khtc@vlute.edu.vn",
-        "keywords": ["hoàn trả", "học phí thừa", "rút tiền", "hoàn tiền", "kế toán", "tài chính", "nộp thừa"]
-    },
-    "quy_dinh_cong_tac_sinh_vien.pdf": {
-        "title": "Quy định công tác sinh viên hệ đại học chính quy (QĐ 1079/QĐ-ĐHSPKTVL)",
-        "short_title": "Quy chế Công tác Sinh viên",
-        "year": "2025",
-        "category": "cong_tac_sv",
-        "dept": "Phòng Công tác Sinh viên (A1.102)",
-        "hotline": "(0270) 3862 436 - ctsv@vlute.edu.vn",
-        "keywords": ["công tác sinh viên", "nhiệm vụ sinh viên", "quyền sinh viên", "kỷ luật", "khiển trách", "cảnh cáo", "buộc thôi học", "đánh giá rèn luyện", "ban cán sự"]
-    },
-    "tin_chi_cong_tac_xa_hoi.pdf": {
-        "title": "Quy định chuẩn tham gia hoạt động Công tác xã hội SV (QĐ 55/QĐ-ĐHSPKTVL)",
-        "short_title": "Quy định Tín chỉ Công tác xã hội",
-        "year": "2025",
-        "category": "ctxh",
-        "dept": "Đoàn Thanh niên & Phòng CTSV",
-        "hotline": "(0270) 3862 436 - ctsv@vlute.edu.vn",
-        "keywords": ["công tác xã hội", "ctxh", "tín chỉ công tác xã hội", "tình nguyện", "mùa hè xanh", "tiếp sức mùa thi", "hiến máu", "hoạt động xã hội"]
-    },
-    "quy_tac_ung_xu.pdf": {
-        "title": "Quy tắc ứng xử của cán bộ, giảng viên & người học",
-        "short_title": "Quy tắc Ứng xử Học đường",
-        "year": "2023",
-        "category": "ung_xu",
-        "dept": "Trường ĐH Công nghệ Kỹ thuật Vĩnh Long",
-        "hotline": "(0270) 3822 141",
-        "keywords": ["ứng xử", "giao tiếp", "trang phục", "thái độ", "văn hóa học đường", "tác phong"]
-    },
-    "quy_che_an_toan_thong_tin.pdf": {
-        "title": "Quy chế bảo đảm an toàn thông tin & an ninh mạng VLUTE (QĐ 979/QĐ-ĐHSPKTVL)",
-        "short_title": "Quy chế An toàn Thông tin",
-        "year": "2025",
-        "category": "an_toan_tt",
-        "dept": "Trung tâm Tin học & TT",
-        "hotline": "(0270) 3822 141",
-        "keywords": ["an toàn thông tin", "mật khẩu", "an ninh mạng", "phần mềm", "tài khoản", "dữ liệu"]
-    }
-}
 
 def extract_article_info(content: str):
     """Trích xuất tên Điều và Khoản từ đoạn văn bản."""
@@ -852,6 +783,7 @@ _GROQ_CLIENTS_CACHE = {}
 _TOML_SECRETS_CACHE: dict | None = None
 _CURRENT_KEY_INDEX = 0
 _CURRENT_GROQ_KEY_INDEX = 0
+_GROQ_STATE_LOCK = threading.Lock()
 
 MAX_CONTEXT_SNIPPET_CHARS = 560
 
@@ -1186,8 +1118,9 @@ def get_google_api_key():
     keys = get_all_google_api_keys()
     if not keys:
         return None
-    idx = _CURRENT_KEY_INDEX % len(keys)
-    _CURRENT_KEY_INDEX = (_CURRENT_KEY_INDEX + 1) % len(keys)
+    with _GROQ_STATE_LOCK:
+        idx = _CURRENT_KEY_INDEX % len(keys)
+        _CURRENT_KEY_INDEX = (_CURRENT_KEY_INDEX + 1) % len(keys)
     return keys[idx]
 
 
@@ -1207,8 +1140,9 @@ def get_groq_api_key():
         return None
     if len(keys) == 1:
         return keys[0]
-    idx = _CURRENT_GROQ_KEY_INDEX % len(keys)
-    _CURRENT_GROQ_KEY_INDEX = (_CURRENT_GROQ_KEY_INDEX + 1) % len(keys)
+    with _GROQ_STATE_LOCK:
+        idx = _CURRENT_GROQ_KEY_INDEX % len(keys)
+        _CURRENT_GROQ_KEY_INDEX = (_CURRENT_GROQ_KEY_INDEX + 1) % len(keys)
     return keys[idx]
 
 
@@ -1268,6 +1202,7 @@ class RotatingResilientLLM:
         self.temperature = temperature
         self.preferred_model = preferred_model
         self._cloud_clients = {}
+        self._models_lock = threading.Lock()
         self._groq_models = [
             "openai/gpt-oss-120b",
             "qwen/qwen3-32b",
@@ -1279,17 +1214,18 @@ class RotatingResilientLLM:
         self._cooldown_groq_models = _COOLDOWN_GROQ_MODELS
 
     def _get_cloud_client(self, api_key: str):
-        if api_key not in self._cloud_clients:
-            self._cloud_clients[api_key] = ChatGoogleGenerativeAI(
-                model="gemini-2.5-flash",
-                google_api_key=api_key,
-                max_retries=0,        # Tắt hoàn toàn cơ chế tự động thử lại của LangChain
-                request_timeout=4,    # Ngắt kết nối nhanh trong 4 giây nếu mạng bị nghẽn
-                temperature=self.temperature,
-                max_output_tokens=self.max_output_tokens,
-                streaming=True
-            )
-        return self._cloud_clients[api_key]
+        with self._models_lock:
+            if api_key not in self._cloud_clients:
+                self._cloud_clients[api_key] = ChatGoogleGenerativeAI(
+                    model="gemini-2.5-flash",
+                    google_api_key=api_key,
+                    max_retries=0,        # Tắt hoàn toàn cơ chế tự động thử lại của LangChain
+                    request_timeout=4,    # Ngắt kết nối nhanh trong 4 giây nếu mạng bị nghẽn
+                    temperature=self.temperature,
+                    max_output_tokens=self.max_output_tokens,
+                    streaming=True
+                )
+            return self._cloud_clients[api_key]
 
     def _get_groq_client(self, model_name: str = "openai/gpt-oss-120b", temperature: float | None = None, max_tokens: int | None = None):
         groq_api_key = get_groq_api_key()
@@ -1302,51 +1238,64 @@ class RotatingResilientLLM:
         effective_mtok = max(int(mtok), 600 if int(mtok) <= 200 else 2500) if is_gpt_oss else int(mtok)
         extra_kwargs = {"reasoning_effort": "low"} if is_gpt_oss else {}
         cache_key = (groq_api_key, model_name, float(temp), effective_mtok, is_gpt_oss, timeout_sec)
-        if cache_key not in _GROQ_CLIENTS_CACHE:
-            _GROQ_CLIENTS_CACHE[cache_key] = ChatGroq(
-                api_key=groq_api_key,
-                model_name=model_name,
-                temperature=temp,
-                max_tokens=effective_mtok,
-                max_retries=0,
-                request_timeout=timeout_sec,
-                **extra_kwargs,
-            )
-        return _GROQ_CLIENTS_CACHE[cache_key]
+        with _GROQ_STATE_LOCK:
+            client = _GROQ_CLIENTS_CACHE.get(cache_key)
+            if client is None:
+                client = ChatGroq(
+                    api_key=groq_api_key,
+                    model_name=model_name,
+                    temperature=temp,
+                    max_tokens=effective_mtok,
+                    max_retries=0,
+                    request_timeout=timeout_sec,
+                    **extra_kwargs,
+                )
+                _GROQ_CLIENTS_CACHE[cache_key] = client
+            return client
 
     def _promote_groq_model(self, groq_model: str):
-        if groq_model in self._groq_models and groq_model != self._groq_models[0]:
-            self._groq_models.remove(groq_model)
-            self._groq_models.insert(0, groq_model)
+        with self._models_lock:
+            if groq_model in self._groq_models and groq_model != self._groq_models[0]:
+                self._groq_models.remove(groq_model)
+                self._groq_models.insert(0, groq_model)
 
     def _handle_groq_error(self, groq_model: str, err: Exception):
         """Phân loại lỗi Groq, gắn cooldown 45s cho model chạm trần 429 và xoay vòng tức thì (0ms)."""
         err_msg = str(err).lower()
         if any(tok in err_msg for tok in ("not_found", "does not exist", "404", "decommissioned", "model_not_found")):
-            _DEAD_GROQ_MODELS.add(groq_model)
+            with _GROQ_STATE_LOCK:
+                _DEAD_GROQ_MODELS.add(groq_model)
             return
         if any(tok in err_msg for tok in ("429", "rate_limit", "rate limit", "too many requests")):
-            _COOLDOWN_GROQ_MODELS[groq_model] = time.time() + 45.0
-            if groq_model in self._groq_models:
-                self._groq_models.remove(groq_model)
-                self._groq_models.append(groq_model)
+            with _GROQ_STATE_LOCK:
+                _COOLDOWN_GROQ_MODELS[groq_model] = time.time() + 45.0
+            with self._models_lock:
+                if groq_model in self._groq_models:
+                    self._groq_models.remove(groq_model)
+                    self._groq_models.append(groq_model)
 
     def _get_candidate_groq_models(self, prioritize_fast: bool = False) -> list[str]:
         """Lọc bỏ các model đã chết (404) hoặc đang trong thời gian cooldown 45s do 429 TPM."""
         now = time.time()
-        for m_expired in [m for m, until in _COOLDOWN_GROQ_MODELS.items() if until <= now]:
-            _COOLDOWN_GROQ_MODELS.pop(m_expired, None)
+        with _GROQ_STATE_LOCK:
+            for m_expired in [m for m, until in _COOLDOWN_GROQ_MODELS.items() if until <= now]:
+                _COOLDOWN_GROQ_MODELS.pop(m_expired, None)
+            dead_snapshot = set(_DEAD_GROQ_MODELS)
+            cooldown_snapshot = dict(_COOLDOWN_GROQ_MODELS)
+
+        with self._models_lock:
+            models_snapshot = list(self._groq_models)
 
         candidates = [
-            m for m in self._groq_models
-            if m not in _DEAD_GROQ_MODELS and _COOLDOWN_GROQ_MODELS.get(m, 0.0) <= now
+            m for m in models_snapshot
+            if m not in dead_snapshot and cooldown_snapshot.get(m, 0.0) <= now
         ]
         if prioritize_fast:
             for fast_model in ("openai/gpt-oss-20b", "openai/gpt-oss-120b", "llama-3.1-8b-instant"):
                 if fast_model in candidates:
                     candidates.remove(fast_model)
                     candidates.insert(0, fast_model)
-            if self.preferred_model and self.preferred_model not in _DEAD_GROQ_MODELS and _COOLDOWN_GROQ_MODELS.get(self.preferred_model, 0.0) <= now:
+            if self.preferred_model and self.preferred_model not in dead_snapshot and cooldown_snapshot.get(self.preferred_model, 0.0) <= now:
                 if self.preferred_model in candidates:
                     candidates.remove(self.preferred_model)
                 candidates.insert(0, self.preferred_model)
@@ -1408,8 +1357,9 @@ class RotatingResilientLLM:
         if valid_gemini_keys:
             print("[FAILOVER] Local LM Studio không khả dụng -> Chuyển sang dự phòng Gemini...")
             num_keys = len(valid_gemini_keys)
-            start_idx = _CURRENT_KEY_INDEX % num_keys
-            _CURRENT_KEY_INDEX = (start_idx + 1) % num_keys
+            with _GROQ_STATE_LOCK:
+                start_idx = _CURRENT_KEY_INDEX % num_keys
+                _CURRENT_KEY_INDEX = (start_idx + 1) % num_keys
 
             for offset in range(num_keys):
                 current_idx = (start_idx + offset) % num_keys
@@ -1420,7 +1370,8 @@ class RotatingResilientLLM:
                     content = getattr(response, "content", str(response))
                     if content and str(content).strip():
                         if offset > 0:
-                            _CURRENT_KEY_INDEX = (current_idx + 1) % num_keys
+                            with _GROQ_STATE_LOCK:
+                                _CURRENT_KEY_INDEX = (current_idx + 1) % num_keys
                         return response
                 except Exception as cloud_err:
                     gemini_err = cloud_err
@@ -1492,8 +1443,9 @@ class RotatingResilientLLM:
         if valid_gemini_keys:
             print("[FAILOVER] Local LM Studio không khả dụng -> Chuyển sang dự phòng Gemini...")
             num_keys = len(valid_gemini_keys)
-            start_idx = _CURRENT_KEY_INDEX % num_keys
-            _CURRENT_KEY_INDEX = (start_idx + 1) % num_keys
+            with _GROQ_STATE_LOCK:
+                start_idx = _CURRENT_KEY_INDEX % num_keys
+                _CURRENT_KEY_INDEX = (start_idx + 1) % num_keys
 
             for offset in range(num_keys):
                 current_idx = (start_idx + offset) % num_keys
@@ -1506,7 +1458,8 @@ class RotatingResilientLLM:
                         if chunk_text:
                             yielded_from_this_key = True
                             if offset > 0:
-                                _CURRENT_KEY_INDEX = (current_idx + 1) % num_keys
+                                with _GROQ_STATE_LOCK:
+                                    _CURRENT_KEY_INDEX = (current_idx + 1) % num_keys
                             yield chunk
                     if yielded_from_this_key:
                         return

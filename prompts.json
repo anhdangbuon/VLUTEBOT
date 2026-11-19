@@ -14,7 +14,7 @@
     },
     {
       "label": "◈ Số ngày CTXH xét làm khóa luận, TN?",
-      "query": "Sinh viên cần hoàn thành tối thiểu bao nhiêu ngày CTXH để đăng ký học phần tốt nghiệp và xét tốt nghiệp?"
+      "query": "Sinh viên cần đạt tối thiểu bao nhiêu ngày CTXH mới được đăng ký học phần tốt nghiệp và xét công nhận tốt nghiệp?"
     }
   ],
   "categories": {

@@ -11,7 +11,6 @@ import streamlit as st
 import streamlit.components.v1 as components
 from rag import (
     get_rag_chain,
-    DOC_CATALOG,
     extract_article_info,
     clip_context_text,
     REFUSAL_MESSAGE,
@@ -1973,6 +1972,8 @@ def get_contact_footer(query: str, retrieved_docs=None, is_refusal: bool = False
     - Chỉ định tuyến độc lập về Phòng Kế hoạch - Tài chính (KHTC) khi hỏi về hoàn trả học phí thừa,
       rút tiền học phí, nộp học phí, hóa đơn, biên lai.
     """
+    if is_refusal:
+        return ""
     departments = load_departments_config()
     q_raw = str(query or "").lower()
     q_slug = _strip_accents(q_raw)
@@ -2566,7 +2567,7 @@ for idx, message in enumerate(st.session_state.messages):
                     unsafe_allow_html=True
                 )
             else:
-                contact_html = message.get("contact") or get_contact_footer(q_text or "", retrieved_docs=None, is_refusal=True)
+                contact_html = ""
                 st.markdown(
                     build_assistant_bubble_html(msg_content or REFUSAL_MESSAGE, contact_html=contact_html, is_refusal=True) + old_marker_suffix,
                     unsafe_allow_html=True
@@ -2738,7 +2739,7 @@ if current_user_query:
 
                         if not num_docs or not stream_gen:
                             no_doc_msg = REFUSAL_MESSAGE
-                            contact_footer = get_contact_footer(rewritten_query, retrieved_docs=None, is_refusal=True)
+                            contact_footer = ""
                             pre_followups = _preselect_followups(rewritten_query, sources=[], assistant_reply=no_doc_msg)
                             status_placeholder.markdown(
                                 build_assistant_bubble_html(no_doc_msg, contact_html=contact_footer, is_refusal=True),
@@ -2777,7 +2778,7 @@ if current_user_query:
                             is_interrupted = "phản hồi bị gián đoạn giữa chừng" in full_answer.lower()
 
                             if is_interrupted:
-                                contact_footer = get_contact_footer(rewritten_query, retrieved_docs=retrieved_docs, is_refusal=True)
+                                contact_footer = ""
                                 pre_followups = _preselect_followups(rewritten_query, sources=sources_to_save, assistant_reply=full_answer)
                                 status_placeholder.markdown(
                                     build_assistant_bubble_html(full_answer, contact_html=contact_footer, is_refusal=True),
@@ -2796,7 +2797,7 @@ if current_user_query:
                                 render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=sources_to_save, assistant_reply=full_answer, preselected_prompts=pre_followups)
                             elif is_refusal_answer(full_answer) or not full_answer:
                                 full_answer = full_answer or REFUSAL_MESSAGE
-                                contact_footer = get_contact_footer(rewritten_query, retrieved_docs=None, is_refusal=True)
+                                contact_footer = ""
                                 pre_followups = _preselect_followups(rewritten_query, sources=[], assistant_reply=full_answer)
                                 status_placeholder.markdown(
                                     build_assistant_bubble_html(full_answer, contact_html=contact_footer, is_refusal=True),
@@ -2846,7 +2847,7 @@ if current_user_query:
                     status_placeholder.empty()
                     err_str = str(e)
                     if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str.upper():
-                        contact_footer = get_contact_footer(rewritten_query, retrieved_docs=None, is_refusal=True)
+                        contact_footer = ""
                         pre_followups = _preselect_followups(rewritten_query, sources=[], assistant_reply=RATE_LIMIT_MESSAGE)
                         status_placeholder.markdown(
                             build_assistant_bubble_html(RATE_LIMIT_MESSAGE, contact_html=contact_footer, is_refusal=True),
