@@ -121,17 +121,6 @@ function SidebarContent({
       ? sidebarLinks
       : DEFAULT_SIDEBAR_LINK_GROUPS;
 
-  const isUltraNarrow = width < 320;
-  const isNarrowDept = width < 380;
-  const isAddressWrapped = width < 390;
-  const canSingleLineDeptTitle = width >= 410;
-  const isWideDepts = width >= 460;
-  const isWideLinks = width >= 480;
-
-  const resetLabel = isUltraNarrow
-    ? "Làm mới hội thoại"
-    : "Làm mới cuộc trò chuyện";
-
   return (
     <div
       className={`flex flex-col h-full w-full bg-[#1d262a] text-[#b8c7ce] border-r border-[#1a2226] shadow-[4px_0_24px_rgba(0,0,0,0.3)] select-none ${
@@ -139,12 +128,8 @@ function SidebarContent({
       }`}
     >
       {/* Header badge & collapse button */}
-      <div className={`${isUltraNarrow ? "px-2.5" : "px-3.5"} pt-3 pb-1 shrink-0`}>
-        <div
-          className={`flex items-center justify-between gap-2 bg-[#141a1d] border border-[#2b3b42] rounded-[8px] min-h-[46px] ${
-            isUltraNarrow ? "px-3" : "px-4"
-          } py-2`}
-        >
+      <div className="w-full px-3.5 pt-3 pb-1 shrink-0">
+        <div className="w-full flex items-center justify-between gap-2 bg-[#141a1d] border border-[#2b3b42] rounded-[8px] min-h-[46px] px-4 py-2">
           <div className="text-[#b8c7ce] text-[0.73rem] font-bold tracking-[0.3px] uppercase whitespace-nowrap truncate">
             BẢNG ĐIỀU KHIỂN HỌC VỤ
           </div>
@@ -161,11 +146,7 @@ function SidebarContent({
       </div>
 
       {/* Scrollable sidebar interior */}
-      <div
-        className={`flex-1 overflow-y-auto sidebar-scroll ${
-          isUltraNarrow ? "px-2.5" : "px-3.5"
-        } pb-5`}
-      >
+      <div className="w-full flex-1 overflow-y-auto sidebar-scroll px-3.5 pb-5">
         <div className="flex justify-center items-center w-full pt-3.5 pb-2">
           <img
             src={logoUrl}
@@ -189,14 +170,10 @@ function SidebarContent({
 
         <div
           data-testid="sidebar-address-box"
-          className={`flex items-center justify-center gap-1.5 text-center text-[#e2e8f0] text-[0.71rem] px-2.5 py-1.5 bg-black/40 border border-white/10 rounded-[8px] ${
-            isAddressWrapped ? "leading-relaxed" : "leading-[1.4] whitespace-nowrap"
-          }`}
+          className="w-full flex items-center justify-center gap-1.5 text-center text-[#e2e8f0] text-[0.71rem] px-2.5 py-1.5 bg-black/40 border border-white/10 rounded-[8px] leading-[1.45]"
         >
           <MapPin className="w-3.5 h-3.5 text-[#00a65a] shrink-0" strokeWidth={2} />
-          <span className={isAddressWrapped ? "text-center leading-relaxed" : ""}>
-            {address}
-          </span>
+          <span>{address}</span>
         </div>
 
         <motion.button
@@ -205,20 +182,16 @@ function SidebarContent({
           onClick={onResetChat}
           whileHover={{ y: -2, transition: { duration: 0.16, ease: FM_EASE_OUT } }}
           whileTap={{ scale: 0.97, transition: { duration: 0.12 } }}
-          className={`w-full mt-2.5 flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-[#00a65a] hover:bg-[#008d4c] text-white font-bold whitespace-nowrap shadow-sm hover:shadow-[0_6px_16px_rgba(0,166,90,0.28)] transition-colors duration-200 cursor-pointer ${
-            isUltraNarrow ? "text-[0.82rem]" : "text-[0.88rem]"
-          }`}
+          className="w-full mt-2.5 flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-[#00a65a] hover:bg-[#008d4c] text-white font-bold text-[0.86rem] whitespace-nowrap shadow-sm hover:shadow-[0_6px_16px_rgba(0,166,90,0.28)] transition-colors duration-200 cursor-pointer"
         >
           <RotateCcw className="w-[15px] h-[15px] text-white shrink-0" strokeWidth={2.2} />
-          <span>{resetLabel}</span>
+          <span>Làm mới cuộc trò chuyện</span>
         </motion.button>
 
         {/* Link cards: HỆ THỐNG HỌC TẬP + ĐƠN VỊ HỖ TRỢ */}
         <div
           data-testid="sidebar-links-card"
-          className={`bg-[#1e282c] border border-[#374850] rounded-[8px] ${
-            isUltraNarrow ? "p-2.5" : "p-3"
-          } mt-2.5`}
+          className="w-full bg-[#1e282c] border border-[#374850] rounded-[8px] p-3 mt-2.5"
         >
           {resolvedLinkGroups.map((group, gIdx) => {
             const GroupIcon = ICON_MAP[group.icon] || Link2;
@@ -234,17 +207,10 @@ function SidebarContent({
                 </div>
                 <div
                   data-testid="sidebar-link-grid"
-                  className={`grid grid-cols-2 ${
-                    isWideLinks ? "gap-2.5" : isUltraNarrow ? "gap-1" : "gap-1.5"
-                  }`}
+                  className="w-full grid grid-cols-2 gap-1.5"
                 >
                   {(group.items || []).map((item) => {
                     const ItemIcon = ICON_MAP[item.icon] || Globe;
-                    const btnLayoutCls = isWideLinks
-                      ? "justify-center gap-2 py-2 px-3 text-[0.8rem]"
-                      : isUltraNarrow
-                        ? "gap-1 px-1.5 py-1.5 text-[0.64rem]"
-                        : "gap-1.5 px-2 py-1.5 text-[0.74rem]";
                     return (
                       <a
                         key={item.label}
@@ -253,12 +219,10 @@ function SidebarContent({
                         target="_blank"
                         rel="noopener noreferrer"
                         title={item.title}
-                        className={`group flex items-center ${btnLayoutCls} rounded-[6px] bg-[#141b1e] border border-[#2b3b42] text-[#f1f5f9] font-medium hover:bg-[#00a65a] hover:border-[#00a65a] hover:text-white hover:-translate-y-0.5 hover:shadow-[0_4px_12px_rgba(0,166,90,0.24)] active:translate-y-0 active:scale-[0.97] transition-all duration-150 overflow-hidden whitespace-nowrap`}
+                        className="group w-full flex items-center gap-1 px-1.5 py-1.5 rounded-[6px] bg-[#141b1e] border border-[#2b3b42] text-[#f1f5f9] text-[0.69rem] font-medium hover:bg-[#00a65a] hover:border-[#00a65a] hover:text-white hover:-translate-y-0.5 hover:shadow-[0_4px_12px_rgba(0,166,90,0.24)] active:translate-y-0 active:scale-[0.97] transition-all duration-150 overflow-hidden whitespace-nowrap"
                       >
                         <ItemIcon
-                          className={`${
-                            isWideLinks ? "w-4 h-4" : "w-3.5 h-3.5"
-                          } text-[#00a65a] group-hover:text-white group-hover:translate-x-0.5 transition-all duration-150 shrink-0`}
+                          className="w-3.5 h-3.5 text-[#00a65a] group-hover:text-white group-hover:translate-x-0.5 transition-all duration-150 shrink-0"
                           strokeWidth={2}
                         />
                         <span className="truncate">{item.label}</span>
@@ -274,129 +238,55 @@ function SidebarContent({
         {/* Dynamic department contacts */}
         <div
           data-testid="sidebar-contact-card"
-          className={`bg-[#1e282c] border border-[#374850] hover:border-[#00a65a] rounded-[8px] ${
-            isUltraNarrow ? "p-2.5" : "p-3"
-          } mt-2.5 transition-colors duration-200`}
+          className="w-full bg-[#1e282c] border border-[#374850] hover:border-[#00a65a] rounded-[8px] p-3 mt-2.5 transition-colors duration-200"
         >
           <div className="font-bold text-white mb-2 text-[0.84rem] flex items-center gap-1.5">
             <Phone className="w-3.5 h-3.5 text-[#00a65a] shrink-0" strokeWidth={2} />
             <span>ĐẦU MỐI LIÊN HỆ PHÒNG BAN:</span>
           </div>
-          <div className={isWideDepts ? "space-y-2" : "space-y-2.5"}>
-            {(departments || []).map((dept) => {
-              if (isWideDepts) {
-                return (
-                  <div
-                    key={dept.key}
-                    data-testid="sidebar-dept-item"
-                    className="bg-[#141b1e]/80 border border-white/5 hover:border-[#00a65a]/40 rounded-md px-3 py-2 flex items-center justify-between gap-3 transition-colors"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div
-                        data-testid="sidebar-dept-title"
-                        className="font-bold text-white text-[0.76rem] leading-snug"
-                      >
-                        • {dept.short_name}
-                      </div>
-                      {dept.location && (
-                        <div className="text-[0.69rem] text-[#94a3b8] leading-snug mt-0.5 pl-2.5">
-                          {dept.location}
-                        </div>
-                      )}
-                    </div>
-                    <div
-                      data-testid="sidebar-dept-contact-row"
-                      className="flex flex-col items-end gap-1 shrink-0 text-right"
-                    >
-                      <div className="inline-flex items-center gap-1.5">
-                        <Phone className="w-3 h-3 text-[#00a65a] shrink-0" strokeWidth={2} />
-                        <code className="bg-[#1d262a] text-[#e2e8f0] border border-[#2b3b42] px-1.5 py-0.5 rounded-[4px] text-[0.71rem] whitespace-nowrap">
-                          {dept.phone}
-                        </code>
-                      </div>
-                      <div className="inline-flex items-center gap-1.5">
-                        <Mail className="w-3 h-3 text-[#94a3b8] shrink-0" strokeWidth={2} />
-                        <span className="italic text-[#cbd5e1] text-[0.71rem] whitespace-nowrap">
-                          {dept.email}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              }
-
-              if (isNarrowDept) {
-                return (
-                  <div
-                    key={dept.key}
-                    data-testid="sidebar-dept-item"
-                    className="text-[0.78rem] leading-[1.45] bg-[#141b1e]/50 border border-white/5 rounded-md px-2.5 py-2"
-                  >
-                    <div
-                      data-testid="sidebar-dept-title"
-                      className="font-bold text-white text-[0.73rem] leading-snug"
-                    >
-                      • {dept.short_name}
-                      {dept.location ? ` (${dept.location})` : ""}:
-                    </div>
-                    <div
-                      data-testid="sidebar-dept-contact-row"
-                      className="flex flex-col gap-1 mt-1"
-                    >
-                      <div className="flex items-center gap-1.5">
-                        <Phone className="w-3 h-3 text-[#94a3b8] shrink-0" strokeWidth={2} />
-                        <code className="bg-[#141b1e] text-[#e2e8f0] border border-[#2b3b42] px-1.5 py-0.5 rounded-[4px] text-[0.71rem] whitespace-nowrap">
-                          {dept.phone}
-                        </code>
-                      </div>
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <Mail className="w-3 h-3 text-[#94a3b8] shrink-0" strokeWidth={2} />
-                        <span className="italic text-[#cbd5e1] text-[0.71rem] break-all">
-                          {dept.email}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              }
-
-              return (
+          <div className="space-y-2">
+            {(departments || []).map((dept) => (
+              <div
+                key={dept.key}
+                data-testid="sidebar-dept-item"
+                className="w-full text-[0.8rem] leading-[1.45]"
+              >
                 <div
-                  key={dept.key}
-                  data-testid="sidebar-dept-item"
-                  className="text-[0.8rem] leading-[1.45]"
+                  data-testid="sidebar-dept-title"
+                  className="font-bold text-white text-[0.69rem] tracking-[-0.01em] leading-snug"
                 >
-                  <div
-                    data-testid="sidebar-dept-title"
-                    className={`font-bold text-white text-[0.69rem] tracking-[-0.01em] ${
-                      canSingleLineDeptTitle ? "whitespace-nowrap" : "leading-snug"
-                    }`}
-                  >
-                    • {dept.short_name}
-                    {dept.location ? ` (${dept.location})` : ""}:
-                  </div>
-                  <div
-                    data-testid="sidebar-dept-contact-row"
-                    className="flex items-center gap-1.5 whitespace-nowrap mt-0.5 overflow-hidden"
-                  >
+                  • {dept.short_name}
+                  {dept.location ? ` (${dept.location})` : ""}:
+                </div>
+                <div
+                  data-testid="sidebar-dept-contact-row"
+                  className="flex flex-wrap items-center gap-x-1.5 gap-y-1 mt-0.5"
+                >
+                  <span className="inline-flex items-center gap-1.5 shrink-0">
                     <Phone className="w-3 h-3 text-[#94a3b8] shrink-0" strokeWidth={2} />
-                    <code className="bg-[#141b1e] text-[#e2e8f0] border border-[#2b3b42] px-1.5 py-0.5 rounded-[4px] text-[0.72rem] shrink-0">
+                    <code className="bg-[#141b1e] text-[#e2e8f0] border border-[#2b3b42] px-1.5 py-0.5 rounded-[4px] text-[0.72rem] whitespace-nowrap">
                       {dept.phone}
                     </code>
-                    <span className="text-[#475569] shrink-0">|</span>
+                  </span>
+                  {width >= 360 && (
+                    <span className="text-[#475569] shrink-0" aria-hidden="true">
+                      |
+                    </span>
+                  )}
+                  <span className="inline-flex items-center gap-1.5 min-w-0">
                     <Mail className="w-3 h-3 text-[#94a3b8] shrink-0" strokeWidth={2} />
-                    <span className="italic text-[#cbd5e1] text-[0.72rem] truncate">
+                    <span className="italic text-[#cbd5e1] text-[0.72rem] break-all">
                       {dept.email}
                     </span>
-                  </div>
+                  </span>
                 </div>
-              );
-            })}
+              </div>
+            ))}
           </div>
         </div>
 
         {/* Copyright */}
-        <div className="mt-2.5 p-3 bg-black/20 border border-white/5 rounded-[8px] text-[0.72rem] text-[#94a3b8] text-center leading-[1.45]">
+        <div className="w-full mt-2.5 p-3 bg-black/20 border border-white/5 rounded-[8px] text-[0.72rem] text-[#94a3b8] text-center leading-[1.45]">
           <div className="text-[#e2e8f0] font-bold">{copyrightTitle}</div>
           <div className="text-[0.68rem] text-[#cbd5e1] mt-0.5">{copyrightSub}</div>
         </div>
@@ -440,7 +330,7 @@ export default function Sidebar({
               animate={{ x: 0 }}
               exit={{ x: "-100%" }}
               transition={FM_SPRING}
-              className="fixed inset-y-0 left-0 z-50 w-[85vw] max-w-[340px] h-full"
+              className="fixed inset-y-0 left-0 z-50 w-[85vw] max-w-[340px] h-full overflow-hidden"
             >
               <SidebarContent
                 width={332}
@@ -460,7 +350,7 @@ export default function Sidebar({
     );
   }
 
-  const clampedWidth = Math.min(600, Math.max(280, Math.round(width)));
+  const clampedWidth = Math.min(560, Math.max(300, Math.round(width)));
 
   return (
     <AnimatePresence initial={false}>
@@ -473,7 +363,7 @@ export default function Sidebar({
           animate={{ x: 0 }}
           exit={{ x: -clampedWidth }}
           transition={{ duration: 0.34, ease: FM_EASE_OUT }}
-          className="fixed inset-y-0 left-0 z-30 h-full"
+          className="fixed inset-y-0 left-0 z-30 h-full overflow-hidden"
         >
           <SidebarContent
             width={clampedWidth}
@@ -490,27 +380,12 @@ export default function Sidebar({
             aria-label="Kéo để thay đổi độ rộng bảng điều khiển"
             data-testid="sidebar-resize-handle"
             onMouseDown={onResizeStart}
-            className={`group absolute top-0 right-0 w-2 h-full cursor-col-resize z-40 flex items-center justify-center transition-colors ${
-              isResizing ? "bg-[#00a65a]/35" : "hover:bg-[#00a65a]/25"
+            className={`absolute top-0 right-0 w-1.5 h-full cursor-col-resize z-40 transition-colors ${
+              isResizing
+                ? "bg-[#00a65a]"
+                : "hover:bg-[#00a65a]/60 active:bg-[#00a65a]"
             }`}
-          >
-            <div
-              data-testid="sidebar-resize-pill"
-              className={`w-1 rounded-full transition-all duration-150 ${
-                isResizing
-                  ? "h-14 bg-[#00a65a] shadow-[0_0_8px_rgba(0,166,90,0.65)]"
-                  : "h-10 bg-white/20 group-hover:bg-[#00a65a] group-hover:h-14"
-              }`}
-            />
-            {isResizing && (
-              <div
-                data-testid="sidebar-width-badge"
-                className="pointer-events-none absolute left-full ml-2 top-1/2 -translate-y-1/2 px-2 py-1 rounded-md bg-[#0f172a]/95 border border-[#00a65a]/75 text-[#6ee7b7] text-[0.72rem] font-bold tracking-wide shadow-lg whitespace-nowrap z-50"
-              >
-                {clampedWidth}px
-              </div>
-            )}
-          </div>
+          />
         </motion.aside>
       )}
     </AnimatePresence>

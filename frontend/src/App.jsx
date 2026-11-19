@@ -73,7 +73,7 @@ export default function App() {
     document.body.style.userSelect = "none";
 
     const onMouseMove = (e) => {
-      const nextWidth = Math.min(600, Math.max(280, e.clientX));
+      const nextWidth = Math.min(560, Math.max(300, e.clientX));
       setSidebarWidth(nextWidth);
     };
 
@@ -480,9 +480,9 @@ export default function App() {
               transition={{ duration: 0.18, ease: FM_EASE_OUT }}
               onClick={() => setSidebarOpen(true)}
               style={{ touchAction: "manipulation" }}
-              className="fixed top-2.5 left-3 md:top-3.5 md:left-3.5 z-30 w-10 h-10 rounded-[10px] bg-[#222d32]/90 hover:bg-[#00703c] border border-[#00a65a]/60 text-white shadow-md flex items-center justify-center transition-colors duration-150 cursor-pointer"
+              className="fixed top-3 left-3.5 z-30 w-[38px] h-[38px] rounded-[8px] bg-[#141a1d]/95 hover:bg-[#00703c] border border-[#00a65a]/60 text-white shadow-md flex items-center justify-center transition-colors duration-150 cursor-pointer"
             >
-              <Menu className="w-5 h-5 text-white" strokeWidth={2.4} />
+              <Menu className="w-4 h-4 text-white" strokeWidth={2.4} />
             </motion.button>
           )}
         </AnimatePresence>
@@ -491,7 +491,9 @@ export default function App() {
         <main
           ref={scrollContainerRef}
           onScroll={handleMainScroll}
-          className="flex-1 overflow-y-auto main-scroll px-3 sm:px-5 pt-14 md:pt-7 pb-6"
+          className={`flex-1 overflow-y-auto main-scroll px-3 sm:px-5 pt-14 md:pt-7 pb-6 ${
+            !sidebarOpen && !isMobile ? "md:pl-16" : ""
+          }`}
         >
           <div className="max-w-[820px] mx-auto w-full">
             <HeroHeader branding={initData?.branding} />
