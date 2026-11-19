@@ -26,6 +26,11 @@ st.set_page_config(
     layout="centered"
 )
 
+st.markdown(
+    """<style>html, body, .stApp { background-color: #f6f9f8 !important; } [data-testid="stToolbar"]:not(:has([data-testid="stExpandSidebarButton"])), [data-testid="stToolbarActions"], [data-testid="stMainMenu"], [data-testid="stAppDeployButton"], .stAppDeployButton, [data-testid="stStatusWidget"], [data-testid="stSkeleton"], .stSkeleton, [class*="Skeleton"], [data-testid="stAppViewBlockContainer"] > div:empty { display: none !important; visibility: hidden !important; }</style>""",
+    unsafe_allow_html=True,
+)
+
 # ==========================================
 # CẤU HÌNH NHẬN DIỆN THƯƠNG HIỆU VLUTE
 # ==========================================
@@ -37,7 +42,7 @@ def get_base64_image(image_path):
     return None
 
 lucas_avatar_b64 = get_base64_image("lucas_avatar.png")
-avatar_img_html = f'<img src="data:image/png;base64,{lucas_avatar_b64}" style="width: 56px; height: 56px; border-radius: 50%; vertical-align: middle; margin-right: 12px; object-fit: cover; box-shadow: 0 3px 8px rgba(0,0,0,0.25); display: inline-block;">' if lucas_avatar_b64 else '🎓 '
+avatar_img_html = f'<img src="data:image/png;base64,{lucas_avatar_b64}" width="56" height="56" style="width: 56px; height: 56px; max-width: 56px; max-height: 56px; border-radius: 50%; vertical-align: middle; margin-right: 12px; object-fit: cover; box-shadow: 0 3px 8px rgba(0,0,0,0.25); display: inline-block; flex-shrink: 0;">' if lucas_avatar_b64 else '🎓 '
 
 BOT_AVATAR = "lucas_avatar.png" if os.path.exists("lucas_avatar.png") else "🎓"
 
@@ -60,8 +65,11 @@ LOGO_B64 = load_logo_base64()
 # ==========================================
 st.markdown("""
 <style>
-/* Vô hiệu hóa hiệu ứng làm mờ khi Streamlit đang tính toán hoặc re-run */
-[data-stale="true"] {
+/* Vô hiệu hóa hiệu ứng làm mờ khi Streamlit đang tính toán hoặc re-run trên tất cả container lồng nhau */
+[data-stale="true"],
+[data-stale="true"] *,
+.stale-element,
+div[data-testid="stVerticalBlock"] {
     opacity: 1 !important;
     filter: none !important;
     transition: none !important;
@@ -82,8 +90,16 @@ div[data-testid="stChatMessageContent"]:not(:has(*)) {
 #MainMenu,
 footer,
 [data-testid="stDecoration"],
+[data-testid="stToolbar"]:not(:has([data-testid="stExpandSidebarButton"])),
+[data-testid="stToolbarActions"],
+[data-testid="stMainMenu"],
+[data-testid="stAppDeployButton"],
 .stAppDeployButton,
-div[data-testid="stStatusWidget"] {
+div[data-testid="stStatusWidget"],
+[data-testid="stSkeleton"],
+.stSkeleton,
+[class*="Skeleton"],
+[data-testid="stAppViewBlockContainer"] > div:empty {
     display: none !important;
     visibility: hidden !important;
 }
@@ -99,13 +115,20 @@ button[data-testid="stExpandSidebarButton"] {
     pointer-events: auto !important;
 }
 
-/* Tắt hoàn toàn scroll anchoring mặc định của trình duyệt để tránh giật ngược thanh cuộn khi bật thẻ liên hệ & nút gợi ý */
+/* Tắt hoàn toàn scroll anchoring mặc định & smooth-scroll gốc của trình duyệt để tránh xung đột với lerp 60fps */
 html, body, [data-testid="stAppViewContainer"], [data-testid="stMainBlockContainer"], .main {
     overflow-anchor: none !important;
+    scroll-behavior: auto !important;
 }
 
 section[data-testid="stMain"] {
     overflow-anchor: none !important;
+    scroll-behavior: auto !important;
+}
+
+:root {
+    --fm-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    --fm-spring: cubic-bezier(0.34, 1.36, 0.64, 1);
 }
 
 div[data-testid="stChatMessage"],
@@ -119,12 +142,20 @@ div[data-testid="stChatMessage"],
     width: 100% !important;
 }
 
-div.element-container:has(iframe[height="0"]),
-div[data-testid="stElementContainer"]:has(iframe[height="0"]) {
+div.element-container:has(iframe),
+div[data-testid="stElementContainer"]:has(iframe),
+div[data-testid="stCustomComponentV1"]:has(iframe),
+iframe[height="0"],
+iframe {
+    position: fixed !important;
+    width: 0 !important;
     height: 0 !important;
     min-height: 0 !important;
     margin: 0 !important;
     padding: 0 !important;
+    border: 0 !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
     overflow: hidden !important;
     line-height: 0 !important;
 }
@@ -143,25 +174,41 @@ div[data-testid="stElementContainer"]:has(iframe[height="0"]) {
 div[data-testid="stAppViewBlockContainer"],
 div[data-testid="stMainBlockContainer"] {
     max-width: 820px !important;
+    padding-top: 1.75rem !important;
     padding-bottom: 200px !important;
 }
 
-/* 1. Header tinh gọn chiều cao 110-120px & hiệu ứng mở màn 60fps không nảy trục dọc */
-@keyframes headerEnter {
+div[data-testid="stMainBlockContainer"]:not(:has(.chat-row-user)),
+div[data-testid="stAppViewBlockContainer"]:not(:has(.chat-row-user)),
+.main .block-container:not(:has(.chat-row-user)) {
+    padding-bottom: 24px !important;
+}
+
+/* 1. Khối Hero thống nhất Header + 3 huy hiệu & hiệu ứng GPU chuẩn Framer Motion 60fps */
+.vlute-hero-shell {
+    contain: layout paint;
+    width: 100%;
+}
+
+@keyframes fmHeaderGlide {
     from {
-        opacity: 0.96;
+        opacity: 0.85;
+        transform: translate3d(0, -6px, 0);
     }
     to {
         opacity: 1;
+        transform: translate3d(0, 0, 0);
     }
 }
 
-@keyframes badgePopIn {
+@keyframes fmBadgeSpring {
     from {
-        opacity: 0.96;
+        opacity: 0.85;
+        transform: translate3d(0, -6px, 0);
     }
     to {
         opacity: 1;
+        transform: translate3d(0, 0, 0);
     }
 }
 
@@ -179,8 +226,8 @@ div[data-testid="stMainBlockContainer"] {
     min-height: 110px;
     max-height: 120px;
     box-sizing: border-box;
-    animation: headerEnter 0.18s ease-out both;
-    will-change: opacity;
+    animation: fmHeaderGlide 0.26s var(--fm-ease-out) both;
+    will-change: transform, opacity;
 }
 
 /* Logo nằm bên TRÁI */
@@ -266,14 +313,25 @@ div[data-testid="stMainBlockContainer"] {
     align-items: center;
     gap: 6px;
     box-shadow: 0 2px 5px rgba(0, 141, 76, 0.18);
-    transition: box-shadow 0.2s ease, border-color 0.2s ease, background-color 0.2s ease !important;
-    animation: badgePopIn 0.18s ease-out both;
-    will-change: opacity;
+    transition: box-shadow 0.22s var(--fm-ease-out), border-color 0.2s ease, background-color 0.2s ease !important;
+    animation: fmBadgeSpring 0.26s var(--fm-ease-out) both;
+    will-change: transform, opacity;
+}
+
+.vlute-nav-ribbon .vlute-nav-badge:nth-child(1) {
+    animation-delay: 0ms;
+}
+
+.vlute-nav-ribbon .vlute-nav-badge:nth-child(2) {
+    animation-delay: 30ms;
+}
+
+.vlute-nav-ribbon .vlute-nav-badge:nth-child(3) {
+    animation-delay: 60ms;
 }
 
 .vlute-nav-badge:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.12);
+    box-shadow: 0 6px 14px rgba(0, 0, 0, 0.14);
 }
 
 .vlute-nav-badge.official {
@@ -347,9 +405,19 @@ button[data-testid="stExpandSidebarButton"],
     cursor: pointer !important;
     margin: 6px 0 0 8px !important;
     padding: 0 !important;
-    transition: all 0.2s ease !important;
+    transition: background-color 0.18s ease, border-color 0.18s ease !important;
     font-size: 0 !important;
     color: transparent !important;
+}
+
+button[data-testid="stExpandSidebarButton"]:focus,
+button[data-testid="stExpandSidebarButton"]:focus-visible,
+[data-testid="stExpandSidebarButton"]:focus,
+[data-testid="stExpandSidebarButton"]:focus-visible,
+[data-testid="collapsedControl"]:focus,
+[data-testid="collapsedControl"]:focus-visible {
+    outline: none !important;
+    box-shadow: none !important;
 }
 
 button[data-testid="stExpandSidebarButton"]:hover,
@@ -357,7 +425,6 @@ button[data-testid="stExpandSidebarButton"]:hover,
 [data-testid="collapsedControl"]:hover {
     background-color: #f0f7f3 !important;
     border-color: #008d4c !important;
-    transform: scale(1.05) !important;
 }
 
 button[data-testid="stExpandSidebarButton"]::before,
@@ -401,10 +468,10 @@ button[data-testid="stExpandSidebarButton"]:hover::before,
 
 [data-testid="stSidebarHeader"]::before {
     content: "BẢNG ĐIỀU KHIỂN HỌC VỤ" !important;
-    font-size: 0.8rem !important;
+    font-size: 0.73rem !important;
     font-weight: 700 !important;
     color: #b8c7ce !important;
-    letter-spacing: 0.6px !important;
+    letter-spacing: 0.3px !important;
     text-transform: uppercase !important;
     white-space: nowrap !important;
     display: inline-flex !important;
@@ -433,9 +500,19 @@ button[data-testid="stSidebarCollapseButton"],
     min-height: 30px !important;
     cursor: pointer !important;
     padding: 0 !important;
-    transition: all 0.2s ease !important;
+    transition: background-color 0.18s ease, border-color 0.18s ease !important;
     font-size: 0 !important;
     color: transparent !important;
+}
+
+[data-testid="stSidebarCollapseButton"] button:focus,
+[data-testid="stSidebarCollapseButton"] button:focus-visible,
+button[data-testid="stSidebarCollapseButton"]:focus,
+button[data-testid="stSidebarCollapseButton"]:focus-visible,
+[data-testid="stSidebarHeader"] button:focus,
+[data-testid="stSidebarHeader"] button:focus-visible {
+    outline: none !important;
+    box-shadow: none !important;
 }
 
 [data-testid="stSidebarCollapseButton"] button:hover,
@@ -468,6 +545,7 @@ section[data-testid="stSidebar"] {
     border-right: 1px solid #1a2226 !important;
     color: #b8c7ce !important;
     box-shadow: 4px 0 24px rgba(0, 0, 0, 0.3) !important;
+    transition: transform 0.36s var(--fm-ease-out), width 0.36s var(--fm-ease-out), box-shadow 0.36s var(--fm-ease-out) !important;
 }
 
 section[data-testid="stSidebar"] * {
@@ -536,7 +614,7 @@ section[data-testid="stSidebar"] b {
     font-size: 0.74rem;
     color: #cbd5e1 !important;
     text-decoration: none !important;
-    transition: all 0.2s ease;
+    transition: transform 0.18s var(--fm-ease-out), background-color 0.2s var(--fm-ease-out), border-color 0.2s ease, box-shadow 0.2s var(--fm-ease-out);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -546,13 +624,19 @@ section[data-testid="stSidebar"] b {
     background: #00a65a !important;
     border-color: #00a65a !important;
     color: #ffffff !important;
-    transform: translateY(-1px);
+    transform: translate3d(0, -2px, 0);
+    box-shadow: 0 4px 12px rgba(0, 166, 90, 0.24);
+}
+
+.sidebar-link-item:active {
+    transform: translate3d(0, 0, 0) scale(0.97);
+    transition-duration: 0.14s;
 }
 
 .sidebar-link-item svg {
     stroke: #00a65a;
     flex-shrink: 0;
-    transition: stroke 0.2s ease, transform 0.2s ease;
+    transition: stroke 0.2s ease, transform 0.2s var(--fm-ease-out);
 }
 
 .sidebar-link-item:hover svg {
@@ -566,7 +650,7 @@ section[data-testid="stSidebar"] .stButton > button {
     background-color: #00a65a !important;
     color: white !important;
     font-weight: 700 !important;
-    transition: all 0.2s ease !important;
+    transition: transform 0.14s var(--fm-ease-out), background-color 0.2s var(--fm-ease-out), box-shadow 0.22s var(--fm-ease-out) !important;
 }
 
 section[data-testid="stSidebar"] .stButton > button p {
@@ -591,17 +675,64 @@ section[data-testid="stSidebar"] .stButton > button p::before {
 section[data-testid="stSidebar"] .stButton > button:hover {
     background-color: #008d4c !important;
     color: white !important;
+    transform: translate3d(0, -2px, 0) !important;
+    box-shadow: 0 6px 16px rgba(0, 166, 90, 0.28) !important;
 }
 
 section[data-testid="stSidebar"] .stButton > button:active {
-    transform: scale(0.96) !important;
+    transform: translate3d(0, 0, 0) scale(0.97) !important;
+    transition-duration: 0.12s !important;
 }
 
-/* 5. KHUNG TIN NHẮN VÀ BONG BÓNG CHAT (MAX-WIDTH: 720PX) */
-@keyframes fadeInBubble {
+/* 5. KHUNG TIN NHẮN VÀ BONG BÓNG CHAT (MAX-WIDTH: 720PX) — FRAMER MOTION 60FPS KEYFRAMES */
+@keyframes fmPromptCascade {
     from {
-        opacity: 0.92;
-        transform: translate3d(0, 6px, 0);
+        opacity: 0;
+        transform: translate3d(0, 14px, 0) scale(0.975);
+    }
+    to {
+        opacity: 1;
+        transform: translate3d(0, 0, 0) scale(1);
+    }
+}
+
+@keyframes fmUserBubbleIn {
+    from {
+        opacity: 0.72;
+        transform: translate3d(0, 8px, 0) scale(0.99);
+    }
+    to {
+        opacity: 1;
+        transform: translate3d(0, 0, 0) scale(1);
+    }
+}
+
+@keyframes fmAssistantBubbleIn {
+    from {
+        opacity: 0.72;
+        transform: translate3d(0, 8px, 0) scale(0.99);
+    }
+    to {
+        opacity: 1;
+        transform: translate3d(0, 0, 0) scale(1);
+    }
+}
+
+@keyframes fmContactGlideIn {
+    from {
+        opacity: 0.15;
+        transform: translate3d(0, 8px, 0);
+    }
+    to {
+        opacity: 1;
+        transform: translate3d(0, 0, 0);
+    }
+}
+
+@keyframes fmFollowupCascade {
+    from {
+        opacity: 0.15;
+        transform: translate3d(0, 8px, 0);
     }
     to {
         opacity: 1;
@@ -739,6 +870,9 @@ div[data-testid="stChatMessageContent"] b {
     padding: 12px 20px !important;
     max-width: 720px !important;
     width: fit-content;
+    white-space: pre-wrap !important;
+    word-spacing: normal !important;
+    letter-spacing: normal !important;
     word-break: normal !important;
     overflow-wrap: break-word !important;
     font-size: 1rem !important;
@@ -747,23 +881,61 @@ div[data-testid="stChatMessageContent"] b {
     transition: box-shadow 0.2s ease, border-color 0.2s ease, background-color 0.2s ease !important;
 }
 
-/* Bong bóng người dùng hiển thị rõ 100% ngay khung hình đầu tiên, không nháy mờ */
-.chat-row-user,
-.chat-row-user:last-of-type {
-    animation: none !important;
-    opacity: 1 !important;
-    transform: none !important;
-}
-
-/* Chuyển động 1 nhịp êm ái (0.22s, không nháy trắng, đồng thời không lệch nhịp chân trang/gợi ý) */
-div[data-testid="stChatMessage"]:last-of-type,
-.contact-footer-card,
-div[data-testid="stChatMessageContent"] div[data-testid="stHorizontalBlock"] {
-    animation: fadeInBubble 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
+/* Bong bóng người dùng mới nhất xuất hiện theo đường cong Framer Motion 60fps */
+.chat-row-user:not(.chat-history-old) {
+    animation: fmUserBubbleIn 0.26s var(--fm-ease-out) both;
     will-change: transform, opacity;
 }
 
-/* Triệt tiêu hoàn toàn hiện tượng nháy lại tin nhắn cũ và cô lập bố cục trình duyệt */
+/* Bong bóng trợ lý mới nhất lướt vào theo đường cong Framer Motion 60fps */
+div[data-testid="stChatMessage"]:last-of-type:not(:has(.chat-history-old-marker)) {
+    animation: fmAssistantBubbleIn 0.26s var(--fm-ease-out) both;
+    will-change: transform, opacity;
+}
+
+/* Thác đổ (stagger) cuối câu trả lời mới: thẻ phòng ban (0.34s) -> đồng bộ tiêu đề + 2 nút gợi ý bằng CSS :has() trong 0.28s */
+div[data-testid="stChatMessage"]:last-of-type:not(:has(.chat-history-old-marker)) .contact-footer-card {
+    animation: fmContactGlideIn 0.34s var(--fm-ease-out) both;
+    will-change: transform, opacity;
+}
+
+div[data-testid="stChatMessage"]:last-of-type:not(:has(.chat-history-old-marker)):not(:has(div[data-testid="stHorizontalBlock"] > div:nth-child(2) button)) .vlute-followup-title {
+    opacity: 0 !important;
+    visibility: hidden !important;
+    height: 0 !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+    animation: none !important;
+}
+
+div[data-testid="stChatMessage"]:last-of-type:not(:has(.chat-history-old-marker)):has(div[data-testid="stHorizontalBlock"] > div:nth-child(2) button) .vlute-followup-title {
+    animation: fmFollowupCascade 0.28s var(--fm-ease-out) both;
+    will-change: transform, opacity;
+}
+
+div[data-testid="stChatMessage"]:last-of-type:not(:has(.chat-history-old-marker)) div[data-testid="stChatMessageContent"] div[data-testid="stHorizontalBlock"]:not(:has(> div:nth-child(2) button)) {
+    opacity: 0 !important;
+    visibility: hidden !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+    transform: translate3d(0, 8px, 0) !important;
+    animation: none !important;
+    pointer-events: none !important;
+}
+
+div[data-testid="stChatMessage"]:last-of-type:not(:has(.chat-history-old-marker)) div[data-testid="stChatMessageContent"] div[data-testid="stHorizontalBlock"]:has(> div:nth-child(2) button) {
+    animation: fmFollowupCascade 0.28s var(--fm-ease-out) both;
+    will-change: transform, opacity;
+}
+
+div[data-testid="stChatMessage"]:last-of-type:not(:has(.chat-history-old-marker)) div[data-testid="stChatMessageContent"] div[data-testid="stHorizontalBlock"]:has(> div:nth-child(2) button) [class*="st-key-followup_"],
+div[data-testid="stChatMessage"]:last-of-type:not(:has(.chat-history-old-marker)) div[data-testid="stChatMessageContent"] div[data-testid="stHorizontalBlock"]:has(> div:nth-child(2) button) [class*="st-key-followup_"] button {
+    opacity: 1;
+}
+
+/* Triệt tiêu hoàn toàn hiện tượng nháy lại tin nhắn cũ và ẩn tức thì gợi ý cũ khi đang stream */
 .chat-row-user.chat-history-old,
 div[data-testid="stChatMessage"]:has(.chat-history-old-marker) {
     contain: layout style;
@@ -771,11 +943,24 @@ div[data-testid="stChatMessage"]:has(.chat-history-old-marker) {
 
 .chat-row-user.chat-history-old,
 div[data-testid="stChatMessage"]:has(.chat-history-old-marker),
-div[data-testid="stChatMessage"]:has(.chat-history-old-marker) .contact-footer-card,
-div[data-testid="stChatMessage"]:has(.chat-history-old-marker) div[data-testid="stHorizontalBlock"] {
+div[data-testid="stChatMessage"]:has(.chat-history-old-marker) .contact-footer-card {
     animation: none !important;
     animation-delay: 0s !important;
+    opacity: 1 !important;
+    transform: none !important;
     will-change: auto !important;
+}
+
+div[data-testid="stChatMessage"]:has(.chat-history-old-marker) .vlute-followup-title,
+div[data-testid="stChatMessage"]:has(.chat-history-old-marker) div[data-testid="stHorizontalBlock"],
+div[data-testid="stChatMessage"] [data-stale="true"]:has([class*="st-key-followup_"]),
+div[data-testid="stChatMessage"] [data-stale="true"]:has(.vlute-followup-title) {
+    display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
 }
 
 /* Thẻ chân trang liên hệ phòng ban có micro-interaction mượt */
@@ -786,12 +971,11 @@ div[data-testid="stChatMessage"]:has(.chat-history-old-marker) div[data-testid="
     border-radius: 8px;
     border-left: 3.5px solid #ff9800;
     color: #334155 !important;
-    transition: all 0.2s ease !important;
+    transition: background-color 0.22s var(--fm-ease-out), box-shadow 0.22s var(--fm-ease-out), border-color 0.22s var(--fm-ease-out) !important;
 }
 
 .contact-footer-card:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(0, 90, 48, 0.12);
+    box-shadow: 0 6px 16px rgba(0, 90, 48, 0.12);
     background: #f1f5f9;
 }
 
@@ -951,7 +1135,7 @@ div[data-testid="stHorizontalBlock"] button {
     padding: 7px 12px !important;
     text-align: left !important;
     box-shadow: 0 2px 4px rgba(0, 112, 60, 0.08) !important;
-    transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.2s ease, box-shadow 0.22s ease, border-color 0.2s ease !important;
+    transition: transform 0.22s var(--fm-spring), background-color 0.2s var(--fm-ease-out), box-shadow 0.22s var(--fm-ease-out), border-color 0.2s ease !important;
     white-space: normal !important;
     height: auto !important;
 }
@@ -969,12 +1153,13 @@ div[data-testid="stHorizontalBlock"] button [data-testid="stMarkdownContainer"] 
 div[data-testid="stHorizontalBlock"] button:hover {
     background-color: #00703c !important;
     color: #ffffff !important;
-    box-shadow: 0 4px 10px rgba(0, 112, 60, 0.22) !important;
+    box-shadow: 0 6px 16px rgba(0, 112, 60, 0.22) !important;
     transform: translate3d(0, -2px, 0) !important;
 }
 
 div[data-testid="stHorizontalBlock"] button:active {
-    transform: translate3d(0, 0, 0) scale(0.98) !important;
+    transform: translate3d(0, 0, 0) scale(0.97) !important;
+    transition: transform 0.12s var(--fm-ease-out), box-shadow 0.12s var(--fm-ease-out), background-color 0.12s ease !important;
 }
 
 div[data-testid="stHorizontalBlock"] button:hover p,
@@ -982,23 +1167,37 @@ div[data-testid="stHorizontalBlock"] button:hover span {
     color: #ffffff !important;
 }
 
-/* Hiệu ứng xuất hiện đồng bộ cho 4 nút gợi ý chào mừng (không dịch chuyển trục dọc) */
-@keyframes promptCardIn {
-    from {
-        opacity: 0.96;
-    }
-    to {
-        opacity: 1;
-    }
+/* Hiệu ứng thác đổ chuẩn Framer Motion đồng bộ bằng :has() cho tiêu đề & 4 nút gợi ý chào mừng */
+div[data-testid="stMainBlockContainer"]:not(:has(.chat-row-user)) div[data-testid="stHorizontalBlock"]:not(:has(> div:nth-child(2) button)) {
+    opacity: 0 !important;
+    transform: translate3d(0, 8px, 0) !important;
+    animation: none !important;
+    pointer-events: none !important;
 }
 
-[class*="st-key-welcome_prompt_"] button {
-    animation: promptCardIn 0.18s ease-out both;
-    will-change: opacity;
+div[data-testid="stMainBlockContainer"]:not(:has(.chat-row-user)) div[data-testid="stHorizontalBlock"]:has(> div:nth-child(2) button) {
+    animation: fmPromptCascade 0.42s var(--fm-ease-out) both;
+    will-change: transform, opacity;
 }
+
+div[data-testid="stMainBlockContainer"]:not(:has(.chat-row-user)) div[data-testid="stHorizontalBlock"]:has(> div:nth-child(2) button) [class*="st-key-welcome_prompt_"] {
+    animation: fmPromptCascade 0.42s var(--fm-ease-out) both;
+    will-change: transform, opacity;
+}
+
+[class*="st-key-welcome_prompt_"][class*="_0"] { animation-delay: 60ms; }
+[class*="st-key-welcome_prompt_"][class*="_1"] { animation-delay: 110ms; }
+[class*="st-key-welcome_prompt_"][class*="_2"] { animation-delay: 160ms; }
+[class*="st-key-welcome_prompt_"][class*="_3"] { animation-delay: 210ms; }
 
 [class*="st-key-shuffle_welcome_btn"] button:active {
-    transform: scale(0.96) !important;
+    transform: translate3d(0, 0, 0) scale(0.97) !important;
+    transition: transform 0.12s var(--fm-ease-out) !important;
+}
+
+/* Giữ chiều cao cố định cho hàng 2 nút gợi ý cuối câu trả lời chỉ khi đủ 2 cột để tránh khoảng trắng hụt */
+div[data-testid="stChatMessageContent"] div[data-testid="stHorizontalBlock"]:has(> div:nth-child(2) button) {
+    min-height: 46px;
 }
 
 /* Đảm bảo nút gợi ý bên trong tin nhắn bot có chữ rõ nét, không bị đè màu trắng */
@@ -1072,6 +1271,8 @@ button[data-testid="stExpandSidebarButton"],
     .vlute-logo-img {
         width: 48px !important;
         height: 48px !important;
+        max-width: 48px !important;
+        max-height: 48px !important;
     }
     .vlute-portal-title {
         font-size: 0.95rem !important;
@@ -1082,6 +1283,24 @@ button[data-testid="stExpandSidebarButton"],
     }
 
     /* 3. Tối ưu bong bóng chat hiển thị rộng rãi, vừa vặn khung hình */
+    div[data-testid="stChatMessage"] {
+        gap: 8px !important;
+    }
+    div[data-testid="stChatMessageAvatar"] {
+        width: 34px !important;
+        height: 34px !important;
+        min-width: 34px !important;
+        min-height: 34px !important;
+    }
+    div[data-testid="stChatMessage"] [data-testid="stChatMessageAvatarCustom"],
+    div[data-testid="stChatMessage"] img {
+        width: 34px !important;
+        height: 34px !important;
+        min-width: 34px !important;
+        min-height: 34px !important;
+        max-width: 34px !important;
+        max-height: 34px !important;
+    }
     div[data-testid="stChatMessageContent"], .user-bubble {
         max-width: 92% !important;
         font-size: 0.92rem !important;
@@ -1157,51 +1376,57 @@ def load_chain():
     return get_rag_chain()
 
 
+@st.cache_resource(show_spinner=False)
+def init_rag_runtime_once():
+    """Khởi tạo RAG chain và đồng bộ tri thức một lần duy nhất trong @st.cache_resource trước khi vẽ giao diện."""
+    chain = load_chain()
+    ensure_kb_synced_and_fresh_cache()
+    return chain
+
+
 try:
     if "qa_chain" not in st.session_state:
-        st.session_state.qa_chain = load_chain()
+        st.session_state.qa_chain = init_rag_runtime_once()
     qa_chain = st.session_state.qa_chain
-    if not st.session_state.get("kb_synced", False):
-        ensure_kb_synced_and_fresh_cache()
-        st.session_state.kb_synced = True
 except Exception as e:
     st.error(f"Lỗi khởi tạo hệ thống: {e}")
     st.stop()
 
 # ==========================================
-# 1. HEADER TINH GỌN (110-120PX)
+# 1. HEADER TINH GỌN (110-120PX) & 3 HUY HIỆU TRONG CÙNG KHỐI THỐNG NHẤT
 # ==========================================
-logo_html_img = f'<img src="data:image/png;base64,{LOGO_B64}" class="vlute-logo-img" alt="Logo VLUTE" />' if LOGO_B64 else '<span style="font-size:32px;">🎓</span>'
+logo_html_img = f'<img src="data:image/png;base64,{LOGO_B64}" class="vlute-logo-img" width="66" height="66" style="width: 66px; height: 66px; max-width: 66px; max-height: 66px; object-fit: contain; display: block; flex-shrink: 0;" alt="Logo VLUTE" />' if LOGO_B64 else '<span style="font-size:32px;">🎓</span>'
 
 st.markdown(f"""
-<div class="vlute-portal-header">
+<div class="vlute-hero-shell" style="contain: layout paint;">
+  <div class="vlute-portal-header">
     <div class="header-logo-left">
-        {logo_html_img}
+      {logo_html_img}
     </div>
     <div class="header-center-text">
-        <div class="vlute-portal-title">
-            {avatar_img_html}LUCAS – TRỢ LÝ QUY CHẾ & HỌC VỤ VLUTE
-        </div>
-        <div class="vlute-portal-subtitle">
-            Hệ thống tra cứu từ văn bản chính thức của Nhà trường
-        </div>
+      <div class="vlute-portal-title">
+        {avatar_img_html}LUCAS – TRỢ LÝ QUY CHẾ & HỌC VỤ VLUTE
+      </div>
+      <div class="vlute-portal-subtitle">
+        Hệ thống tra cứu từ văn bản chính thức của Nhà trường
+      </div>
     </div>
     <div class="header-right-spacer"></div>
-</div>
-
-<div class="vlute-nav-ribbon">
+  </div>
+  <div class="vlute-nav-ribbon">
     <div class="vlute-nav-badge">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-        <span>Tra cứu học vụ</span>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      <span>Tra cứu học vụ</span>
     </div>
     <div class="vlute-nav-badge official">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
-        <span>Văn bản chính thức</span>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
+      <span>Văn bản chính thức</span>
     </div>
     <div class="vlute-nav-badge verified">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>
-        <span>Trả lời có căn cứ</span>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>
+      <span>Trả lời có căn cứ</span>
     </div>
+  </div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -1308,92 +1533,7 @@ def reset_chat_history():
     ]
     st.session_state.welcome_prompts = get_random_welcome_prompts(previous_queries=prev_queries)
     st.session_state.welcome_shuffle_count = int(st.session_state.get("welcome_shuffle_count", 0)) + 1
-with st.sidebar:
-    if LOGO_B64:
-        st.markdown(f"""
-        <div style="display: flex; justify-content: center; align-items: center; width: 100%; padding-top: 14px; margin-bottom: 8px; margin-top: 6px;">
-            <img src="data:image/png;base64,{LOGO_B64}" style="width: 95px; height: 95px; object-fit: contain; filter: drop-shadow(0 3px 8px rgba(0,0,0,0.4));" alt="Logo VLUTE" />
-        </div>
-        <div style="text-align: center; color: #ffffff; font-weight: 800; font-size: 0.92rem; letter-spacing: 0.3px; margin-bottom: 4px; line-height: 1.35;">
-            TRƯỜNG ĐẠI HỌC<br><span style="white-space: nowrap; color: #ffffff;">CNKT VĨNH LONG</span>
-        </div>
-        <div style="text-align: center; color: #00a65a; font-weight: 700; font-size: 0.76rem; letter-spacing: 0.6px; text-transform: uppercase; margin-bottom: 10px;">
-            QUẢN LÝ ĐÀO TẠO & HỌC VỤ
-        </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown(f"""
-    <div style="display: flex; align-items: center; justify-content: center; gap: 5px; text-align: center; color: #cbd5e1; font-size: 0.75rem; margin-bottom: 10px; padding: 6px 8px; background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; line-height: 1.4; word-break: keep-all;">
-        {SVG_PIN_ICON} <span>Số 73 Nguyễn Huệ, Phường Long Châu, Tỉnh Vĩnh Long</span>
-    </div>
-    """, unsafe_allow_html=True)
 
-    st.button(
-        "Làm mới cuộc trò chuyện",
-        use_container_width=True,
-        on_click=reset_chat_history,
-    )
-    
-    # 2 nhóm liên kết hệ thống rõ rệt (chuỗi không thụt lề để triệt tiêu lỗi code thô)
-    SIDEBAR_NAV_HTML = (
-        '<div class="sidebar-links-card">'
-        f'<div class="sidebar-section-title">{SVG_LINK_ICON}<span>HỆ THỐNG HỌC TẬP</span></div>'
-        '<div class="sidebar-link-grid">'
-        f'<a href="https://vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Cổng thông tin My VLUTE">{SVG_GLOBE_ICON}<span style="overflow:hidden;text-overflow:ellipsis;">My VLUTE</span></a>'
-        f'<a href="https://daotao.vlute.edu.vn/sinh-vien" target="_blank" class="sidebar-link-item" title="Đăng ký học phần">{SVG_FILE_EDIT_ICON}<span style="overflow:hidden;text-overflow:ellipsis;">ĐK Học phần</span></a>'
-        f'<a href="http://elearning.vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Học trực tuyến E-Learning">{SVG_MONITOR_ICON}<span style="overflow:hidden;text-overflow:ellipsis;">E-Learning</span></a>'
-        f'<a href="https://thanhtoan.vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Cổng thanh toán Trực tuyến">{SVG_CARD_ICON}<span style="overflow:hidden;text-overflow:ellipsis;">Thanh toán</span></a>'
-        '</div>'
-        f'<div class="sidebar-section-title" style="margin-top: 12px;">{SVG_LANDMARK_ICON}<span>ĐƠN VỊ HỖ TRỢ</span></div>'
-        '<div class="sidebar-link-grid">'
-        f'<a href="https://tuyensinh.vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Phòng Tuyển sinh">{SVG_COMPASS_ICON}<span style="overflow:hidden;text-overflow:ellipsis;">Tuyển sinh</span></a>'
-        f'<a href="http://pdt.vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Phòng Đào tạo (A1.101)">{SVG_CLIPBOARD_ICON}<span style="overflow:hidden;text-overflow:ellipsis;">Đào tạo (A1.101)</span></a>'
-        f'<a href="http://cgtdt-dsa.vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Phòng Công tác SV (A1.102)">{SVG_USERS_ICON}<span style="overflow:hidden;text-overflow:ellipsis;">CTSV (A1.102)</span></a>'
-        f'<a href="https://vlute.edu.vn" target="_blank" class="sidebar-link-item" title="Phòng Kế hoạch - Tài chính">{SVG_WALLET_ICON}<span style="overflow:hidden;text-overflow:ellipsis;">KHTC (Tầng trệt)</span></a>'
-        '</div>'
-        '</div>'
-    )
-    st.markdown(SIDEBAR_NAV_HTML, unsafe_allow_html=True)
-
-    # Khối thông tin liên hệ phòng ban (đọc động từ departments.json)
-    depts_cfg = load_departments_config()
-    sidebar_order = [k for k in ("dao_tao", "ctsv", "khtc", "cntt") if k in depts_cfg] + [
-        k for k in depts_cfg.keys() if k not in ("dao_tao", "ctsv", "khtc", "cntt")
-    ]
-    dept_rows_html = []
-    for d_key in sidebar_order:
-        d_item = depts_cfg.get(d_key, {})
-        d_name = html.escape(str(d_item.get("name", d_key)).replace(" (VLUTE)", ""))
-        d_loc = html.escape(str(d_item.get("location", "")))
-        d_phone = html.escape(str(d_item.get("phone", "")))
-        d_email = html.escape(str(d_item.get("email", "")))
-        loc_str = f" ({d_loc})" if d_loc else ""
-        dept_rows_html.append(
-            f'<div style="margin-bottom: 6px; font-size: 0.8rem;">'
-            f'<b style="color: #a7f3d0;">• {d_name}{loc_str}:</b><br>'
-            f'<span style="display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap;">'
-            f'{SVG_SIDEBAR_PHONE_ROW}<code>{d_phone}</code>'
-            f'<span style="color: #475569; margin: 0 2px;">|</span>'
-            f'{SVG_SIDEBAR_MAIL_ROW}<i>{d_email}</i>'
-            f'</span>'
-            f'</div>'
-        )
-    sidebar_contacts_html = (
-        '<div class="sidebar-contact-card">'
-        f'<div style="font-weight: 700; color: #ffffff; margin-bottom: 6px; font-size: 0.85rem; display: flex; align-items: center; gap: 6px;">'
-        f'{SVG_SIDEBAR_PHONE_HEADER}<span>ĐẦU MỐI LIÊN HỆ PHÒNG BAN:</span>'
-        '</div>'
-        + "".join(dept_rows_html)
-        + '</div>'
-    )
-    st.markdown(sidebar_contacts_html, unsafe_allow_html=True)
-    
-    st.markdown("""
-    <div style="margin-top: 10px; padding: 8px 10px; background: rgba(0, 0, 0, 0.2); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; font-size: 0.72rem; color: #94a3b8; text-align: center; line-height: 1.45;">
-        <div style="color: #cbd5e1; font-weight: 700;">© Trường ĐH Công nghệ Kỹ thuật Vĩnh Long</div>
-        <div style="font-size: 0.68rem; color: #a7f3d0; margin-top: 1px;">(Tiền thân: Trường ĐH Sư phạm Kỹ thuật Vĩnh Long)</div>
-    </div>
-    """, unsafe_allow_html=True)
 
 VERIFY_BADGE_HTML = """<div style="display: inline-flex; align-items: center; background: #e8f5e9; color: #2e7d32; font-size: 13px; font-weight: 600; padding: 4px 12px; border-radius: 16px; margin-bottom: 8px;">
 ✅ Đã đối soát thành công - Được trích từ quy chế liên quan
@@ -1411,9 +1551,20 @@ def get_verify_badge_html(elapsed_time=None) -> str:
 </div>"""
 
 
+def _escape_unsafe_lt(text: str) -> str:
+    """Escape dấu < không phải thẻ HTML hợp lệ để tránh trình duyệt nuốt chữ như <C, <2,5."""
+    if not text:
+        return ""
+    return re.sub(
+        r"<(?![/\s]*(?:strong|em|b|i|u|br|p|ul|ol|li|code|pre|blockquote|hr|h[1-6]|a\b|span\b|div\b))",
+        "&lt;",
+        text,
+    )
+
+
 def build_assistant_bubble_html(content: str, contact_html: str = "", elapsed_time=None, is_refusal: bool = False, is_welcome_or_greeting: bool = False) -> str:
     """Gộp Huy hiệu + Nội dung + Khối liên hệ vào chung 1 chuỗi Markdown/HTML duy nhất để cố định 1 DOM Slot."""
-    body = (content or "").strip()
+    body = _escape_unsafe_lt((content or "").strip())
     if is_welcome_or_greeting:
         return body
     if is_refusal:
@@ -1448,10 +1599,10 @@ RATE_LIMIT_MESSAGE = "⚠️ Hệ thống tra cứu đang nhận lượng truy c
 
 
 def _build_rag_prompt_and_sources(effective_query: str, docs: list, chain):
-    """Chuẩn bị prompt ngữ cảnh giới hạn độ dài đoạn trích (<= 750 ký tự) và danh sách nguồn đối soát."""
+    """Chuẩn bị prompt ngữ cảnh giới hạn tối đa 5 đoạn trích (<= 560 ký tự/đoạn) và danh sách nguồn đối soát."""
     context_parts = []
     sources = []
-    for doc in docs:
+    for doc in docs[:5]:
         src_file = os.path.basename(doc.metadata.get("source", "Tài liệu"))
         title = doc.metadata.get("title", src_file)
         page = doc.metadata.get("page", 1)
@@ -1782,7 +1933,10 @@ def is_refusal_answer(text: str) -> bool:
         return True
     if "không được đề cập trong các văn bản quy định" in t or "nằm ngoài phạm vi dữ liệu quy chế" in t:
         return True
-    if len(t) < 220 and any(kw in t for kw in ["không được đề cập", "ngoài phạm vi dữ liệu"]):
+    has_legal_citation = bool(
+        re.search(r"\b(?:điều|khoản|mục|chương|quyết\s+định|phụ\s+lục)\s+[ivxlcdm\d]+", t)
+    )
+    if len(t) < 220 and not has_legal_citation and any(kw in t for kw in ["không được đề cập", "ngoài phạm vi dữ liệu"]):
         return True
     return False
 
@@ -1963,10 +2117,23 @@ def check_department_inquiry(query: str):
         "quy trình", "quy định", "mức", "nộp ở đâu", "nộp đơn", "nộp hồ sơ",
         "hoàn trả", "hỗ trợ chi phí", "công tác xã hội", "ctxh", "tín chỉ",
         "kỷ luật", "rèn luyện", "xét tốt nghiệp", "chuẩn bị", "giấy tờ",
+        "cấp phát", "sử dụng", "tên miền", "đổi mật khẩu", "mật khẩu",
+        "khóa tài khoản", "tài khoản", "trách nhiệm", "nghĩa vụ", "báo cáo",
+        "xử lý", "sự cố", "quyền", "trường hợp", "thời hạn", "bao lâu",
+        "như thế nào", "thế nào", "ra sao", "cần làm gì", "bị cấm", "nghiêm cấm",
+        "khen thưởng", "chủ trì", "lập danh sách", "phê duyệt", "bản chính",
+        "bản photo", "lưu tại", "lưu trữ", "rút tiền", "đóng dư",
     ]
     if any(rw in q for rw in regulation_keywords):
         return None
-    ask_contact_keywords = ["địa chỉ", "ở đâu", "liên hệ", "số điện thoại", "sđt", "hotline", "email", "phòng nào", "gặp ai", "đơn vị nào"]
+    ask_contact_keywords = [
+        "địa chỉ", "ở đâu", "vị trí", "nằm ở", "tòa nào", "phòng mấy",
+        "liên hệ", "gặp ai", "số điện thoại", "sđt", "hotline",
+        "địa chỉ email", "email của", "email liên hệ", "email phòng", "email trung tâm",
+        "liên hệ phòng nào", "liên hệ đơn vị nào", "liên hệ bộ phận nào",
+        "hỏi phòng nào", "tới phòng nào", "đến phòng nào", "qua phòng nào",
+        "phòng nào hỗ trợ", "đơn vị nào hỗ trợ", "bộ phận nào hỗ trợ",
+    ]
     if any(kw in q for kw in ask_contact_keywords):
         departments = load_departments_config()
         pdt = departments.get("daotao") or departments.get("dao_tao") or {
@@ -2267,15 +2434,32 @@ def _select_followup_prompts(
     return prompts_to_show
 
 
+def _preselect_followups(
+    query_or_content: str,
+    sources: list | None = None,
+    assistant_reply: str = "",
+) -> list[tuple[str, str]]:
+    """Tính trước 2 câu hỏi gợi ý trước khi render thẻ liên hệ cuối cùng để triệt tiêu độ trễ hiển thị."""
+    return _select_followup_prompts(
+        query_or_content=query_or_content,
+        config=load_prompts_config(),
+        messages=st.session_state.get("messages", []),
+        sources=sources,
+        assistant_reply=assistant_reply,
+        limit=2,
+    )
+
+
 def render_followup_suggestions(
     query_or_content: str,
     key_suffix: str = "",
     sources: list | None = None,
     assistant_reply: str = "",
     asked_queries: list | set | None = None,
+    preselected_prompts: list[tuple[str, str]] | None = None,
 ):
     """Hiển thị luôn đủ 2 nút gợi ý liên quan theo cơ chế xoay vòng 3 tầng (cùng nhóm -> nhóm khác -> LRU Recycling)."""
-    prompts_to_show = _select_followup_prompts(
+    prompts_to_show = preselected_prompts if preselected_prompts is not None else _select_followup_prompts(
         query_or_content=query_or_content,
         config=load_prompts_config(),
         messages=st.session_state.get("messages", []),
@@ -2288,7 +2472,7 @@ def render_followup_suggestions(
     if not prompts_to_show:
         return
 
-    st.markdown(f"<p style='font-size: 0.88rem; color: #00703c !important; margin-top: 10px; margin-bottom: 6px; display: flex; align-items: center; gap: 4px;'>{SVG_LIGHTBULB_ICON}<b style='color: #00703c !important;'>Gợi ý câu hỏi liên quan bạn có thể quan tâm:</b></p>", unsafe_allow_html=True)
+    st.markdown(f"<p class='vlute-followup-title' style='font-size: 0.88rem; color: #00703c !important; margin-top: 10px; margin-bottom: 6px; display: flex; align-items: center; gap: 4px;'>{SVG_LIGHTBULB_ICON}<b style='color: #00703c !important;'>Gợi ý câu hỏi liên quan bạn có thể quan tâm:</b></p>", unsafe_allow_html=True)
     cols = st.columns(len(prompts_to_show))
     for idx, (label, target_q) in enumerate(prompts_to_show):
         with cols[idx]:
@@ -2314,11 +2498,26 @@ elif st.session_state.get("pending_user_query"):
 
 if user_query:
     current_user_query = user_query.strip()
-    recent_chat_history = [
-        {"role": m.get("role"), "content": m.get("content", "")}
-        for m in st.session_state.messages[1:]
-        if m.get("role") in ("user", "assistant") and not m.get("is_greeting", False)
-    ][-6:]
+    filtered_history = []
+    for m in st.session_state.messages[1:]:
+        role = m.get("role")
+        content = str(m.get("content", "") or "")
+        if role == "user":
+            filtered_history.append({"role": "user", "content": content})
+        elif role == "assistant":
+            is_excluded = (
+                bool(m.get("is_greeting", False))
+                or bool(m.get("is_refusal", False))
+                or (REFUSAL_MESSAGE in content)
+                or (RATE_LIMIT_MESSAGE in content)
+                or is_refusal_answer(content)
+            )
+            if is_excluded:
+                if filtered_history and filtered_history[-1].get("role") == "user":
+                    filtered_history.pop()
+                continue
+            filtered_history.append({"role": "assistant", "content": content})
+    recent_chat_history = filtered_history[-6:]
     if current_user_query and not (
         st.session_state.messages
         and st.session_state.messages[-1].get("role") == "user"
@@ -2373,18 +2572,13 @@ for idx, message in enumerate(st.session_state.messages):
                     unsafe_allow_html=True
                 )
 
-            if idx > 0 and idx == last_assistant_idx:
-                prev_followup_placeholder = st.empty()
-                if not current_user_query:
-                    with prev_followup_placeholder.container():
-                        render_followup_suggestions(
-                            q_text or msg_content,
-                            key_suffix=str(idx),
-                            sources=message.get("sources"),
-                            assistant_reply=msg_content,
-                        )
-                else:
-                    prev_followup_placeholder.empty()
+            if idx > 0 and idx == last_assistant_idx and not current_user_query:
+                render_followup_suggestions(
+                    q_text or msg_content,
+                    key_suffix=str(idx),
+                    sources=message.get("sources"),
+                    assistant_reply=msg_content,
+                )
 
 # ==========================================
 # KHỐI 4 CÂU HỎI GỢI Ý NGẪU NHIÊN (LƯỚI 2x2 KHI CHƯA BẮT ĐẦU HỎI)
@@ -2409,7 +2603,6 @@ if len(st.session_state.messages) <= 1 and not current_user_query:
             on_click=shuffle_welcome_prompts,
         )
 
-    shuffle_count = int(st.session_state.get("welcome_shuffle_count", 0))
     welcome_items = st.session_state.welcome_prompts[:4]
     col1, col2 = st.columns(2)
     for i, item in enumerate(welcome_items):
@@ -2417,7 +2610,7 @@ if len(st.session_state.messages) <= 1 and not current_user_query:
         with target_col:
             st.button(
                 item["label"],
-                key=f"welcome_prompt_v{shuffle_count}_{i}",
+                key=f"welcome_prompt_{i}",
                 use_container_width=True,
                 on_click=submit_user_query,
                 args=(item["query"],)
@@ -2430,12 +2623,30 @@ if current_user_query:
     with st.chat_message("assistant", avatar=BOT_AVATAR):
         status_placeholder = st.empty()
         status_placeholder.markdown(THINKING_HTML, unsafe_allow_html=True)
-        time.sleep(0.01)
 
-        if is_greeting(current_user_query):
+        if not re.search(r"[0-9a-zA-ZÀ-ỹ]", current_user_query):
+            clarify_reply = "Bạn vui lòng nhập nội dung câu hỏi cụ thể về quy chế hoặc chọn một gợi ý bên dưới để Lucas hỗ trợ nhé!"
+            pre_followups = _preselect_followups(current_user_query, sources=[], assistant_reply=clarify_reply)
+            status_placeholder.markdown(
+                build_assistant_bubble_html(clarify_reply, is_welcome_or_greeting=True),
+                unsafe_allow_html=True
+            )
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": clarify_reply,
+                "contact": "",
+                "sources": [],
+                "query": current_user_query,
+                "is_refusal": True,
+                "is_greeting": True,
+                "elapsed_time": None
+            })
+            render_followup_suggestions(current_user_query, key_suffix=str(new_msg_idx), sources=[], assistant_reply=clarify_reply, preselected_prompts=pre_followups)
+        elif is_greeting(current_user_query):
             greeting_idx = int(st.session_state.get("greeting_turn_count", 0)) % len(GREETING_REPLIES)
             greeting_reply = GREETING_REPLIES[greeting_idx]
             st.session_state.greeting_turn_count = greeting_idx + 1
+            pre_followups = _preselect_followups(current_user_query, sources=[], assistant_reply=greeting_reply)
             status_placeholder.markdown(
                 build_assistant_bubble_html(greeting_reply, is_welcome_or_greeting=True),
                 unsafe_allow_html=True
@@ -2450,7 +2661,7 @@ if current_user_query:
                 "is_greeting": True,
                 "elapsed_time": None
             })
-            render_followup_suggestions(current_user_query, key_suffix=str(new_msg_idx), sources=[], assistant_reply=greeting_reply)
+            render_followup_suggestions(current_user_query, key_suffix=str(new_msg_idx), sources=[], assistant_reply=greeting_reply, preselected_prompts=pre_followups)
         else:
             canonical_query = normalize_query_intent(current_user_query)
             ensure_kb_synced_and_fresh_cache()
@@ -2468,6 +2679,7 @@ if current_user_query:
             dept_reply = check_department_inquiry(rewritten_query) if "check_department_inquiry" in globals() else None
 
             if dept_reply:
+                pre_followups = _preselect_followups(rewritten_query, sources=[], assistant_reply=dept_reply)
                 status_placeholder.markdown(
                     build_assistant_bubble_html(dept_reply, is_welcome_or_greeting=True),
                     unsafe_allow_html=True
@@ -2483,7 +2695,7 @@ if current_user_query:
                     "is_dept_inquiry": True,
                     "elapsed_time": None
                 })
-                render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=[], assistant_reply=dept_reply)
+                render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=[], assistant_reply=dept_reply, preselected_prompts=pre_followups)
 
             # 5. Tra cứu RAG nếu là câu hỏi quy chế (kiểm tra Answer Cache tự làm mới theo data/ trước khi gọi LLM)
             else:
@@ -2503,6 +2715,7 @@ if current_user_query:
                         cached_contact = cached_entry.get("contact") or get_contact_footer(rewritten_query, retrieved_docs=None, is_refusal=False)
                         cached_sources = cached_entry.get("sources") or []
                         cached_elapsed = 0.05
+                        pre_followups = _preselect_followups(rewritten_query, sources=cached_sources, assistant_reply=cached_answer)
                         status_placeholder.markdown(
                             build_assistant_bubble_html(cached_answer, contact_html=cached_contact, elapsed_time=cached_elapsed, is_refusal=False),
                             unsafe_allow_html=True
@@ -2518,7 +2731,7 @@ if current_user_query:
                             "elapsed_time": cached_elapsed
                         })
                         print(f"[ANSWER CACHE HIT] key='{cache_key}' (0.05s)")
-                        render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=cached_sources, assistant_reply=cached_answer)
+                        render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=cached_sources, assistant_reply=cached_answer, preselected_prompts=pre_followups)
                     else:
                         start_time = time.time()
                         stream_gen, sources_to_save, num_docs, retrieved_docs = stream_rag_pipeline(rewritten_query)
@@ -2526,6 +2739,7 @@ if current_user_query:
                         if not num_docs or not stream_gen:
                             no_doc_msg = REFUSAL_MESSAGE
                             contact_footer = get_contact_footer(rewritten_query, retrieved_docs=None, is_refusal=True)
+                            pre_followups = _preselect_followups(rewritten_query, sources=[], assistant_reply=no_doc_msg)
                             status_placeholder.markdown(
                                 build_assistant_bubble_html(no_doc_msg, contact_html=contact_footer, is_refusal=True),
                                 unsafe_allow_html=True
@@ -2540,7 +2754,7 @@ if current_user_query:
                                 "is_greeting": False,
                                 "elapsed_time": None
                             })
-                            render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=[], assistant_reply=no_doc_msg)
+                            render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=[], assistant_reply=no_doc_msg, preselected_prompts=pre_followups)
                         else:
                             badge_html = get_verify_badge_html()
                             streamed_chunks = []
@@ -2553,7 +2767,7 @@ if current_user_query:
                                     continue
                                 streamed_chunks.append(chunk_str)
                                 if (not first_chunk_rendered) or (time.time() - last_update > 0.065):
-                                    current_text = "".join(streamed_chunks)
+                                    current_text = _escape_unsafe_lt("".join(streamed_chunks))
                                     status_placeholder.markdown(f"{badge_html}\n\n{current_text}", unsafe_allow_html=True)
                                     last_update = time.time()
                                     first_chunk_rendered = True
@@ -2564,6 +2778,7 @@ if current_user_query:
 
                             if is_interrupted:
                                 contact_footer = get_contact_footer(rewritten_query, retrieved_docs=retrieved_docs, is_refusal=True)
+                                pre_followups = _preselect_followups(rewritten_query, sources=sources_to_save, assistant_reply=full_answer)
                                 status_placeholder.markdown(
                                     build_assistant_bubble_html(full_answer, contact_html=contact_footer, is_refusal=True),
                                     unsafe_allow_html=True
@@ -2578,10 +2793,11 @@ if current_user_query:
                                     "is_greeting": False,
                                     "elapsed_time": None
                                 })
-                                render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=sources_to_save, assistant_reply=full_answer)
+                                render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=sources_to_save, assistant_reply=full_answer, preselected_prompts=pre_followups)
                             elif is_refusal_answer(full_answer) or not full_answer:
                                 full_answer = full_answer or REFUSAL_MESSAGE
                                 contact_footer = get_contact_footer(rewritten_query, retrieved_docs=None, is_refusal=True)
+                                pre_followups = _preselect_followups(rewritten_query, sources=[], assistant_reply=full_answer)
                                 status_placeholder.markdown(
                                     build_assistant_bubble_html(full_answer, contact_html=contact_footer, is_refusal=True),
                                     unsafe_allow_html=True
@@ -2596,9 +2812,10 @@ if current_user_query:
                                     "is_greeting": False,
                                     "elapsed_time": None
                                 })
-                                render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=[], assistant_reply=full_answer)
+                                render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=[], assistant_reply=full_answer, preselected_prompts=pre_followups)
                             else:
                                 contact_footer = get_contact_footer(rewritten_query, retrieved_docs=retrieved_docs, is_refusal=False)
+                                pre_followups = _preselect_followups(rewritten_query, sources=sources_to_save, assistant_reply=full_answer)
                                 status_placeholder.markdown(
                                     build_assistant_bubble_html(full_answer, contact_html=contact_footer, elapsed_time=elapsed_time, is_refusal=False),
                                     unsafe_allow_html=True
@@ -2623,13 +2840,14 @@ if current_user_query:
                                     "is_greeting": False,
                                     "elapsed_time": elapsed_time
                                 })
-                                render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=sources_to_save, assistant_reply=full_answer)
+                                render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=sources_to_save, assistant_reply=full_answer, preselected_prompts=pre_followups)
 
                 except Exception as e:
                     status_placeholder.empty()
                     err_str = str(e)
                     if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str.upper():
                         contact_footer = get_contact_footer(rewritten_query, retrieved_docs=None, is_refusal=True)
+                        pre_followups = _preselect_followups(rewritten_query, sources=[], assistant_reply=RATE_LIMIT_MESSAGE)
                         status_placeholder.markdown(
                             build_assistant_bubble_html(RATE_LIMIT_MESSAGE, contact_html=contact_footer, is_refusal=True),
                             unsafe_allow_html=True
@@ -2644,73 +2862,473 @@ if current_user_query:
                             "is_greeting": False,
                             "elapsed_time": None
                         })
-                        render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=[], assistant_reply=RATE_LIMIT_MESSAGE)
+                        render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=[], assistant_reply=RATE_LIMIT_MESSAGE, preselected_prompts=pre_followups)
                     else:
                         import traceback
                         traceback.print_exc()
                         status_placeholder.error(f"Lỗi: {e}")
+
+with st.sidebar:
+    if LOGO_B64:
+        st.markdown(f"""
+        <div style="display: flex; justify-content: center; align-items: center; width: 100%; padding-top: 14px; margin-bottom: 8px; margin-top: 6px;">
+            <img src="data:image/png;base64,{LOGO_B64}" width="95" height="95" style="width: 95px; height: 95px; max-width: 95px; max-height: 95px; object-fit: contain; display: block; filter: drop-shadow(0 3px 8px rgba(0,0,0,0.4));" alt="Logo VLUTE" />
+        </div>
+        <div style="text-align: center; color: #ffffff; font-weight: 800; font-size: 0.92rem; letter-spacing: 0.3px; margin-bottom: 4px; line-height: 1.35;">
+            TRƯỜNG ĐẠI HỌC<br><span style="white-space: nowrap; color: #ffffff;">CNKT VĨNH LONG</span>
+        </div>
+        <div style="text-align: center; color: #00a65a; font-weight: 700; font-size: 0.76rem; letter-spacing: 0.6px; text-transform: uppercase; margin-bottom: 10px;">
+            QUẢN LÝ ĐÀO TẠO & HỌC VỤ
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown(f"""
+    <div style="display: flex; align-items: center; justify-content: center; gap: 5px; text-align: center; color: #cbd5e1; font-size: 0.75rem; margin-bottom: 10px; padding: 6px 8px; background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; line-height: 1.4; word-break: keep-all;">
+        {SVG_PIN_ICON} <span>Số 73 Nguyễn Huệ, Phường Long Châu, Tỉnh Vĩnh Long</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.button(
+        "Làm mới cuộc trò chuyện",
+        use_container_width=True,
+        on_click=reset_chat_history,
+    )
+    
+    # 2 nhóm liên kết hệ thống rõ rệt (chuỗi không thụt lề để triệt tiêu lỗi code thô)
+    SIDEBAR_NAV_HTML = (
+        '<div class="sidebar-links-card">'
+        f'<div class="sidebar-section-title">{SVG_LINK_ICON}<span>HỆ THỐNG HỌC TẬP</span></div>'
+        '<div class="sidebar-link-grid">'
+        f'<a href="https://vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Cổng thông tin My VLUTE">{SVG_GLOBE_ICON}<span style="overflow:hidden;text-overflow:ellipsis;">My VLUTE</span></a>'
+        f'<a href="https://daotao.vlute.edu.vn/sinh-vien" target="_blank" class="sidebar-link-item" title="Đăng ký học phần">{SVG_FILE_EDIT_ICON}<span style="overflow:hidden;text-overflow:ellipsis;">ĐK Học phần</span></a>'
+        f'<a href="http://elearning.vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Học trực tuyến E-Learning">{SVG_MONITOR_ICON}<span style="overflow:hidden;text-overflow:ellipsis;">E-Learning</span></a>'
+        f'<a href="https://thanhtoan.vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Cổng thanh toán Trực tuyến">{SVG_CARD_ICON}<span style="overflow:hidden;text-overflow:ellipsis;">Thanh toán</span></a>'
+        '</div>'
+        f'<div class="sidebar-section-title" style="margin-top: 12px;">{SVG_LANDMARK_ICON}<span>ĐƠN VỊ HỖ TRỢ</span></div>'
+        '<div class="sidebar-link-grid">'
+        f'<a href="https://tuyensinh.vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Phòng Tuyển sinh">{SVG_COMPASS_ICON}<span style="overflow:hidden;text-overflow:ellipsis;">Tuyển sinh</span></a>'
+        f'<a href="http://pdt.vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Phòng Đào tạo (A1.101)">{SVG_CLIPBOARD_ICON}<span style="overflow:hidden;text-overflow:ellipsis;">Đào tạo (A1.101)</span></a>'
+        f'<a href="http://cgtdt-dsa.vlute.edu.vn/" target="_blank" class="sidebar-link-item" title="Phòng Công tác SV (A1.102)">{SVG_USERS_ICON}<span style="overflow:hidden;text-overflow:ellipsis;">CTSV (A1.102)</span></a>'
+        f'<a href="https://vlute.edu.vn" target="_blank" class="sidebar-link-item" title="Phòng Kế hoạch - Tài chính">{SVG_WALLET_ICON}<span style="overflow:hidden;text-overflow:ellipsis;">KHTC (Tầng trệt)</span></a>'
+        '</div>'
+        '</div>'
+    )
+    st.markdown(SIDEBAR_NAV_HTML, unsafe_allow_html=True)
+
+    # Khối thông tin liên hệ phòng ban (đọc động từ departments.json)
+    depts_cfg = load_departments_config()
+    sidebar_order = [k for k in ("dao_tao", "ctsv", "khtc", "cntt") if k in depts_cfg] + [
+        k for k in depts_cfg.keys() if k not in ("dao_tao", "ctsv", "khtc", "cntt")
+    ]
+    dept_rows_html = []
+    for d_key in sidebar_order:
+        d_item = depts_cfg.get(d_key, {})
+        d_name = html.escape(str(d_item.get("name", d_key)).replace(" (VLUTE)", ""))
+        d_loc = html.escape(str(d_item.get("location", "")))
+        d_phone = html.escape(str(d_item.get("phone", "")))
+        d_email = html.escape(str(d_item.get("email", "")))
+        loc_str = f" ({d_loc})" if d_loc else ""
+        dept_rows_html.append(
+            f'<div style="margin-bottom: 6px; font-size: 0.8rem;">'
+            f'<b style="color: #a7f3d0;">• {d_name}{loc_str}:</b><br>'
+            f'<span style="display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap;">'
+            f'{SVG_SIDEBAR_PHONE_ROW}<code>{d_phone}</code>'
+            f'<span style="color: #475569; margin: 0 2px;">|</span>'
+            f'{SVG_SIDEBAR_MAIL_ROW}<i>{d_email}</i>'
+            f'</span>'
+            f'</div>'
+        )
+    sidebar_contacts_html = (
+        '<div class="sidebar-contact-card">'
+        f'<div style="font-weight: 700; color: #ffffff; margin-bottom: 6px; font-size: 0.85rem; display: flex; align-items: center; gap: 6px;">'
+        f'{SVG_SIDEBAR_PHONE_HEADER}<span>ĐẦU MỐI LIÊN HỆ PHÒNG BAN:</span>'
+        '</div>'
+        + "".join(dept_rows_html)
+        + '</div>'
+    )
+    st.markdown(sidebar_contacts_html, unsafe_allow_html=True)
+    
+    st.markdown("""
+    <div style="margin-top: 10px; padding: 8px 10px; background: rgba(0, 0, 0, 0.2); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; font-size: 0.72rem; color: #94a3b8; text-align: center; line-height: 1.45;">
+        <div style="color: #cbd5e1; font-weight: 700;">© Trường ĐH Công nghệ Kỹ thuật Vĩnh Long</div>
+        <div style="font-size: 0.68rem; color: #a7f3d0; margin-top: 1px;">(Tiền thân: Trường ĐH Sư phạm Kỹ thuật Vĩnh Long)</div>
+    </div>
+    """, unsafe_allow_html=True)
+
 st.markdown('<div id="chat-scroll-anchor"></div>', unsafe_allow_html=True)
 components.html(
     """<script>
     (function() {
         var parentWin = window.parent;
         var doc = parentWin.document;
-        if (parentWin.__vluteScrollObserverAttached) {
-            return;
+
+        function isScrollableY(el) {
+            if (!el || el.nodeType !== 1) {
+                return false;
+            }
+            var style = parentWin.getComputedStyle(el);
+            var oy = style ? style.overflowY : '';
+            return oy === 'auto' || oy === 'scroll';
+        }
+
+        function findScrollContainer() {
+            var anchor = doc.getElementById('chat-scroll-anchor');
+            var firstOverflowMatch = null;
+            var el = anchor ? anchor.parentElement : null;
+            while (el && el !== doc.documentElement) {
+                if (isScrollableY(el)) {
+                    if (el.scrollHeight > el.clientHeight) {
+                        return el;
+                    }
+                    if (!firstOverflowMatch) {
+                        firstOverflowMatch = el;
+                    }
+                }
+                el = el.parentElement;
+            }
+
+            var fallbacks = [
+                doc.querySelector('[data-testid="stAppViewContainer"]'),
+                doc.querySelector('[data-testid="stMain"]'),
+                firstOverflowMatch,
+                doc.scrollingElement,
+                doc.documentElement,
+                doc.body
+            ];
+            for (var i = 0; i < fallbacks.length; i++) {
+                var cand = fallbacks[i];
+                if (cand && cand.scrollHeight > cand.clientHeight) {
+                    return cand;
+                }
+            }
+            for (var j = 0; j < fallbacks.length; j++) {
+                if (fallbacks[j]) {
+                    return fallbacks[j];
+                }
+            }
+            return null;
+        }
+
+        function syncUserMessageScrollReset() {
+            var curUsers = doc.querySelectorAll('.chat-row-user').length;
+            if (curUsers === 0) {
+                parentWin.__vluteLastUserMsgCount = 0;
+                parentWin.__vluteUserScrolledUp = false;
+                return 0;
+            }
+            if (typeof parentWin.__vluteLastUserMsgCount === 'undefined') {
+                parentWin.__vluteLastUserMsgCount = curUsers;
+            } else if (curUsers > parentWin.__vluteLastUserMsgCount) {
+                parentWin.__vluteLastUserMsgCount = curUsers;
+                parentWin.__vluteUserScrolledUp = false;
+                parentWin.__vlutePauseGlideUntil = 0;
+            }
+            return curUsers;
+        }
+
+        function distFromBottom(el) {
+            if (!el) return 0;
+            return Math.max(0, el.scrollHeight - el.scrollTop - el.clientHeight);
+        }
+
+        function cancelActiveGlide() {
+            if (parentWin.__vluteGlideRaf) {
+                parentWin.cancelAnimationFrame(parentWin.__vluteGlideRaf);
+                parentWin.__vluteGlideRaf = null;
+            }
+        }
+
+        function bindScrollContainerEvents(sc) {
+            if (!sc || sc.__vluteScrollListenersBound) {
+                return;
+            }
+            sc.__vluteScrollListenersBound = true;
+            sc.__vlutePrevScrollTop = sc.scrollTop;
+
+            sc.addEventListener('wheel', function(e) {
+                if (e.deltaY < 0) {
+                    parentWin.__vluteLastUpInputTs = Date.now();
+                    parentWin.__vlutePauseGlideUntil = Date.now() + 200;
+                    cancelActiveGlide();
+                    if (distFromBottom(sc) > 140) {
+                        parentWin.__vluteUserScrolledUp = true;
+                    }
+                }
+            }, { passive: true });
+
+            sc.addEventListener('touchstart', function() {
+                parentWin.__vluteLastUpInputTs = Date.now();
+                parentWin.__vlutePauseGlideUntil = Date.now() + 450;
+                if (distFromBottom(sc) > 140) {
+                    parentWin.__vluteUserScrolledUp = true;
+                    cancelActiveGlide();
+                }
+            }, { passive: true });
+
+            sc.addEventListener('scroll', function() {
+                var dist = distFromBottom(sc);
+                var now = Date.now();
+                var recentUpInput = (now - (parentWin.__vluteLastUpInputTs || 0)) < 700;
+                var movedUp = sc.scrollTop < (sc.__vlutePrevScrollTop || 0) - 6;
+                if (dist > 140 && (recentUpInput || (!parentWin.__vluteGlideRaf && movedUp))) {
+                    parentWin.__vluteUserScrolledUp = true;
+                    cancelActiveGlide();
+                } else if (parentWin.__vluteUserScrolledUp && dist < 60) {
+                    parentWin.__vluteUserScrolledUp = false;
+                }
+                sc.__vlutePrevScrollTop = sc.scrollTop;
+            }, { passive: true });
+        }
+
+        function pinWelcomeTopIfEmpty() {
+            try {
+                if (parentWin.history && 'scrollRestoration' in parentWin.history) {
+                    parentWin.history.scrollRestoration = 'manual';
+                }
+            } catch (e) {}
+            if (syncUserMessageScrollReset() > 0) {
+                return false;
+            }
+            parentWin.__vlutePrevScrollHeight = 0;
+            parentWin.__vluteUserScrolledUp = false;
+            cancelActiveGlide();
+            var candidates = [
+                findScrollContainer(),
+                doc.querySelector('[data-testid="stAppViewContainer"]'),
+                doc.querySelector('[data-testid="stMain"]'),
+                doc.scrollingElement,
+                doc.documentElement
+            ];
+            for (var c = 0; c < candidates.length; c++) {
+                if (candidates[c] && candidates[c].scrollTop > 0) {
+                    candidates[c].scrollTop = 0;
+                }
+            }
+            return true;
+        }
+
+        function smoothGlideToBottom() {
+            cancelActiveGlide();
+            if (parentWin.__vluteUserScrolledUp || Date.now() < (parentWin.__vlutePauseGlideUntil || 0)) {
+                return;
+            }
+
+            function step() {
+                if (pinWelcomeTopIfEmpty()) {
+                    return;
+                }
+                if (parentWin.__vluteUserScrolledUp || Date.now() < (parentWin.__vlutePauseGlideUntil || 0)) {
+                    parentWin.__vluteGlideRaf = null;
+                    return;
+                }
+
+                var scrollContainer = findScrollContainer();
+                if (!scrollContainer) {
+                    parentWin.__vluteGlideRaf = null;
+                    return;
+                }
+                bindScrollContainerEvents(scrollContainer);
+
+                var el = scrollContainer;
+                if (el.scrollHeight < (parentWin.__vlutePrevScrollHeight || 0) - 160 && el.scrollTop > 120) {
+                    parentWin.__vluteGlideRaf = null;
+                    return;
+                }
+
+                parentWin.__vlutePrevScrollHeight = Math.max(parentWin.__vlutePrevScrollHeight || 0, el.scrollHeight);
+
+                if (el.scrollHeight <= el.clientHeight) {
+                    parentWin.__vluteGlideRaf = null;
+                    return;
+                }
+
+                var targetTop = Math.max(0, el.scrollHeight - el.clientHeight);
+                var diff = targetTop - el.scrollTop;
+                if (Math.abs(diff) < 1.5) {
+                    el.scrollTop = targetTop;
+                    parentWin.__vluteGlideRaf = null;
+                    return;
+                }
+
+                var prevTop = el.scrollTop;
+                el.scrollTop += diff * 0.34;
+                if (Math.abs(el.scrollTop - prevTop) < 0.05) {
+                    el.scrollTop += diff > 0 ? 1 : -1;
+                    if (Math.abs(el.scrollTop - prevTop) < 0.05 || Math.abs(targetTop - el.scrollTop) < 1.5) {
+                        el.scrollTop = targetTop;
+                        parentWin.__vluteGlideRaf = null;
+                        return;
+                    }
+                }
+                parentWin.__vluteGlideRaf = parentWin.requestAnimationFrame(step);
+            }
+
+            parentWin.__vluteGlideRaf = parentWin.requestAnimationFrame(step);
+        }
+
+        function scheduleScroll() {
+            syncUserMessageScrollReset();
+            var sc = findScrollContainer();
+            if (sc) {
+                bindScrollContainerEvents(sc);
+            }
+            if (parentWin.__vluteUserScrolledUp || Date.now() < (parentWin.__vlutePauseGlideUntil || 0)) {
+                return;
+            }
+            if (parentWin.__vluteWaitDomRaf) {
+                return;
+            }
+            parentWin.__vluteWaitDomRaf = parentWin.requestAnimationFrame(function() {
+                parentWin.__vluteWaitDomRaf = null;
+                if (pinWelcomeTopIfEmpty()) {
+                    return;
+                }
+                if (parentWin.__vluteUserScrolledUp || Date.now() < (parentWin.__vlutePauseGlideUntil || 0)) {
+                    return;
+                }
+                var el = findScrollContainer();
+                if (!el) {
+                    return;
+                }
+                bindScrollContainerEvents(el);
+                if (el.scrollHeight < (parentWin.__vlutePrevScrollHeight || 0) - 160 && el.scrollTop > 120) {
+                    return;
+                }
+                parentWin.__vlutePrevScrollHeight = Math.max(parentWin.__vlutePrevScrollHeight || 0, el.scrollHeight);
+                smoothGlideToBottom();
+            });
+        }
+
+        parentWin.__vluteScheduleScroll = scheduleScroll;
+
+        function scrollToBottomNow() {
+            if (pinWelcomeTopIfEmpty() || parentWin.__vluteUserScrolledUp) {
+                return;
+            }
+            var sc = findScrollContainer();
+            if (!sc || sc.scrollHeight <= sc.clientHeight) {
+                return;
+            }
+            cancelActiveGlide();
+            var targetTop = Math.max(0, sc.scrollHeight - sc.clientHeight);
+            sc.scrollTop = targetTop;
+            sc.__vlutePrevScrollTop = sc.scrollTop;
+            parentWin.__vlutePrevScrollHeight = sc.scrollHeight;
+        }
+
+        function attachMainResizeObserver() {
+            if (typeof parentWin.ResizeObserver !== 'function') {
+                return;
+            }
+            var mainBlock = doc.querySelector('[data-testid="stMainBlockContainer"]') || doc.querySelector('[data-testid="stAppViewBlockContainer"]');
+            if (!mainBlock || mainBlock.__vluteResizeObserved) {
+                return;
+            }
+            mainBlock.__vluteResizeObserved = true;
+            mainBlock.__vluteLastWidth = mainBlock.getBoundingClientRect().width;
+
+            var resizeObs = new parentWin.ResizeObserver(function(entries) {
+                if (pinWelcomeTopIfEmpty() || parentWin.__vluteUserScrolledUp) {
+                    return;
+                }
+                var widthChanged = false;
+                for (var i = 0; i < entries.length; i++) {
+                    var w = entries[i].contentRect ? entries[i].contentRect.width : mainBlock.getBoundingClientRect().width;
+                    if (Math.abs(w - (mainBlock.__vluteLastWidth || 0)) > 0.5) {
+                        mainBlock.__vluteLastWidth = w;
+                        widthChanged = true;
+                    }
+                }
+                if (!widthChanged) {
+                    return;
+                }
+                var sc = findScrollContainer();
+                if (sc && !parentWin.__vluteUserScrolledUp && distFromBottom(sc) < 260) {
+                    scrollToBottomNow();
+                    setTimeout(function() {
+                        var scLate = findScrollContainer();
+                        if (scLate && !parentWin.__vluteUserScrolledUp && distFromBottom(scLate) < 260) {
+                            scrollToBottomNow();
+                        }
+                    }, 380);
+                }
+            });
+            resizeObs.observe(mainBlock);
         }
 
         function attachScrollObserver() {
-            var mainEl = doc.querySelector('section[data-testid="stMain"]');
-            if (!mainEl) {
+            if (!doc.body) {
                 return false;
             }
+            var initialSc = findScrollContainer();
+            if (initialSc) {
+                bindScrollContainerEvents(initialSc);
+            }
+            attachMainResizeObserver();
             if (parentWin.__vluteScrollObserverAttached) {
                 return true;
             }
             parentWin.__vluteScrollObserverAttached = true;
 
-            var scrollScheduled = false;
-
-            function flushScroll() {
-                scrollScheduled = false;
-                if (doc.querySelectorAll('.chat-row-user').length === 0) {
-                    return;
-                }
-                if (mainEl.scrollHeight > mainEl.clientHeight) {
-                    mainEl.scrollTop = mainEl.scrollHeight;
-                }
-            }
-
             var observer = new MutationObserver(function(mutations) {
-                if (doc.querySelectorAll('.chat-row-user').length === 0) {
+                if (pinWelcomeTopIfEmpty()) {
                     return;
                 }
                 var hasChatMutation = false;
                 for (var i = 0; i < mutations.length; i++) {
                     var target = mutations[i].target;
                     var el = target && target.nodeType === 1 ? target : (target ? target.parentElement : null);
-                    if (!el) continue;
-                    if (
-                        el.closest('[data-testid="stChatMessage"]') ||
-                        el.closest('[data-testid="stMainBlockContainer"]') ||
-                        el.id === 'chat-scroll-anchor'
-                    ) {
-                        hasChatMutation = true;
-                        break;
+                    if (el && !el.closest('[data-testid="stSidebar"]') && !el.closest('[data-testid="stBottom"]')) {
+                        if (
+                            el.closest('[data-testid="stChatMessage"]') ||
+                            el.closest('[data-testid="stMainBlockContainer"]') ||
+                            el.closest('[data-testid="stAppViewBlockContainer"]') ||
+                            el.closest('.chat-row-user') ||
+                            el.id === 'chat-scroll-anchor'
+                        ) {
+                            hasChatMutation = true;
+                            break;
+                        }
+                    }
+                    var added = mutations[i].addedNodes;
+                    if (added && added.length) {
+                        for (var k = 0; k < added.length; k++) {
+                            var node = added[k];
+                            if (node && node.nodeType === 1 && !(node.closest && node.closest('[data-testid="stSidebar"]'))) {
+                                if (
+                                    node.id === 'chat-scroll-anchor' ||
+                                    (node.matches && node.matches('[data-testid="stChatMessage"], .chat-row-user')) ||
+                                    (node.querySelector && node.querySelector('[data-testid="stChatMessage"], .chat-row-user, #chat-scroll-anchor'))
+                                ) {
+                                    hasChatMutation = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (hasChatMutation) {
+                            break;
+                        }
                     }
                 }
-                if (hasChatMutation && !scrollScheduled) {
-                    scrollScheduled = true;
-                    parentWin.requestAnimationFrame(flushScroll);
+                if (hasChatMutation && typeof parentWin.__vluteScheduleScroll === 'function') {
+                    parentWin.__vluteScheduleScroll();
                 }
             });
 
-            observer.observe(mainEl, {
+            observer.observe(doc.body, {
                 childList: true,
                 subtree: true,
                 characterData: true
             });
+            if (!pinWelcomeTopIfEmpty()) {
+                scheduleScroll();
+            }
             return true;
+        }
+
+        if (pinWelcomeTopIfEmpty()) {
+            parentWin.requestAnimationFrame(pinWelcomeTopIfEmpty);
+            setTimeout(pinWelcomeTopIfEmpty, 120);
         }
 
         if (!attachScrollObserver()) {
@@ -2719,6 +3337,11 @@ components.html(
                     clearInterval(retry);
                 }
             }, 80);
+        } else if (!pinWelcomeTopIfEmpty()) {
+            scheduleScroll();
+        }
+        if (doc.querySelectorAll('.chat-row-user').length === 0) {
+            pinWelcomeTopIfEmpty();
         }
     })();
     </script>""",

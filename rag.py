@@ -9,8 +9,13 @@ import re
 import math
 import json
 import time
+import socket
 import unicodedata
 from pathlib import Path
+try:
+    import tomllib
+except ImportError:
+    tomllib = None
 import torch
 import streamlit as st
 from rank_bm25 import BM25Okapi
@@ -212,11 +217,71 @@ class SmartRAGChain:
         return bool(re.search(r"(?i)\b(phụ lục|biểu mẫu|bảng\s+\d|như sau\s*:)", text))
 
     @staticmethod
+    def _collapse_consecutive_repeats(tokens: list[str]) -> list[str]:
+        """Khử các cụm từ hoặc câu lặp lại liên tiếp (kể cả khi không có dấu câu ngăn cách)."""
+        if len(tokens) < 2:
+            return tokens
+
+        def _norm_tok(tok: str) -> str:
+            return re.sub(r"^[\(\[\"'«“]+|[\)\]\.,;:!?\"'»”]+$", "", tok.lower())
+
+        normed = [_norm_tok(t) for t in tokens]
+        out: list[str] = []
+        i = 0
+        n = len(tokens)
+        while i < n:
+            matched_span = 0
+            max_span = min(48, (n - i) // 2)
+            for span in range(1, max_span + 1):
+                base = normed[i : i + span]
+                if not any(base):
+                    continue
+                reps = 1
+                pos = i + span
+                while pos + span <= n and normed[pos : pos + span] == base:
+                    reps += 1
+                    pos += span
+                min_reps = 2 if span >= 4 else 3
+                if reps >= min_reps:
+                    kept = list(tokens[i : i + span])
+                    last_tok = tokens[pos - 1]
+                    if last_tok.endswith(("?", "!", ".")) and not kept[-1].endswith(("?", "!", ".")):
+                        kept[-1] = kept[-1].rstrip(",;:") + last_tok[-1]
+                    out.extend(kept)
+                    i = pos
+                    matched_span = span
+                    break
+            if not matched_span:
+                out.append(tokens[i])
+                i += 1
+        return out
+
+    @staticmethod
     def _prepare_retrieval_query(q_clean: str) -> str:
-        """Chuẩn hóa câu truy vấn tìm kiếm tổng quát: loại bỏ từ gọi bot và mở rộng viết tắt quy chế nếu câu quá ngắn."""
+        """Chuẩn hóa câu truy vấn tìm kiếm tổng quát: khử lặp chuỗi, giới hạn 450 ký tự và mở rộng viết tắt nếu ngắn."""
         s = re.sub(r"\s+", " ", (q_clean or "").strip())
         if not s:
             return ""
+
+        s = re.sub(r"([?!;])(?=\S)", r"\1 ", s)
+        raw_clauses = [c.strip() for c in re.split(r"(?<=[.?!;])\s+", s) if c.strip()]
+        if len(raw_clauses) > 1:
+            dedup_clauses: list[str] = []
+            seen_clauses: set[str] = set()
+            for clause in raw_clauses:
+                norm_clause = re.sub(r"[.!?,;:\s]+$", "", clause.lower()).strip()
+                if len(norm_clause) >= 8 or len(norm_clause.split()) >= 3:
+                    if norm_clause in seen_clauses:
+                        continue
+                    seen_clauses.add(norm_clause)
+                dedup_clauses.append(clause)
+            s = " ".join(dedup_clauses).strip()
+
+        tokens = SmartRAGChain._collapse_consecutive_repeats(s.split())
+        s = " ".join(tokens).strip()
+        if not s:
+            return ""
+
         words = s.split()
         if len(words) <= 5:
             q_punct = "?" if s.endswith("?") else ""
@@ -241,6 +306,14 @@ class SmartRAGChain:
                     s = f"quy định về {s}"
                 if q_punct and not s.endswith("?"):
                     s = f"{s}{q_punct}"
+
+        if len(s) > 450:
+            q_suffix = "?" if s.rstrip().endswith("?") else ""
+            max_body = 450 - (1 if q_suffix else 0)
+            cut = s[:max_body].rsplit(" ", 1)[0].rstrip(" ,.;:-")
+            if not cut:
+                cut = s[:max_body].rstrip()
+            s = f"{cut}{q_suffix}" if q_suffix and not cut.endswith("?") else cut
         return s
 
     @staticmethod
@@ -496,11 +569,19 @@ class SmartRAGChain:
             (max_bm25_score >= HYBRID_STRONG_BM25)
             and (best_idf_cov >= HYBRID_IDF_COV_STRONG)
             and (max_dense_score >= 0.36)
+        ) or (
+            (max_bm25_score >= 44.0)
+            and (best_idf_cov >= 0.48)
+            and (max_dense_score >= 0.28)
         )
         both_moderate = (
             (max_dense_score >= HYBRID_SIM_FLOOR)
             and (max_bm25_score >= HYBRID_MIN_BM25_WITH_DENSE)
             and (best_idf_cov >= 0.38)
+        ) or (
+            (max_dense_score >= 0.43)
+            and (max_bm25_score >= 18.0)
+            and (best_idf_cov >= 0.37)
         )
         accepted = bool(dense_strong or lexical_strong or both_moderate)
 
@@ -661,10 +742,11 @@ class SmartRAGChain:
         Với câu hỏi ghép nhiều hành vi/quy định độc lập, truy xuất cho cả câu đầy đủ lẫn
         từng vế con rồi trộn xen kẽ (round-robin, khử trùng lặp) tối đa 7 đoạn trích.
         """
-        primary_docs = self._retrieve_single_query(query, k=k)
+        prepared_query = self._prepare_retrieval_query(query)
+        primary_docs = self._retrieve_single_query(prepared_query, k=k)
         primary_debug = dict(self.last_retrieval_debug)
 
-        sub_clauses = self._split_compound_clauses(query)
+        sub_clauses = self._split_compound_clauses(prepared_query)
         if not sub_clauses:
             self.last_retrieval_debug = primary_debug
             return primary_docs
@@ -731,7 +813,7 @@ class SmartRAGChain:
             }
 
         context_parts = []
-        for doc in docs:
+        for doc in docs[:5]:
             src_file = os.path.basename(doc.metadata.get("source", "Tài liệu"))
             page = doc.metadata.get("page", 1)
             header_line = f"--- [VĂN BẢN: {doc.metadata.get('title', src_file)} | Năm ban hành: {doc.metadata.get('year', 'Chưa rõ')} | Số hiệu: {doc.metadata.get('doc_code', '')} | Trang {page}] ---"
@@ -765,11 +847,13 @@ _GLOBAL_REWRITER_LLM = None
 _GLOBAL_BM25_DATA = None
 _LAST_DATA_DIR_SIGNATURE = None
 _DEAD_GROQ_MODELS = set()
+_COOLDOWN_GROQ_MODELS: dict[str, float] = {}
 _GROQ_CLIENTS_CACHE = {}
+_TOML_SECRETS_CACHE: dict | None = None
 _CURRENT_KEY_INDEX = 0
 _CURRENT_GROQ_KEY_INDEX = 0
 
-MAX_CONTEXT_SNIPPET_CHARS = 750
+MAX_CONTEXT_SNIPPET_CHARS = 560
 
 
 def clip_context_text(text: str, max_chars: int = MAX_CONTEXT_SNIPPET_CHARS) -> str:
@@ -1015,18 +1099,48 @@ def _parse_keys_value(raw_val):
     return cleaned
 
 
-def get_all_google_api_keys():
-    """
-    Đọc danh sách khóa API từ st.secrets hoặc biến môi trường (hỗ trợ cả dạng string và list):
-    - Nếu là string (GEMINI_API_KEY): tự động bọc thành list.
-    - Nếu là list (GEMINI_API_KEYS): giữ nguyên list.
-    - Kiểm tra hợp lệ: Bắt buộc key phải bắt đầu bằng 'AIzaSy' (bỏ qua ngay lập tức các chuỗi
-      bắt đầu bằng 'AQ...' hoặc chuỗi rác để tránh treo timeout 40s).
-    """
+def _load_secrets_toml_fallback() -> dict:
+    """Đọc trực tiếp tệp .streamlit/secrets.toml bằng tomllib khi chạy ngoài runtime Streamlit (FastAPI/CLI)."""
+    global _TOML_SECRETS_CACHE
+    if _TOML_SECRETS_CACHE is not None:
+        return _TOML_SECRETS_CACHE
+
+    if tomllib is None:
+        _TOML_SECRETS_CACHE = {}
+        return _TOML_SECRETS_CACHE
+
+    candidate_paths = (
+        Path(__file__).parent / ".streamlit" / "secrets.toml",
+        Path.cwd() / ".streamlit" / "secrets.toml",
+    )
+    for sec_path in candidate_paths:
+        if sec_path.is_file():
+            try:
+                with open(sec_path, "rb") as f:
+                    data = tomllib.load(f)
+                if isinstance(data, dict):
+                    _TOML_SECRETS_CACHE = data
+                    return _TOML_SECRETS_CACHE
+            except Exception:
+                pass
+    _TOML_SECRETS_CACHE = {}
+    return _TOML_SECRETS_CACHE
+
+
+def _collect_secret_or_env_keys(sec_names: tuple[str, ...]) -> list[str]:
+    """Đọc key từ st.secrets (nếu trong Streamlit runtime), dự phòng .streamlit/secrets.toml (tomllib) và biến môi trường."""
     raw_keys = []
+    in_st_runtime = False
     try:
-        if hasattr(st, "secrets"):
-            for sec_name in ("GEMINI_API_KEYS", "GEMINI_API_KEY", "GOOGLE_API_KEYS", "GOOGLE_API_KEY"):
+        rt = getattr(st, "runtime", None)
+        if rt is not None and callable(getattr(rt, "exists", None)):
+            in_st_runtime = bool(rt.exists())
+    except Exception:
+        in_st_runtime = False
+
+    if in_st_runtime and hasattr(st, "secrets"):
+        try:
+            for sec_name in sec_names:
                 if sec_name in st.secrets:
                     val = st.secrets[sec_name]
                     if isinstance(val, str):
@@ -1035,15 +1149,32 @@ def get_all_google_api_keys():
                         raw_keys.extend(list(val))
                     else:
                         raw_keys.extend(_parse_keys_value(val))
-    except Exception:
-        pass
+        except Exception:
+            pass
 
-    for env_name in ("GEMINI_API_KEYS", "GEMINI_API_KEY", "GOOGLE_API_KEYS", "GOOGLE_API_KEY"):
+    if not raw_keys:
+        toml_data = _load_secrets_toml_fallback()
+        for sec_name in sec_names:
+            if sec_name in toml_data:
+                raw_keys.extend(_parse_keys_value(toml_data[sec_name]))
+
+    for env_name in sec_names:
         env_val = os.getenv(env_name)
         if env_val:
             raw_keys.extend(_parse_keys_value(env_val))
 
-    cleaned = _parse_keys_value(raw_keys)
+    return _parse_keys_value(raw_keys)
+
+
+def get_all_google_api_keys():
+    """
+    Đọc danh sách khóa API từ st.secrets, .streamlit/secrets.toml (tomllib) hoặc biến môi trường:
+    - Nếu là string (GEMINI_API_KEY): tự động bọc thành list.
+    - Nếu là list (GEMINI_API_KEYS): giữ nguyên list.
+    - Kiểm tra hợp lệ: Bắt buộc key phải bắt đầu bằng 'AIzaSy' (bỏ qua ngay lập tức các chuỗi
+      bắt đầu bằng 'AQ...' hoặc chuỗi rác để tránh treo timeout 40s).
+    """
+    cleaned = _collect_secret_or_env_keys(("GEMINI_API_KEYS", "GEMINI_API_KEY", "GOOGLE_API_KEYS", "GOOGLE_API_KEY"))
     # Lọc nghiêm ngặt: Chỉ giữ lại các key Google hợp lệ bắt đầu bằng 'AIzaSy'
     valid_keys = [k for k in cleaned if k.startswith("AIzaSy")]
     return valid_keys
@@ -1061,22 +1192,8 @@ def get_google_api_key():
 
 
 def get_all_groq_api_keys() -> list[str]:
-    """Đọc danh sách Groq API key từ GROQ_API_KEYS / GROQ_API_KEY trong st.secrets hoặc biến môi trường."""
-    raw_keys = []
-    try:
-        if hasattr(st, "secrets"):
-            for sec_name in ("GROQ_API_KEYS", "GROQ_API_KEY"):
-                if sec_name in st.secrets:
-                    raw_keys.extend(_parse_keys_value(st.secrets[sec_name]))
-    except Exception:
-        pass
-
-    for env_name in ("GROQ_API_KEYS", "GROQ_API_KEY"):
-        env_val = os.getenv(env_name)
-        if env_val:
-            raw_keys.extend(_parse_keys_value(env_val))
-
-    return _parse_keys_value(raw_keys)
+    """Đọc danh sách Groq API key từ GROQ_API_KEYS / GROQ_API_KEY trong st.secrets, secrets.toml hoặc biến môi trường."""
+    return _collect_secret_or_env_keys(("GROQ_API_KEYS", "GROQ_API_KEY"))
 
 
 def get_groq_api_key():
@@ -1153,12 +1270,13 @@ class RotatingResilientLLM:
         self._cloud_clients = {}
         self._groq_models = [
             "openai/gpt-oss-120b",
-            "qwen/qwen3.8-27b",
+            "qwen/qwen3-32b",
             "openai/gpt-oss-20b",
             "llama-3.3-70b-versatile",
             "llama-3.1-8b-instant",
         ]
         self._dead_groq_models = _DEAD_GROQ_MODELS
+        self._cooldown_groq_models = _COOLDOWN_GROQ_MODELS
 
     def _get_cloud_client(self, api_key: str):
         if api_key not in self._cloud_clients:
@@ -1179,7 +1297,7 @@ class RotatingResilientLLM:
             return None
         temp = self.temperature if temperature is None else temperature
         mtok = self.max_output_tokens if max_tokens is None else max_tokens
-        timeout_sec = 4.5 if int(mtok) <= 200 else 10.0
+        timeout_sec = 4.5 if int(mtok) <= 200 else 6.5
         is_gpt_oss = "gpt-oss" in model_name
         effective_mtok = max(int(mtok), 600 if int(mtok) <= 200 else 2500) if is_gpt_oss else int(mtok)
         extra_kwargs = {"reasoning_effort": "low"} if is_gpt_oss else {}
@@ -1202,15 +1320,46 @@ class RotatingResilientLLM:
             self._groq_models.insert(0, groq_model)
 
     def _handle_groq_error(self, groq_model: str, err: Exception):
-        """Phân loại lỗi Groq và xoay vòng model tức thì (0ms, không ngủ)."""
+        """Phân loại lỗi Groq, gắn cooldown 45s cho model chạm trần 429 và xoay vòng tức thì (0ms)."""
         err_msg = str(err).lower()
         if any(tok in err_msg for tok in ("not_found", "does not exist", "404", "decommissioned", "model_not_found")):
             _DEAD_GROQ_MODELS.add(groq_model)
             return
         if any(tok in err_msg for tok in ("429", "rate_limit", "rate limit", "too many requests")):
+            _COOLDOWN_GROQ_MODELS[groq_model] = time.time() + 45.0
             if groq_model in self._groq_models:
                 self._groq_models.remove(groq_model)
                 self._groq_models.append(groq_model)
+
+    def _get_candidate_groq_models(self, prioritize_fast: bool = False) -> list[str]:
+        """Lọc bỏ các model đã chết (404) hoặc đang trong thời gian cooldown 45s do 429 TPM."""
+        now = time.time()
+        for m_expired in [m for m, until in _COOLDOWN_GROQ_MODELS.items() if until <= now]:
+            _COOLDOWN_GROQ_MODELS.pop(m_expired, None)
+
+        candidates = [
+            m for m in self._groq_models
+            if m not in _DEAD_GROQ_MODELS and _COOLDOWN_GROQ_MODELS.get(m, 0.0) <= now
+        ]
+        if prioritize_fast:
+            for fast_model in ("openai/gpt-oss-20b", "openai/gpt-oss-120b", "llama-3.1-8b-instant"):
+                if fast_model in candidates:
+                    candidates.remove(fast_model)
+                    candidates.insert(0, fast_model)
+            if self.preferred_model and self.preferred_model not in _DEAD_GROQ_MODELS and _COOLDOWN_GROQ_MODELS.get(self.preferred_model, 0.0) <= now:
+                if self.preferred_model in candidates:
+                    candidates.remove(self.preferred_model)
+                candidates.insert(0, self.preferred_model)
+        return candidates
+
+    @staticmethod
+    def _is_local_lm_available(host: str = "127.0.0.1", port: int = 1234, timeout: float = 0.15) -> bool:
+        """Kiểm tra nhanh cổng LM Studio trước khi gọi để bỏ qua ngay (< 1ms) nếu đã tắt."""
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except OSError:
+            return False
 
     def invoke(self, prompt, *args, **kwargs):
         global _CURRENT_KEY_INDEX
@@ -1220,16 +1369,9 @@ class RotatingResilientLLM:
 
         # TẦNG 1 (Engine chính): Ưu tiên gọi trực tiếp Groq LPU ngay từ đầu
         print("[LLM ENGINE] Đang tạo phản hồi qua Groq LPU...")
-        candidate_models = [m for m in self._groq_models if m not in _DEAD_GROQ_MODELS]
-        if self.max_output_tokens <= 200 or self.preferred_model:
-            for fast_model in ("openai/gpt-oss-20b", "openai/gpt-oss-120b", "llama-3.1-8b-instant"):
-                if fast_model in candidate_models:
-                    candidate_models.remove(fast_model)
-                    candidate_models.insert(0, fast_model)
-            if self.preferred_model and self.preferred_model not in _DEAD_GROQ_MODELS:
-                if self.preferred_model in candidate_models:
-                    candidate_models.remove(self.preferred_model)
-                candidate_models.insert(0, self.preferred_model)
+        candidate_models = self._get_candidate_groq_models(
+            prioritize_fast=bool(self.max_output_tokens <= 200 or self.preferred_model)
+        )
 
         for groq_model in candidate_models:
             try:
@@ -1248,14 +1390,18 @@ class RotatingResilientLLM:
                 continue
 
         # TẦNG 2 (Dự phòng 1): Chuyển tiếp sang Local LM Studio (Qwen 4B)
-        try:
-            print("[FAILOVER] Groq không khả dụng -> Chuyển sang Local LM Studio (qwen/qwen3.5-4b)...")
-            local_resp = self.local_llm.invoke(prompt, *args, **kwargs)
-            local_content = getattr(local_resp, "content", str(local_resp))
-            if local_content and str(local_content).strip():
-                return local_resp
-        except Exception as l_err:
-            local_err = l_err
+        if not self._is_local_lm_available():
+            local_err = ConnectionRefusedError("Local LM Studio (127.0.0.1:1234) is unreachable")
+            print("[FAILOVER] Cổng Local LM Studio (127.0.0.1:1234) đóng -> Bỏ qua ngay sang dự phòng Cloud...")
+        else:
+            try:
+                print("[FAILOVER] Groq không khả dụng -> Chuyển sang Local LM Studio (qwen/qwen3.5-4b)...")
+                local_resp = self.local_llm.invoke(prompt, *args, **kwargs)
+                local_content = getattr(local_resp, "content", str(local_resp))
+                if local_content and str(local_content).strip():
+                    return local_resp
+            except Exception as l_err:
+                local_err = l_err
 
         # TẦNG 2 (Dự phòng 2): Gọi Gemini nếu có key 'AIzaSy' hợp lệ
         valid_gemini_keys = get_all_google_api_keys()
@@ -1292,7 +1438,7 @@ class RotatingResilientLLM:
 
         # TẦNG 1 (Engine chính): Ưu tiên gọi trực tiếp Groq LPU ngay từ đầu
         print("[LLM ENGINE] Đang tạo phản hồi qua Groq LPU...")
-        candidate_models = [m for m in self._groq_models if m not in _DEAD_GROQ_MODELS]
+        candidate_models = self._get_candidate_groq_models(prioritize_fast=False)
         for groq_model in candidate_models:
             yielded_groq = False
             try:
@@ -1318,24 +1464,28 @@ class RotatingResilientLLM:
 
         # TẦNG 2 (Dự phòng 1): Chuyển tiếp sang Local LM Studio (Qwen 4B)
         yielded_local = False
-        try:
-            print("[FAILOVER] Groq không khả dụng -> Chuyển sang Local LM Studio (qwen/qwen3.5-4b)...")
-            for chunk in self.local_llm.stream(prompt, *args, **kwargs):
-                chunk_text = getattr(chunk, "content", str(chunk))
-                if chunk_text:
-                    yielded_local = True
-                    yield chunk
-            if yielded_local:
-                return
-            resp = self.local_llm.invoke(prompt, *args, **kwargs)
-            if getattr(resp, "content", ""):
-                yield resp
-                return
-        except Exception as l_err:
-            local_err = l_err
-            if yielded_local:
-                yield f"\n\n{STREAM_INTERRUPTED_NOTICE}"
-                return
+        if not self._is_local_lm_available():
+            local_err = ConnectionRefusedError("Local LM Studio (127.0.0.1:1234) is unreachable")
+            print("[FAILOVER] Cổng Local LM Studio (127.0.0.1:1234) đóng -> Bỏ qua ngay sang dự phòng Cloud...")
+        else:
+            try:
+                print("[FAILOVER] Groq không khả dụng -> Chuyển sang Local LM Studio (qwen/qwen3.5-4b)...")
+                for chunk in self.local_llm.stream(prompt, *args, **kwargs):
+                    chunk_text = getattr(chunk, "content", str(chunk))
+                    if chunk_text:
+                        yielded_local = True
+                        yield chunk
+                if yielded_local:
+                    return
+                resp = self.local_llm.invoke(prompt, *args, **kwargs)
+                if getattr(resp, "content", ""):
+                    yield resp
+                    return
+            except Exception as l_err:
+                local_err = l_err
+                if yielded_local:
+                    yield f"\n\n{STREAM_INTERRUPTED_NOTICE}"
+                    return
 
         # TẦNG 2 (Dự phòng 2): Gọi Gemini nếu có key 'AIzaSy' hợp lệ
         valid_gemini_keys = get_all_google_api_keys()
@@ -1382,7 +1532,7 @@ def get_llm(temperature: float = 0.0, max_output_tokens: int = 2048, preferred_m
             temperature=temperature,
             max_tokens=max_output_tokens,
             max_retries=0,
-            request_timeout=4.5 if int(max_output_tokens) <= 200 else 10.0
+            request_timeout=4.5 if int(max_output_tokens) <= 200 else 6.5
         )
 
     local_llm = ChatOpenAI(
@@ -1392,7 +1542,7 @@ def get_llm(temperature: float = 0.0, max_output_tokens: int = 2048, preferred_m
         temperature=0.0,
         max_tokens=min(800, max_output_tokens),
         max_retries=0,
-        request_timeout=45,
+        request_timeout=8,
         streaming=(max_output_tokens > 200),
         extra_body={"reasoning_effort": "none"}
     )
@@ -1411,7 +1561,7 @@ def get_rewriter_llm():
     global _GLOBAL_REWRITER_LLM
     if _GLOBAL_REWRITER_LLM is not None:
         return _GLOBAL_REWRITER_LLM
-    _GLOBAL_REWRITER_LLM = get_llm(temperature=0.0, max_output_tokens=100, preferred_model="qwen/qwen3.8-27b")
+    _GLOBAL_REWRITER_LLM = get_llm(temperature=0.0, max_output_tokens=100, preferred_model="llama-3.1-8b-instant")
     return _GLOBAL_REWRITER_LLM
 
 
@@ -1433,8 +1583,27 @@ def rewrite_conversational_query(query: str, chat_history: list | None = None) -
             continue
         role = msg.get("role")
         content = str(msg.get("content", "") or "").strip()
-        if role not in ("user", "assistant") or not content or msg.get("is_greeting"):
+        if role not in ("user", "assistant") or not content:
             continue
+        if msg.get("is_greeting"):
+            if role == "assistant" and valid_history and valid_history[-1][0] == "user":
+                valid_history.pop()
+            continue
+        if role == "assistant":
+            c_low = content.lower()
+            is_excluded_assistant = bool(
+                msg.get("is_refusal")
+                or REFUSAL_MESSAGE in content
+                or "không được đề cập trong các văn bản quy định" in c_low
+                or "ngoài phạm vi dữ liệu quy chế" in c_low
+                or "lượng truy cập cao" in c_low
+                or "đợi khoảng 30–60 giây" in c_low
+                or "phản hồi bị gián đoạn giữa chừng" in c_low
+            )
+            if is_excluded_assistant:
+                if valid_history and valid_history[-1][0] == "user":
+                    valid_history.pop()
+                continue
         valid_history.append((role, content))
 
     if valid_history and valid_history[-1][0] == "user" and valid_history[-1][1].strip() == raw_query:
@@ -1555,8 +1724,9 @@ def get_rag_chain():
         "   - Cấm tự đặt ví dụ giả định cho mọi văn bản quy chế: Chỉ nêu đúng công thức, tỷ lệ và con số được quy định nguyên văn trong tài liệu; tuyệt đối KHÔNG tự đặt ví dụ tính thử bằng số tiền, điểm số hay định mức giả định (như tự lấy đơn giá tín chỉ giả định để nhân thử) khi sinh viên không đưa ra con số cụ thể để tính, giúp câu trả lời cô đọng và chuẩn xác cho mọi quy chế hiện tại lẫn về sau.\n"
         "   - Khi đọc Bảng quy đổi ngày CTXH (Điều 8 Quyết định 55, Trang 9–10) bị tách cột qua 2 trang liên tiếp: đối chiếu theo mã số tương ứng gồm Mùa hè xanh (001101 - tham gia các đội hình chuyên), Tiếp sức mùa thi (001301), Tiếp sức tân sinh viên (001501) đều quy đổi 1 ngày CTXH / ngày tham gia (tối thiểu 5 giờ làm việc hoặc 1 ca trực theo phân công); Trực tiếp hiến máu tình nguyện (001202) quy đổi 1 ngày CTXH (theo Giấy xác nhận hiến máu); Hỗ trợ tổ chức hoạt động hiến máu tình nguyện (001201) quy đổi 0,5 ngày CTXH (theo Bảng phân công nhiệm vụ hỗ trợ).\n"
         "   - Khi đọc Phụ lục Khung xử lý kỷ luật sinh viên (Quyết định 1079, Trang 25–34, 4 cột mức kỷ luật theo thứ tự: Khiển trách | Cảnh cáo | Đình chỉ có thời hạn | Buộc thôi học): mục 4 (Học thay hoặc nhờ người khác học thay) xử lý từ Khiển trách đến Buộc thôi học tùy mức độ; mục 5 (Thi, kiểm tra thay hoặc nhờ thi, kiểm tra thay; làm thay, nhờ làm hoặc sao chép tiểu luận, đồ án, khóa luận tốt nghiệp) xử lý Đình chỉ học tập có thời hạn (vi phạm lần 1) và Buộc thôi học (vi phạm lần 2); mục 6 (Tổ chức học, thi, kiểm tra thay) xử lý Buộc thôi học ngay từ lần 1 (nếu nghiêm trọng giao cơ quan chức năng xử lý theo pháp luật).\n"
+        "   - Khi sinh viên hỏi về quyền lợi điểm rèn luyện của Ban cán sự lớp / Cán bộ lớp / Đoàn – Hội, phải đối chiếu quy định trong tài liệu để nêu rõ số điểm rèn luyện được cộng cụ thể theo từng chức danh và mức độ hoàn thành nhiệm vụ (nếu văn bản có quy định) thay vì chỉ trả lời chung chung.\n"
         "3. Phong cách trả lời:\n"
-        "   - Tuyệt đối KHÔNG dùng các cụm từ máy móc làm lộ kỹ thuật prompt như 'Dựa trên ngữ cảnh được cung cấp', 'Theo ngữ cảnh được cung cấp', 'Theo ngữ cảnh', 'Trong đoạn trích', 'Tài liệu cung cấp', 'Dựa vào đoạn văn bản trên'; thay vào đó diễn đạt tự nhiên như cán bộ tư vấn học vụ (ví dụ: 'Theo quy định hiện hành của Nhà trường...', 'Theo quy định tại VLUTE...', hoặc đi thẳng vào nội dung trả lời).\n"
+        "   - Tuyệt đối KHÔNG dùng các cụm từ máy móc làm lộ kỹ thuật prompt như 'Dựa trên ngữ cảnh được cung cấp', 'Theo ngữ cảnh được cung cấp', 'Theo ngữ cảnh', 'Trong đoạn trích', 'Tài liệu cung cấp', 'Dựa vào đoạn văn bản trên', 'Trong văn bản được trích dẫn', 'Theo văn bản được trích dẫn', 'tài liệu được trích dẫn'; thay vào đó diễn đạt tự nhiên như cán bộ tư vấn học vụ (ví dụ: 'Theo quy định hiện hành của Nhà trường...', 'Theo quy định tại VLUTE...', hoặc đi thẳng vào nội dung trả lời).\n"
         "   - Đi thẳng vào câu hỏi, diễn đạt tự nhiên, rõ ràng, súc tích.\n"
         "   - KHÔNG cần trích dẫn rườm rà số hiệu quyết định hay điều khoản trừ khi câu hỏi yêu cầu cụ thể.\n"
         "   - Trình bày dạng gạch đầu dòng ngắn gọn để sinh viên nắm bắt thông tin nhanh nhất.\n"

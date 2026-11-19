@@ -1,0 +1,162 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --fm-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --fm-spring: cubic-bezier(0.34, 1.36, 0.64, 1);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  background-color: #f6f9f8;
+  color: #1e293b;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.vlute-page-bg {
+  background-color: #f6f9f8;
+  background-image:
+    radial-gradient(circle at 50% 0%, rgba(0, 112, 60, 0.055) 0%, transparent 56%),
+    radial-gradient(rgba(15, 23, 42, 0.045) 1px, transparent 1px);
+  background-size: 100% 100%, 22px 22px;
+}
+
+.typing-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  display: inline-block;
+  animation: typingBounce 1.4s infinite ease-in-out both;
+}
+
+.typing-dot-1 {
+  background-color: #00703c;
+  animation-delay: -0.32s;
+}
+
+.typing-dot-2 {
+  background-color: #00a65a;
+  animation-delay: -0.16s;
+}
+
+.typing-dot-3 {
+  background-color: #e67e22;
+  animation-delay: 0s;
+}
+
+@keyframes typingBounce {
+  0%,
+  80%,
+  100% {
+    transform: scale(0.55) translateY(0px);
+    opacity: 0.4;
+  }
+  40% {
+    transform: scale(1) translateY(-4px);
+    opacity: 1;
+  }
+}
+
+.avatar-pulse {
+  animation: avatarPulse 1.4s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+@keyframes avatarPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(0, 166, 90, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(0, 166, 90, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(0, 166, 90, 0);
+  }
+}
+
+.vlute-markdown {
+  color: #1e293b;
+  font-size: 0.96rem;
+  line-height: 1.65;
+  word-break: normal;
+  overflow-wrap: break-word;
+}
+
+.vlute-markdown p {
+  margin-top: 0;
+  margin-bottom: 0.65rem;
+}
+
+.vlute-markdown p:last-child {
+  margin-bottom: 0;
+}
+
+.vlute-markdown ul,
+.vlute-markdown ol {
+  margin: 0.5rem 0;
+  padding-left: 1.25rem;
+}
+
+.vlute-markdown ul {
+  list-style-type: disc;
+}
+
+.vlute-markdown ol {
+  list-style-type: decimal;
+}
+
+.vlute-markdown li {
+  margin-bottom: 0.35rem;
+  line-height: 1.6;
+}
+
+.vlute-markdown li:last-child {
+  margin-bottom: 0;
+}
+
+.vlute-markdown strong,
+.vlute-markdown b {
+  color: #1e293b;
+  font-weight: 700;
+}
+
+.vlute-markdown code {
+  background: #f1f5f9;
+  color: #005a30;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  font-size: 0.88em;
+}
+
+.vlute-markdown a {
+  color: #00703c;
+  text-decoration: underline;
+}
+
+.sidebar-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.28);
+  border-radius: 9999px;
+}
+
+.main-scroll::-webkit-scrollbar {
+  width: 7px;
+}
+
+.main-scroll::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.25);
+  border-radius: 9999px;
+}
+
+@media (max-width: 768px) {
+  .vlute-markdown {
+    font-size: 0.92rem;
+  }
+}
