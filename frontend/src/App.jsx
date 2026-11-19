@@ -73,7 +73,7 @@ export default function App() {
     document.body.style.userSelect = "none";
 
     const onMouseMove = (e) => {
-      const nextWidth = Math.min(600, Math.max(240, e.clientX));
+      const nextWidth = Math.min(600, Math.max(280, e.clientX));
       setSidebarWidth(nextWidth);
     };
 
@@ -83,11 +83,13 @@ export default function App() {
 
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
+    window.addEventListener("blur", onMouseUp);
     return () => {
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
+      window.removeEventListener("blur", onMouseUp);
     };
   }, [isResizingSidebar]);
 
@@ -436,11 +438,17 @@ export default function App() {
   const avatarUrl = initData?.branding?.avatar_url || "/assets/lucas_avatar.png";
 
   return (
-    <div className="flex h-screen w-full overflow-hidden vlute-page-bg text-[#1e293b]">
+    <div
+      data-testid="app-root"
+      className={`flex h-screen w-full overflow-hidden vlute-page-bg text-[#1e293b] ${
+        isResizingSidebar ? "select-none" : ""
+      }`}
+    >
       <Sidebar
         isOpen={sidebarOpen}
         isMobile={isMobile}
         width={sidebarWidth}
+        isResizing={isResizingSidebar}
         onResizeStart={handleResizeStart}
         onToggle={() => setSidebarOpen((v) => !v)}
         onClose={() => setSidebarOpen(false)}
@@ -454,7 +462,7 @@ export default function App() {
         style={{ paddingLeft: !isMobile && sidebarOpen ? sidebarWidth : 0 }}
         className={`relative flex-1 flex flex-col min-w-0 h-full ${
           isResizingSidebar
-            ? ""
+            ? "pointer-events-none"
             : "transition-[padding] duration-[340ms] ease-[cubic-bezier(0.22,1,0.36,1)]"
         }`}
       >
