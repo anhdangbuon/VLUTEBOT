@@ -120,7 +120,7 @@ function SidebarContent({
       : DEFAULT_SIDEBAR_LINK_GROUPS;
 
   return (
-    <div className="flex flex-col h-full w-full bg-[#222d32] text-[#b8c7ce] border-r border-[#1a2226] shadow-[4px_0_24px_rgba(0,0,0,0.3)] select-none">
+    <div className="flex flex-col h-full w-full bg-[#1d262a] text-[#b8c7ce] border-r border-[#1a2226] shadow-[4px_0_24px_rgba(0,0,0,0.3)] select-none">
       {/* Header badge & collapse button */}
       <div className="px-3.5 pt-3 pb-1 shrink-0">
         <div className="flex items-center justify-between gap-2 bg-[#141a1d] border border-[#2b3b42] rounded-[8px] min-h-[46px] px-4 py-2">
@@ -152,19 +152,19 @@ function SidebarContent({
           />
         </div>
 
-        <div className="text-center text-[#b8c7ce] font-extrabold text-[0.92rem] tracking-[0.3px] mb-1 leading-[1.35]">
+        <div className="text-center text-[#e2e8f0] font-extrabold text-[0.92rem] tracking-[0.3px] mb-1 leading-[1.35]">
           {uniLine1}
           <br />
-          <span className="whitespace-nowrap text-[#b8c7ce]">{uniLine2}</span>
+          <span className="whitespace-nowrap text-[#e2e8f0]">{uniLine2}</span>
         </div>
 
-        <div className="text-center text-[#b8c7ce] font-bold text-[0.76rem] tracking-[0.6px] uppercase mb-2.5">
+        <div className="text-center text-[#6ee7b7] font-bold text-[0.76rem] tracking-[0.6px] uppercase mb-2.5">
           {uniUnit}
         </div>
 
         <div
           data-testid="sidebar-address-box"
-          className="flex items-center justify-center gap-1.5 text-center text-[#cbd5e1] text-[0.69rem] px-2 py-1.5 bg-[rgba(0,0,0,0.3)] border border-white/10 rounded-[8px] leading-[1.4] whitespace-nowrap overflow-hidden"
+          className="flex items-center justify-center gap-1.5 text-center text-[#e2e8f0] text-[0.71rem] px-2 py-1.5 bg-black/40 border border-white/10 rounded-[8px] leading-[1.4] whitespace-nowrap overflow-hidden"
         >
           <MapPin className="w-3.5 h-3.5 text-[#00a65a] shrink-0" strokeWidth={2} />
           <span className="truncate">{address}</span>
@@ -195,7 +195,7 @@ function SidebarContent({
                 data-testid="sidebar-link-group"
                 className={gIdx > 0 ? "mt-3" : ""}
               >
-                <div className="text-[0.78rem] font-bold text-[#b8c7ce] tracking-[0.5px] uppercase mb-2 flex items-center gap-1.5">
+                <div className="text-[0.78rem] font-bold text-[#cbd5e1] tracking-[0.5px] uppercase mb-2 flex items-center gap-1.5">
                   <GroupIcon className="w-3.5 h-3.5 text-[#00a65a] shrink-0" strokeWidth={2} />
                   <span>{group.title}</span>
                 </div>
@@ -210,7 +210,7 @@ function SidebarContent({
                         target="_blank"
                         rel="noopener noreferrer"
                         title={item.title}
-                        className="group flex items-center gap-1.5 px-2 py-1.5 rounded-[6px] bg-[#141b1e] border border-[#2b3b42] text-[#cbd5e1] text-[0.74rem] font-medium hover:bg-[#00a65a] hover:border-[#00a65a] hover:text-white hover:-translate-y-0.5 hover:shadow-[0_4px_12px_rgba(0,166,90,0.24)] active:translate-y-0 active:scale-[0.97] transition-all duration-150 overflow-hidden whitespace-nowrap"
+                        className="group flex items-center gap-1.5 px-2 py-1.5 rounded-[6px] bg-[#141b1e] border border-[#2b3b42] text-[#f1f5f9] text-[0.74rem] font-medium hover:bg-[#00a65a] hover:border-[#00a65a] hover:text-white hover:-translate-y-0.5 hover:shadow-[0_4px_12px_rgba(0,166,90,0.24)] active:translate-y-0 active:scale-[0.97] transition-all duration-150 overflow-hidden whitespace-nowrap"
                       >
                         <ItemIcon
                           className="w-3.5 h-3.5 text-[#00a65a] group-hover:text-white group-hover:translate-x-0.5 transition-all duration-150 shrink-0"
@@ -238,7 +238,10 @@ function SidebarContent({
           <div className="space-y-2">
             {(departments || []).map((dept) => (
               <div key={dept.key} className="text-[0.8rem] leading-[1.45]">
-                <div className="font-bold text-white">
+                <div
+                  data-testid="sidebar-dept-title"
+                  className="font-bold text-white text-[0.75rem] md:text-[0.69rem] md:tracking-[-0.01em] md:whitespace-nowrap"
+                >
                   • {dept.short_name}
                   {dept.location ? ` (${dept.location})` : ""}:
                 </div>
@@ -247,12 +250,12 @@ function SidebarContent({
                   className="flex items-center gap-1.5 whitespace-nowrap mt-0.5 overflow-hidden"
                 >
                   <Phone className="w-3 h-3 text-[#94a3b8] shrink-0" strokeWidth={2} />
-                  <code className="bg-[#141b1e] text-[#b8c7ce] border border-[#2b3b42] px-1.5 py-0.5 rounded-[4px] text-[0.72rem] shrink-0">
+                  <code className="bg-[#141b1e] text-[#e2e8f0] border border-[#2b3b42] px-1.5 py-0.5 rounded-[4px] text-[0.72rem] shrink-0">
                     {dept.phone}
                   </code>
                   <span className="text-[#475569] shrink-0">|</span>
                   <Mail className="w-3 h-3 text-[#94a3b8] shrink-0" strokeWidth={2} />
-                  <span className="italic text-[#b8c7ce] text-[0.72rem] truncate">
+                  <span className="italic text-[#cbd5e1] text-[0.72rem] truncate">
                     {dept.email}
                   </span>
                 </div>
@@ -263,8 +266,8 @@ function SidebarContent({
 
         {/* Copyright */}
         <div className="mt-2.5 p-3 bg-black/20 border border-white/5 rounded-[8px] text-[0.72rem] text-[#94a3b8] text-center leading-[1.45]">
-          <div className="text-[#cbd5e1] font-bold">{copyrightTitle}</div>
-          <div className="text-[0.68rem] text-[#b8c7ce] mt-0.5">{copyrightSub}</div>
+          <div className="text-[#e2e8f0] font-bold">{copyrightTitle}</div>
+          <div className="text-[0.68rem] text-[#cbd5e1] mt-0.5">{copyrightSub}</div>
         </div>
       </div>
     </div>
@@ -274,7 +277,7 @@ function SidebarContent({
 export default function Sidebar({
   isOpen,
   isMobile,
-  width = 360,
+  width = 420,
   onResizeStart,
   onToggle,
   onClose,

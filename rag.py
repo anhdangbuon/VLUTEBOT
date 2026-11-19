@@ -719,8 +719,8 @@ class SmartRAGChain:
                     if len(adjacent_extras) >= max_neighbor_adds or added_for_anchor >= per_anchor_cap:
                         break
 
-        # Chèn đoạn nối trang liền kề ngay sau 2 kết quả chính để LLM đọc mạch lạc nhất
-        insert_pos = min(2, len(selected_indices))
+        # Chèn đoạn nối trang liền kề ngay sau 4 kết quả anchor chính để luôn giữ đủ anchor top trong docs[:5]
+        insert_pos = min(4, len(selected_indices))
         ordered_indices = selected_indices[:insert_pos] + adjacent_extras + selected_indices[insert_pos:]
 
         result_docs = []

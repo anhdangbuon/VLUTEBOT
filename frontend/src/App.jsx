@@ -51,7 +51,7 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(() =>
     typeof window !== "undefined" ? !window.matchMedia("(max-width: 767px)").matches : true
   );
-  const [sidebarWidth, setSidebarWidth] = useState(360);
+  const [sidebarWidth, setSidebarWidth] = useState(420);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
   const [showScrollBottomBtn, setShowScrollBottomBtn] = useState(false);
 

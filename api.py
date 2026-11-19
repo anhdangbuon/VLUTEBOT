@@ -1010,7 +1010,7 @@ def chat_stream(body: ChatStreamRequest):
             chain = get_cached_rag_chain()
             docs = chain.filter_documents(rewritten_query, k=6)
             if not docs:
-                contact = get_contact_footer_data(rewritten_query, retrieved_docs=None, is_refusal=True)
+                contact = None
                 followups = select_followup_prompts(
                     rewritten_query,
                     prompts_cfg,
@@ -1073,7 +1073,7 @@ def chat_stream(body: ChatStreamRequest):
             is_interrupted = "phản hồi bị gián đoạn giữa chừng" in full_answer.lower()
 
             if is_interrupted:
-                contact = get_contact_footer_data(rewritten_query, retrieved_docs=docs, is_refusal=True)
+                contact = None
                 followups = select_followup_prompts(
                     rewritten_query, prompts_cfg, messages=turns_msgs, sources=sources_to_save, assistant_reply=full_answer, asked_queries=body.asked_queries
                 )
@@ -1094,7 +1094,7 @@ def chat_stream(body: ChatStreamRequest):
                 final_text = full_answer or REFUSAL_MESSAGE
                 if not full_answer:
                     yield _sse_event({"type": "chunk", "content": final_text})
-                contact = get_contact_footer_data(rewritten_query, retrieved_docs=None, is_refusal=True)
+                contact = None
                 followups = select_followup_prompts(
                     rewritten_query, prompts_cfg, messages=turns_msgs, sources=[], assistant_reply=final_text, asked_queries=body.asked_queries
                 )
@@ -1151,7 +1151,7 @@ def chat_stream(body: ChatStreamRequest):
             err_str = str(err)
             is_429 = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str.upper()
             reply = RATE_LIMIT_MESSAGE if is_429 else f"⚠️ Đã xảy ra lỗi khi tra cứu quy chế: {err}"
-            contact = get_contact_footer_data(rewritten_query, retrieved_docs=None, is_refusal=True)
+            contact = None
             followups = select_followup_prompts(
                 rewritten_query, prompts_cfg, messages=turns_msgs, sources=[], assistant_reply=reply, asked_queries=body.asked_queries
             )
