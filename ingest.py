@@ -11,6 +11,10 @@ from pathlib import Path
 from datetime import datetime
 import fitz  # PyMuPDF
 from docx import Document as DocxDocument
+from docx.oxml.table import CT_Tbl
+from docx.oxml.text.paragraph import CT_P
+from docx.table import Table
+from docx.text.paragraph import Paragraph
 import torch
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -40,34 +44,45 @@ _DEPT_CONTENT_CUES = {
         "strong": (
             "phòng đào tạo", "phong_dao_tao", "daotao@vlute",
             "phòng quản lý đào tạo", "phong_quan_ly_dao_tao",
+            "đề cương học phần", "de_cuong_hoc_phan", "đề cương", "de_cuong",
+            "bm-dt", "bm_dt", "chương trình đào tạo", "chuong_trinh_dao_tao",
+            "mã học phần", "ma_hoc_phan", "số tín chỉ", "so_tin_chi",
+            "học phần tiên quyết", "hoc_phan_tien_quyet",
+            "chuẩn đầu ra", "chuan_dau_ra", "giảng viên phụ trách", "giang_vien_phu_trach",
+            "phương pháp kiểm tra đánh giá", "phuong_phap_kiem_tra_danh_gia",
         ),
         "regular": (
             "học phần", "hoc_phan", "tín chỉ", "tin_chi",
-            "tốt nghiệp", "tot_nghiep", "học vụ", "hoc_vu",
-            "chương trình đào tạo", "chuong_trinh_dao_tao",
-            "đăng ký môn", "dang_ky_mon", "học kỳ hè", "hoc_ky_he",
-            "khóa luận", "khoa_luan", "xét tốt nghiệp", "xet_tot_nghiep",
-            "cảnh báo học vụ", "canh_bao_hoc_vu",
+            "giảng viên", "giang_vien", "tốt nghiệp", "tot_nghiep",
+            "học vụ", "hoc_vu", "đăng ký môn", "dang_ky_mon",
+            "học kỳ hè", "hoc_ky_he", "khóa luận", "khoa_luan",
+            "xét tốt nghiệp", "xet_tot_nghiep", "cảnh báo học vụ", "canh_bao_hoc_vu",
+            "tiên quyết", "tien_quyet", "học trước", "hoc_truoc",
+            "song hành", "song_hanh", "lý thuyết", "ly_thuyet", "thực hành", "thuc_hanh",
         ),
     },
     "ctsv": {
         "strong": (
             "phòng công tác sinh viên", "phong_cong_tac_sinh_vien", "ctsv@vlute",
+            "học bổng khuyến khích", "hoc_bong_khuyen_khich",
+            "điểm rèn luyện", "diem_ren_luyen", "công tác xã hội", "cong_tac_xa_hoi",
+            "kỷ luật sinh viên", "ky_luat_sinh_vien", "quy tắc ứng xử", "quy_tac_ung_xu",
         ),
         "regular": (
             "học bổng", "hoc_bong", "rèn luyện", "ren_luyen",
-            "công tác xã hội", "cong_tac_xa_hoi", "ctxh",
-            "kỷ luật", "ky_luat", "khen thưởng", "khen_thuong",
-            "ứng xử", "ung_xu", "ban cán sự", "ban_can_su",
+            "ctxh", "kỷ luật", "ky_luat", "khen thưởng", "khen_thuong",
+            "ứng xử", "ung_xu", "ban cán sự", "ban_can_su", "cố vấn học tập", "co_van_hoc_tap",
         ),
     },
     "khtc": {
         "strong": (
             "phòng kế hoạch - tài chính", "phòng kế hoạch tài chính",
             "phong_ke_hoach_tai_chinh", "khtc@vlute",
+            "miễn, giảm học phí", "miễn giảm học phí", "mien_giam_hoc_phi",
+            "hoàn trả học phí", "hoan_tra_hoc_phi",
         ),
         "regular": (
-            "học phí", "hoc_phi", "hoàn trả", "hoan_tra",
+            "học phí", "hoc_phi", "hoàn trả", "hoan_tra", "miễn giảm", "mien_giam",
             "biên lai", "bien_lai", "hóa đơn", "hoa_don",
             "thu học phí", "thu_hoc_phi", "tài chính", "tai_chinh",
         ),
@@ -75,12 +90,13 @@ _DEPT_CONTENT_CUES = {
     "cntt": {
         "strong": (
             "trung tâm công nghệ thông tin", "trung_tam_cong_nghe_thong_tin",
-            "ttcntt@vlute",
+            "ttcntt@vlute", "an toàn thông tin", "an_toan_thong_tin",
+            "an ninh mạng", "an_ninh_mang",
         ),
         "regular": (
-            "an toàn thông tin", "an_toan_thong_tin", "mật khẩu", "mat_khau",
-            "an ninh mạng", "an_ninh_mang", "phần mềm", "phan_mem",
-            "cntt", "st.vlute.edu.vn", "elearning",
+            "mật khẩu", "mat_khau", "tài khoản", "tai_khoan",
+            "hệ thống mạng", "he_thong_mang", "st.vlute.edu.vn", "elearning",
+            "phần mềm", "phan_mem", "cntt",
         ),
     },
 }
@@ -108,46 +124,91 @@ def _strip_accents(text: str) -> str:
 
 def match_department_for_file(filename: str, departments: dict, content_preview: str = ""):
     """
-    Xác định phòng ban phụ trách từ tên file và tối đa 1.500 ký tự đầu nội dung văn bản:
-    1. So khớp patterns của departments.json trên tên file.
-    2. Nếu tên file mang tính chung (vd: thong_bao_2026.docx), chấm điểm từ khóa phòng ban trên content_preview[:1500].
-    3. Mặc định trả về 'ctsv' nếu không có tín hiệu khớp rõ ràng.
+    Chấm điểm toàn diện trên cả tên file, tiêu đề và nội dung chính của tài liệu (content_preview)
+    để tự động định tuyến phòng ban phụ trách cho bất kỳ tài liệu .pdf, .docx, .txt mới nào:
+    - Nhóm từ khóa học thuật (đề cương, học phần, tín chỉ, giảng viên, chuẩn đầu ra, chương trình đào tạo...)
+      được chấm trọng số cao cho Phòng Đào tạo (dao_tao) để không bị từ khóa tên môn học (như phần mềm, CNTT, mạng)
+      kéo nhầm sang Trung tâm CNTT (cntt).
     """
-    fname_lower = filename.lower().replace("cong_tac_xa_hoi", "ctxh")
-    for dept_key, dept_info in departments.items():
-        patterns = dept_info.get("patterns", [])
-        if any(str(pat).lower() in fname_lower for pat in patterns):
-            return dept_key, dept_info
+    if not departments:
+        departments = load_departments(DEPARTMENTS_PATH)
 
-    preview_raw = (content_preview or "")[:1500].lower()
-    if preview_raw.strip():
-        preview_slug = _strip_accents(preview_raw)
-        best_key = None
-        best_score = 0
-        for dept_key, dept_info in departments.items():
-            score = 0
-            cues = _DEPT_CONTENT_CUES.get(dept_key, {})
+    fname_norm = unicodedata.normalize("NFC", str(filename or "")).lower().replace("cong_tac_xa_hoi", "ctxh")
+    fname_slug = _strip_accents(fname_norm)
+    preview_raw = unicodedata.normalize("NFC", (content_preview or "")[:2500]).lower()
+    preview_slug = _strip_accents(preview_raw) if preview_raw.strip() else ""
+
+    # Tín hiệu học thuật đặc trưng của Đề cương học phần / Chương trình đào tạo
+    is_explicit_ctsv = "công tác sinh viên" in fname_norm or "cong_tac_sinh_vien" in fname_slug
+    academic_strong_hits = 0 if is_explicit_ctsv else sum(
+        1 for cue in (
+            "đề cương", "de_cuong", "bm-dt", "bm_dt", "mã học phần", "ma_hoc_phan",
+            "số tín chỉ", "so_tin_chi", "chuẩn đầu ra", "chuan_dau_ra",
+            "học phần tiên quyết", "hoc_phan_tien_quyet", "chương trình đào tạo", "chuong_trinh_dao_tao",
+            "giảng viên phụ trách", "giang_vien_phu_trach",
+        )
+        if (cue in fname_norm or cue in fname_slug or (preview_raw and (cue in preview_raw or cue in preview_slug)))
+    )
+
+    best_key = None
+    best_score = 0
+    generic_it_patterns = {"cntt", "phan_mem", "mang"}
+
+    for dept_key, dept_info in departments.items():
+        score = 0
+        cues = _DEPT_CONTENT_CUES.get(dept_key, {})
+
+        # 1. Chấm điểm trên tên file / tiêu đề
+        for cue in cues.get("strong", ()):
+            if cue in fname_norm or cue in fname_slug:
+                score += 6
+        for cue in cues.get("regular", ()):
+            if cue in fname_norm or cue in fname_slug:
+                score += 2
+
+        for pat in dept_info.get("patterns", []):
+            pat_str = str(pat).lower().strip()
+            if not pat_str:
+                continue
+            if pat_str in fname_norm or pat_str in fname_slug:
+                # Từ khóa IT chung (phan_mem, cntt, mang) trong tên môn học chỉ cộng nhẹ nếu có tín hiệu học thuật
+                if dept_key == "cntt" and pat_str in generic_it_patterns and academic_strong_hits > 0:
+                    score += 1
+                else:
+                    score += 5
+
+        # 2. Chấm điểm trên nội dung văn bản (content_preview)
+        if preview_raw:
             for cue in cues.get("strong", ()):
                 if cue in preview_raw or cue in preview_slug:
-                    score += 3
+                    score += 4
             for cue in cues.get("regular", ()):
                 if cue in preview_raw or cue in preview_slug:
-                    score += 1
+                    score += 2
             for pat in dept_info.get("patterns", []):
                 pat_str = str(pat).lower().strip()
                 if not pat_str:
                     continue
                 if pat_str == "mang":
-                    if "an_ninh_mang" in preview_slug or "he_thong_mang" in preview_slug or "mạng" in preview_raw:
-                        score += 1
+                    if "an_ninh_mang" in preview_slug or "he_thong_mang" in preview_slug:
+                        score += 2
                 elif pat_str in preview_slug or pat_str.replace("_", " ") in preview_raw:
-                    score += 1
-            if score > best_score:
-                best_score = score
-                best_key = dept_key
+                    if dept_key == "cntt" and pat_str in generic_it_patterns and academic_strong_hits > 0:
+                        score += 0
+                    else:
+                        score += 1
 
-        if best_key and best_score > 0:
-            return best_key, departments[best_key]
+        if dept_key == "dao_tao" and academic_strong_hits >= 2:
+            score += academic_strong_hits * 4
+        if dept_key == "ctsv" and is_explicit_ctsv:
+            score += 12
+
+        if score > best_score:
+            best_score = score
+            best_key = dept_key
+
+    if best_key and best_score > 0:
+        return best_key, departments[best_key]
 
     default_key = "ctsv"
     default_info = departments.get(default_key, {
@@ -159,13 +220,96 @@ def match_department_for_file(filename: str, departments: dict, content_preview:
     return default_key, default_info
 
 
+def _extract_syllabus_info(text: str, filename: str) -> tuple[str, str, str]:
+    """
+    Nhận diện biểu mẫu đào tạo / đề cương học phần (BM-DT hoặc ĐỀ CƯƠNG HỌC PHẦN).
+    Trả về (course_name, course_code, chunk_prefix). Nếu không phải đề cương, trả về ("", "", "").
+    """
+    norm_text = unicodedata.normalize("NFC", text or "")
+    norm_fname = unicodedata.normalize("NFC", filename or "")
+    fname_lower = norm_fname.lower()
+    fname_slug = _strip_accents(norm_fname)
+    head_lower = norm_text[:2500].lower()
+    head_slug = _strip_accents(norm_text[:2500]).replace("_", " ")
+
+    is_syllabus = (
+        "bm-dt" in fname_lower
+        or "bm_dt" in fname_slug
+        or "de_cuong" in fname_slug
+        or "đề cương học phần" in head_lower
+        or "de cuong hoc phan" in head_slug
+    )
+    if not is_syllabus:
+        return "", "", ""
+
+    course_name = ""
+    # 1. Tìm theo mục "Tiếng Việt: <Tên học phần>"
+    m_vi = re.search(r"Tiếng\s+Việt\s*:\s*([^\n|]+)", norm_text[:2500], re.IGNORECASE)
+    if m_vi:
+        candidate = re.sub(r"\s+", " ", m_vi.group(1)).strip(" .-:")
+        if len(candidate) >= 3:
+            course_name = candidate
+
+    # 2. Tìm theo mục "1. TÊN HỌC PHẦN: <Tên học phần>"
+    if not course_name:
+        m_ten = re.search(r"TÊN\s+HỌC\s+PHẦN\s*:\s*([^\n|]+)", norm_text[:2500], re.IGNORECASE)
+        if m_ten:
+            candidate = re.sub(r"\s+", " ", m_ten.group(1)).strip(" .-:")
+            if len(candidate) >= 3 and not re.match(r"^tiếng\s+việt\b", candidate, re.IGNORECASE):
+                course_name = candidate
+
+    # 3. Tìm dòng ngay dưới tiêu đề "ĐỀ CƯƠNG HỌC PHẦN"
+    if not course_name:
+        m_after = re.search(r"ĐỀ\s+CƯƠNG\s+HỌC\s+PHẦN\s*\n+\s*([^\n|]+)", norm_text[:2500], re.IGNORECASE)
+        if m_after:
+            candidate = re.sub(r"\s+", " ", m_after.group(1)).strip(" .-:")
+            if len(candidate) >= 3 and not re.search(r"mã\s+học\s+phần", candidate, re.IGNORECASE):
+                course_name = candidate
+
+    # 4. Tìm Mã học phần
+    course_code = ""
+    m_code = re.search(
+        r"(?:MÃ\s+HỌC\s+PHẦN|MÃ\s+HP)\s*:\s*([A-Z0-9_-]{3,20})",
+        norm_text[:2500],
+        re.IGNORECASE,
+    )
+    if m_code:
+        course_code = m_code.group(1).strip().upper()
+    if not course_code:
+        m_fcode = re.search(r"\b([A-Z]{2,4}\d{3,6})\b", norm_fname)
+        if m_fcode:
+            course_code = m_fcode.group(1).upper()
+
+    if not course_name:
+        base_clean = os.path.splitext(norm_fname)[0]
+        base_clean = re.sub(r"^BM[-_]?DT[-_]?\d+[-_]?", "", base_clean, flags=re.IGNORECASE)
+        if course_code:
+            base_clean = re.sub(rf"^{re.escape(course_code)}[-_]?", "", base_clean, flags=re.IGNORECASE)
+        base_clean = re.sub(r"\(\d{4}\)", "", base_clean).replace("_", " ").strip()
+        course_name = base_clean.upper() or "HỌC PHẦN ĐÀO TẠO"
+
+    if course_code:
+        prefix = f"[Đề cương học phần: {course_name} - Mã HP: {course_code}]"
+    else:
+        prefix = f"[Đề cương học phần: {course_name}]"
+    return course_name, course_code, prefix
+
+
 def extract_doc_title(text: str, filename: str) -> str:
     """
-    Bóc tách tiêu đề văn bản từ phần đầu nội dung file (.pdf, .docx, .txt).
-    Nếu không tìm thấy, chuẩn hóa tên file (bỏ phần mở rộng, thay '_' bằng khoảng trắng, viết hoa).
+    Bóc tách tiêu đề văn bản tổng quát từ phần đầu nội dung file (.pdf, .docx, .txt).
+    Hỗ trợ mọi loại quy chế, quy định, thông báo, đề cương học phần, chương trình đào tạo...
+    Nếu không tìm thấy trong nội dung, chuẩn hóa tên file (bỏ phần mở rộng, thay '_' bằng khoảng trắng, viết hoa).
     """
+    text = unicodedata.normalize("NFC", text or "")
+    course_name, course_code, _ = _extract_syllabus_info(text, filename)
+    if course_name:
+        if course_code:
+            return f"Đề cương học phần: {course_name} - Mã HP: {course_code}"
+        return f"Đề cương học phần: {course_name}"
+
     m_block = re.search(
-        r"(?:Ban hành|V/v ban hành|Về việc ban hành|V/v)\s+((?:Quy định|Quy chế|Quy trình|Quy tắc|Thông báo|Hướng dẫn|Kế hoạch)(?:\s+[^\n]+){1,3})",
+        r"(?:Ban hành|V/v ban hành|Về việc ban hành|V/v)\s+((?:Quy định|Quy chế|Quy trình|Quy tắc|Thông báo|Hướng dẫn|Kế hoạch|Chương trình|Đề án)(?:\s+[^\n]+){1,3})",
         text,
         re.IGNORECASE
     )
@@ -179,15 +323,26 @@ def extract_doc_title(text: str, filename: str) -> str:
     if m_qt:
         return re.sub(r"\s+", " ", m_qt.group(1)).strip()
 
+    bare_headers = {
+        "QUYẾT ĐỊNH", "QUY ĐỊNH", "QUY CHẾ", "QUY TRÌNH", "QUY TẮC",
+        "THÔNG BÁO", "HƯỚNG DẪN", "KẾ HOẠCH", "ĐỀ CƯƠNG HỌC PHẦN",
+        "ĐỀ CƯƠNG", "CHƯƠNG TRÌNH ĐÀO TẠO", "CHƯƠNG TRÌNH", "BIỂU MẪU",
+    }
     m = re.search(
-        r"(QUY ĐỊNH[^\n]+|QUY CHẾ[^\n]+|QUY TRÌNH[^\n]+|QUYẾT ĐỊNH[^\n]+|THÔNG BÁO[^\n]+|HƯỚNG DẪN[^\n]+|KẾ HOẠCH[^\n]+)",
+        r"((?:QUY ĐỊNH|QUY CHẾ|QUY TRÌNH|QUY TẮC|QUYẾT ĐỊNH|THÔNG BÁO|HƯỚNG DẪN|KẾ HOẠCH|ĐỀ CƯƠNG HỌC PHẦN|ĐỀ CƯƠNG|CHƯƠNG TRÌNH ĐÀO TẠO)[^\n]*)",
         text,
         re.IGNORECASE
     )
     if m:
         candidate = re.sub(r"\s+", " ", m.group(1)).strip()
-        if candidate.upper() not in ["QUYẾT ĐỊNH", "QUY ĐỊNH", "QUY CHẾ", "QUY TRÌNH", "THÔNG BÁO", "HƯỚNG DẪN", "KẾ HOẠCH"]:
+        if candidate.upper() not in bare_headers:
             return candidate
+        # Nếu dòng tiêu đề chỉ có từ khóa loại văn bản (vd: "THÔNG BÁO" hoặc "ĐỀ CƯƠNG HỌC PHẦN"), ghép với dòng kế tiếp
+        after_text = text[m.end():].lstrip()
+        next_line = after_text.splitlines()[0].strip() if after_text else ""
+        next_line = re.sub(r"\s+", " ", next_line)
+        if len(next_line) >= 4 and not re.search(r"^(?:Số|Căn cứ|HIỆU TRƯỞNG)\b", next_line, re.IGNORECASE):
+            return f"{candidate}: {next_line}"
 
     return os.path.splitext(filename)[0].replace("_", " ").upper()
 
@@ -197,6 +352,7 @@ def extract_doc_year(text: str, filepath: str) -> str:
     Bóc tách năm ban hành từ phần đầu nội dung tài liệu.
     Nếu không thấy, lấy năm chỉnh sửa file từ hệ thống (os.path.getmtime).
     """
+    text = unicodedata.normalize("NFC", text or "")
     flat = re.sub(r"\s+", " ", text)
     m = re.search(
         r"(?:ngày\s*\d+\s*tháng\s*\d+\s*năm\s*|ban\s+hành\s+năm\s*|hiệu\s+lực\D{0,10}|năm\s+)(\d{4})",
@@ -206,9 +362,13 @@ def extract_doc_year(text: str, filepath: str) -> str:
     if m:
         return str(m.group(1))
 
-    m2 = re.search(r"(?:QĐ|QT|TB)[^\n]{0,30}(\d{4})", flat, re.IGNORECASE)
+    m2 = re.search(r"(?:QĐ|QT|TB|BM-DT)[^\n]{0,30}(\d{4})", flat, re.IGNORECASE)
     if m2:
         return str(m2.group(1))
+
+    m_fname = re.search(r"\((\d{4})\)", os.path.basename(filepath))
+    if m_fname:
+        return str(m_fname.group(1))
 
     return str(datetime.fromtimestamp(os.path.getmtime(filepath)).year)
 
@@ -216,9 +376,15 @@ def extract_doc_year(text: str, filepath: str) -> str:
 def extract_doc_code(text: str) -> str:
     """
     Bóc tách số hiệu / mã số văn bản từ phần đầu nội dung tài liệu.
-    (Ví dụ: 201/QĐ-ĐHSPKTVL, QT-SV-04, 888/TB-ĐHSPKTVL...)
+    (Ví dụ: 201/QĐ-ĐHSPKTVL, QT-SV-04, 888/TB-ĐHSPKTVL, Mã HP: IT1216...)
     """
+    text = unicodedata.normalize("NFC", text or "")
     flat = re.sub(r"\s+", " ", text)
+
+    m_hp = re.search(r"(?:MÃ\s+HỌC\s+PHẦN|MÃ\s+HP)\s*:\s*([A-Z0-9_-]{3,20})", flat, re.IGNORECASE)
+    if m_hp:
+        return m_hp.group(1).strip().upper()
+
     m = re.search(
         r"((?:Số|Só|Mã số)?:?\s*(?:[\d\w\-\/]+\s*\/?\s*(?:QĐ|QD|QT|HD|KH|TB)|(?:QĐ|QT|HD|KH|TB)[\d\w\-\/]+)[^\n\s]*)",
         flat,
@@ -238,29 +404,32 @@ def extract_doc_code(text: str) -> str:
 
 def clean_text(text: str) -> str:
     """
-    Làm sạch sâu văn bản PDF:
+    Làm sạch sâu văn bản PDF/Word:
+    - Chuẩn hóa Unicode NFC (tránh lỗi dấu tổ hợp NFD trong file Word)
     - Loại bỏ tiêu đề bảng lặp, ký tự rác, dấu nối từ vô lý
     - Chuẩn hóa khoảng trắng và dấu câu tiếng Việt
     """
     if not text:
         return ""
-    
+
+    text = unicodedata.normalize("NFC", text)
+
     # 1. Loại bỏ các chuỗi rác bảng biểu thường gặp ở đầu trang PDF hành chính
     text = re.sub(r"Lần\s+soát\s+xét\s+Trang\s+Nội\s+dung\s+thay\s+đổi\s+Phê\s+duyệt", "", text, flags=re.IGNORECASE)
     text = re.sub(r"VA\s+PGS\.TS\.\s+Lê\s+Hồng\s+Hùng\s+Ngày", "", text, flags=re.IGNORECASE)
-    
+
     # 2. Xử lý từ bị ngắt đôi do xuống dòng có dấu gạch ngang (ví dụ: hoàn -\n trả -> hoàn trả)
     text = re.sub(r"(\w+)\s*-\s*\n\s*(\w+)", r"\1\2", text)
-    
+
     # 3. Chuẩn hóa dấu đầu dòng rời rạc (ví dụ: -\n Sinh viên -> - Sinh viên)
     text = re.sub(r"-\s*\n\s*", "- ", text)
-    
+
     # 4. Chuẩn hóa khoảng trắng ngang
     text = re.sub(r"[ \t]+", " ", text)
-    
+
     # 5. Loại bỏ nhiều dòng trống liên tiếp
     text = re.sub(r"\n{3,}", "\n\n", text)
-    
+
     return text.strip()
 
 
@@ -329,7 +498,21 @@ def _build_logical_pages(cleaned_text: str, filename: str, filepath: str, page_c
             if current_lines and current_lines[-1] != "":
                 current_lines.append("")
             continue
-        if current_len + len(line_s) + 1 > page_chars and current_lines:
+        is_major_heading = bool(re.match(r"^(?:\d{1,2}\.\s+[A-ZÀ-Ỹ]|[IVX]{1,4}\.\s+[A-ZÀ-Ỹ])", line_s))
+        prev_non_empty = next((x for x in reversed(current_lines) if x), "")
+        prev_was_heading = bool(
+            re.match(r"^(?:\d{1,2}(?:\.\d{1,2})?\.\s+[A-ZÀ-Ỹ]|[IVX]{1,4}\.\s+[A-ZÀ-Ỹ])", prev_non_empty)
+            and len(prev_non_empty) <= 120
+        )
+        should_break = (
+            current_lines
+            and not prev_was_heading
+            and (
+                (current_len + len(line_s) + 1 > page_chars)
+                or (is_major_heading and current_len >= int(page_chars * 0.65))
+            )
+        )
+        if should_break:
             chunk_text = "\n".join(current_lines).strip()
             if len(chunk_text) > 25:
                 pages.append(chunk_text)
@@ -356,28 +539,224 @@ def _build_logical_pages(cleaned_text: str, filename: str, filepath: str, page_c
     ]
 
 
+def _format_docx_table(table: Table, section_heading: str = "") -> str:
+    """
+    Chuẩn hóa bảng biểu Word (.docx) thành văn bản có cấu trúc:
+    - Giải quyết cả ô gộp ngang (cùng cell._tc trên 1 hàng) và ô gộp dọc (cùng cell._tc giữa các hàng hoặc vMerge).
+    - Ghép mỗi ô dữ liệu với tiêu đề cột tương ứng ở hàng đầu tiên (hoặc 2 hàng đầu nếu tiêu đề gộp cột).
+    - Giữ ngữ cảnh dòng nhóm (ví dụ: A1. Chuyên cần, A2. Quá trình, A3. Cuối kỳ) và tổng hợp nhanh cột Hệ số / Số tín chỉ.
+    """
+    rows = list(table.rows)
+    if not rows:
+        return ""
+
+    num_cols = max((len(r.cells) for r in rows), default=0)
+    if num_cols == 0:
+        return ""
+
+    # Bước 1: Trích xuất lưới ô (tc_id, text) và khôi phục giá trị của các ô gộp dọc (vertical merge)
+    grid: list[list[tuple[int, str]]] = []
+    top_cell_by_col: dict[int, tuple[int, str]] = {}
+
+    for row in rows:
+        row_cells = list(row.cells)
+        row_data: list[tuple[int, str]] = []
+        for c_idx in range(num_cols):
+            if c_idx >= len(row_cells):
+                row_data.append((-1 - c_idx, ""))
+                continue
+            cell = row_cells[c_idx]
+            tc = cell._tc
+            tc_id = id(tc)
+            txt = unicodedata.normalize("NFC", re.sub(r"\s+", " ", cell.text or "").strip())
+
+            tcPr = tc.tcPr
+            vMerge = tcPr.vMerge if tcPr is not None else None
+            is_vmerge_cont = vMerge is not None and getattr(vMerge, "val", None) in (None, "continue")
+
+            if not txt and is_vmerge_cont and c_idx in top_cell_by_col:
+                tc_id, txt = top_cell_by_col[c_idx]
+            elif txt:
+                top_cell_by_col[c_idx] = (tc_id, txt)
+
+            row_data.append((tc_id, txt))
+        grid.append(row_data)
+
+    # Bước 2: Nhận diện hàng tiêu đề cột (Header Row)
+    row0 = grid[0]
+    distinct_r0 = []
+    seen_tc_r0 = set()
+    for tc_id, txt in row0:
+        if txt and tc_id not in seen_tc_r0:
+            distinct_r0.append(txt)
+            seen_tc_r0.add(tc_id)
+
+    max_r0_len = max((len(t) for t in distinct_r0), default=0)
+    is_header_table = len(grid) >= 2 and len(distinct_r0) >= 2 and max_r0_len <= 65
+
+    if not is_header_table:
+        # Bảng bố cục (ví dụ: quốc hiệu tiêu ngữ hoặc chữ ký cuối trang)
+        plain_lines = []
+        for row_data in grid:
+            vals = []
+            prev_tc = None
+            for tc_id, txt in row_data:
+                if tc_id == prev_tc:
+                    continue
+                prev_tc = tc_id
+                if txt:
+                    vals.append(txt)
+            if vals:
+                plain_lines.append(" | ".join(vals))
+        return "\n".join(plain_lines)
+
+    # Kiểm tra tiêu đề 2 tầng (Row 0 có ô gộp ngang và Row 1 có ô gộp dọc với Row 0)
+    data_start_row = 1
+    headers: list[str] = []
+    has_r0_hmerge = any(row0[c][0] == row0[c - 1][0] for c in range(1, num_cols))
+    if len(grid) >= 3 and has_r0_hmerge:
+        row1 = grid[1]
+        has_r1_vmerge_with_r0 = any(row1[c][0] == row0[c][0] and row0[c][1] for c in range(num_cols))
+        row1_max_len = max((len(t) for _, t in row1 if t), default=0)
+        if has_r1_vmerge_with_r0 and row1_max_len <= 55:
+            data_start_row = 2
+            for c in range(num_cols):
+                h0 = re.sub(r"\s*\(\*+\)\s*$", "", row0[c][1]).strip()
+                h1 = re.sub(r"\s*\(\*+\)\s*$", "", row1[c][1]).strip()
+                if row1[c][0] == row0[c][0] or not h1 or h1 == h0:
+                    headers.append(h0 or f"Cột {c + 1}")
+                elif not h0:
+                    headers.append(h1)
+                else:
+                    headers.append(f"{h0} ({h1})")
+
+    if not headers:
+        for c in range(num_cols):
+            h0 = re.sub(r"\s*\(\*+\)\s*$", "", row0[c][1]).strip()
+            headers.append(h0 or f"Cột {c + 1}")
+
+    # Xác định xem bảng có cột Hệ số hoặc Số tín chỉ không
+    coef_col_idx = next((i for i, h in enumerate(headers) if "hệ số" in h.lower()), -1)
+    credit_col_idx = next((i for i, h in enumerate(headers) if "số tín chỉ" in h.lower()), -1)
+
+    formatted_rows: list[str] = []
+    current_group = ""
+    coef_groups: list[tuple[int, str, str, list[str]]] = []  # (tc_id, group_name, coef_val, items)
+    credit_items: list[str] = []
+
+    for r_idx in range(data_start_row, len(grid)):
+        row_data = grid[r_idx]
+        # Khử trùng lặp ô gộp ngang theo tc_id (giữ chỉ số cột đầu tiên của ô gộp)
+        unique_cols: list[tuple[int, int, str]] = []  # (c_idx, tc_id, txt)
+        prev_tc = None
+        for c_idx, (tc_id, txt) in enumerate(row_data):
+            if prev_tc is not None and tc_id == prev_tc:
+                continue
+            prev_tc = tc_id
+            if txt:
+                unique_cols.append((c_idx, tc_id, txt))
+
+        if not unique_cols:
+            continue
+
+        # Hàng tiêu đề nhóm (chỉ có cột 0 có chữ, các cột còn lại trống, ví dụ: "A1. Chuyên cần")
+        if len(unique_cols) == 1 and unique_cols[0][0] == 0:
+            current_group = unique_cols[0][2]
+            formatted_rows.append(f"[{headers[0]} - Nhóm: {current_group}]")
+            continue
+
+        row_pairs: list[str] = []
+        row_first_label = ""
+        row_second_label = ""
+
+        for c_idx, tc_id, txt in unique_cols:
+            col_header = headers[c_idx] if c_idx < len(headers) else f"Cột {c_idx + 1}"
+            display_val = txt
+            if c_idx == 0:
+                row_first_label = txt
+                if current_group and not txt.lower().startswith(current_group.lower()):
+                    display_val = f"{current_group} - {txt}"
+            elif c_idx == 1:
+                row_second_label = txt
+
+            if c_idx == coef_col_idx and r_idx > data_start_row:
+                prev_row_tc = grid[r_idx - 1][c_idx][0]
+                if tc_id == prev_row_tc and current_group:
+                    display_val = f"{txt} (hệ số chung của {current_group})"
+
+            row_pairs.append(f"{col_header}: {display_val}")
+
+        formatted_rows.append(" | ".join(row_pairs))
+
+        # Thu thập tóm tắt Hệ số (gom theo tc_id của ô Hệ số để phản ánh đúng các ô gộp dọc)
+        if coef_col_idx >= 0 and coef_col_idx < len(row_data):
+            c_tc, c_val = row_data[coef_col_idx]
+            if c_val:
+                short_first = row_first_label if len(row_first_label) <= 45 else (row_first_label[:42].rstrip(" ,;:") + "...")
+                item_desc = short_first
+                if row_second_label:
+                    item_desc = f"{short_first} ({row_second_label})" if short_first else row_second_label
+                if coef_groups and coef_groups[-1][0] == c_tc:
+                    coef_groups[-1][3].append(item_desc)
+                else:
+                    coef_groups.append((c_tc, current_group, c_val, [item_desc]))
+
+        # Thu thập tóm tắt Số tín chỉ
+        if credit_col_idx >= 0 and credit_col_idx < len(row_data):
+            _, cr_val = row_data[credit_col_idx]
+            label_col = row_second_label if (row_first_label.isdigit() and row_second_label) else (row_first_label or row_second_label)
+            if label_col and cr_val:
+                credit_items.append(f"{label_col}: {cr_val} tín chỉ")
+
+    output_lines: list[str] = []
+    if section_heading:
+        output_lines.append(f"[Bảng thuộc mục: {section_heading}]")
+
+    if coef_groups:
+        coef_list_str = ", ".join(g[2] for g in coef_groups)
+        output_lines.append(
+            f"Tóm tắt phương pháp đánh giá & {len(coef_groups)} cột hệ số thành phần ({coef_list_str}):"
+        )
+        for _, grp_name, c_val, items in coef_groups:
+            joined_items = "; ".join(i for i in items if i)
+            if grp_name and not joined_items.lower().startswith(grp_name.lower()):
+                output_lines.append(f"- {grp_name}: {joined_items} => Hệ số: {c_val}")
+            else:
+                output_lines.append(f"- {joined_items} => Hệ số: {c_val}")
+
+    if credit_items:
+        output_lines.append("Tóm tắt phân bổ số tín chỉ: " + " | ".join(credit_items) + ".")
+
+    output_lines.extend(formatted_rows)
+    return "\n".join(output_lines)
+
+
 def extract_clean_text_from_docx(docx_path: str) -> list[dict]:
-    """Trích xuất văn bản sạch (cả đoạn văn và bảng biểu) kèm metadata từ file Word (.docx)."""
+    """
+    Trích xuất văn bản sạch (cả đoạn văn và bảng biểu) kèm metadata từ file Word (.docx):
+    - Duyệt tuần tự các phần tử con trực tiếp của word_doc.element.body (CT_P và CT_Tbl)
+      theo đúng thứ tự từ trên xuống dưới trong tài liệu gốc.
+    - Mỗi bảng biểu luôn nằm ngay bên dưới tiêu đề mục của nó và được gắn nhãn cột đầy đủ.
+    """
     filename = os.path.basename(docx_path)
     word_doc = DocxDocument(docx_path)
-    blocks = []
+    blocks: list[str] = []
+    current_section_heading = ""
 
-    for para in word_doc.paragraphs:
-        text = para.text.strip()
-        if text:
+    for child in word_doc.element.body.iterchildren():
+        if isinstance(child, CT_P):
+            para = Paragraph(child, word_doc)
+            text = unicodedata.normalize("NFC", para.text or "").strip()
+            if not text:
+                continue
             blocks.append(text)
-
-    for table in word_doc.tables:
-        for row in table.rows:
-            row_cells = []
-            prev_val = None
-            for cell in row.cells:
-                cell_text = re.sub(r"\s+", " ", cell.text).strip()
-                if cell_text and cell_text != prev_val:
-                    row_cells.append(cell_text)
-                    prev_val = cell_text
-            if row_cells:
-                blocks.append(" | ".join(row_cells))
+            if re.match(r"^(?:\d{1,2}(?:\.\d{1,2})?\.\s+\S|[IVX]{1,4}\.\s+\S)", text) and len(text) <= 140:
+                current_section_heading = text
+        elif isinstance(child, CT_Tbl):
+            table = Table(child, word_doc)
+            table_text = _format_docx_table(table, section_heading=current_section_heading)
+            if table_text:
+                blocks.append(table_text)
 
     cleaned_text = clean_text("\n\n".join(blocks))
     return _build_logical_pages(cleaned_text, filename, docx_path)
@@ -469,16 +848,37 @@ def build_page_documents_for_file(file_path: str, departments: dict) -> list[Doc
 
 
 def build_chunks_for_file(file_path: str, departments: dict) -> list[Document]:
-    """Trích xuất và chia đoạn (chunk_size=600, overlap=100) kèm đủ metadata cho 1 file."""
+    """
+    Trích xuất và chia đoạn (chunk_size=600, overlap=100) kèm đủ metadata cho mọi file.
+    Tự động gắn nhãn ngữ cảnh tài liệu [Tài liệu: <doc_title>] vào đầu mỗi chunk
+    (Universal Context Prefix) để mọi bảng biểu ở giữa hoặc cuối tài liệu đều giữ trọn
+    ngữ cảnh tên văn bản/môn học khi tìm kiếm và không bị bộ lọc OOS chặn nhầm.
+    """
     page_docs = build_page_documents_for_file(file_path, departments)
     if not page_docs:
         return []
+
+    doc_title = str(page_docs[0].metadata.get("title", "") or "").strip()
+    doc_code = str(page_docs[0].metadata.get("doc_code", "") or "").strip()
+    if doc_code and doc_code != "N/A" and doc_code.lower() not in doc_title.lower():
+        universal_prefix = f"[Tài liệu: {doc_title} - Mã: {doc_code}]"
+    elif doc_title:
+        universal_prefix = f"[Tài liệu: {doc_title}]"
+    else:
+        universal_prefix = ""
+
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=600,
         chunk_overlap=100,
         separators=["\n\n", "\n", ". ", "; ", " "]
     )
-    return text_splitter.split_documents(page_docs)
+    chunks = text_splitter.split_documents(page_docs)
+    if universal_prefix:
+        for chunk in chunks:
+            content = (chunk.page_content or "").strip()
+            if not content.startswith("[Tài liệu:"):
+                chunk.page_content = f"{universal_prefix}\n{content}"
+    return chunks
 
 
 def load_documents():

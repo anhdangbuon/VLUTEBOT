@@ -73,7 +73,7 @@ export default function App() {
     document.body.style.userSelect = "none";
 
     const onMouseMove = (e) => {
-      const nextWidth = Math.min(560, Math.max(300, e.clientX));
+      const nextWidth = Math.min(560, Math.max(300, Math.round(e.clientX)));
       setSidebarWidth(nextWidth);
     };
 

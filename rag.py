@@ -28,6 +28,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
 from langchain_openai import ChatOpenAI
 from ingest import (
+    match_department_for_file,
     sync_knowledge_base_from_data_dir,
     SUPPORTED_EXTENSIONS,
     DATA_PATH,
@@ -70,20 +71,9 @@ def ensure_doc_department_metadata(doc, departments: dict = None):
         return doc
 
     depts = departments if departments is not None else load_departments_config()
-    src_name = os.path.basename(doc.metadata.get("source", "")).lower().replace("cong_tac_xa_hoi", "ctxh")
-    matched_key = "ctsv"
-    matched_info = depts.get("ctsv", {
-        "name": "Phòng Công tác Sinh viên (VLUTE)",
-        "location": "Tòa nhà A (Phòng A1.102 - Tầng trệt)",
-        "phone": "(0270) 3862 436",
-        "email": "ctsv@vlute.edu.vn"
-    })
-    for d_key, d_info in depts.items():
-        patterns = d_info.get("patterns", [])
-        if any(str(pat).lower() in src_name for pat in patterns):
-            matched_key = d_key
-            matched_info = d_info
-            break
+    src_name = os.path.basename(str(doc.metadata.get("source", "") or ""))
+    preview_text = f"{doc.metadata.get('title', '')}\n{getattr(doc, 'page_content', '') or ''}"[:2000]
+    matched_key, matched_info = match_department_for_file(src_name, depts, content_preview=preview_text)
 
     doc.metadata.setdefault("dept_key", matched_key)
     doc.metadata.setdefault("dept_name", matched_info.get("name", "Phòng Công tác Sinh viên (VLUTE)"))
@@ -475,7 +465,7 @@ class SmartRAGChain:
                 bm25_rank[idx] = pos
                 bm25_score_map[idx] = sc
 
-        # 3. Dual Refusal Gate tổng quát (Dense + BM25 + Độ phủ IDF từ vựng nội dung)
+        # 3. Dual Refusal Gate tổng quát (Dense + BM25 + Độ phủ IDF từ vựng & Tiêu đề tài liệu động)
         q_unigrams = []
         seen_u = set()
         for u in tokenize_vietnamese_for_bm25(q_clean, include_bigrams=False):
@@ -483,12 +473,21 @@ class SmartRAGChain:
                 seen_u.add(u)
                 q_unigrams.append(u)
 
-        total_q_idf = sum(raw_idf.get(u, 3.2) for u in q_unigrams) or 1.0
+        q_b_set_gate = {t for t in q_tokens if "_" in t}
+        total_q_idf = sum(raw_idf.get(u, 2.2) for u in q_unigrams) or 1.0
         eval_candidates = set(list(dense_rank.keys())[:15]) | set(list(bm25_rank.keys())[:15])
         best_idf_cov = 0.0
+        has_doc_title_anchor = False
+
         for idx in eval_candidates:
             d_set = unigram_sets[idx]
-            matched_idf = sum(raw_idf.get(u, 3.2) for u in q_unigrams if u in d_set)
+            if idx < len(meta_unigram_sets):
+                d_set = d_set | meta_unigram_sets[idx]
+                meta_u_hits = len(seen_u & meta_unigram_sets[idx])
+                meta_b_hits = len(q_b_set_gate & meta_bigram_sets[idx]) if idx < len(meta_bigram_sets) else 0
+                if meta_b_hits >= 2 or meta_u_hits >= 3:
+                    has_doc_title_anchor = True
+            matched_idf = sum(raw_idf.get(u, 2.2) for u in q_unigrams if u in d_set)
             cov = matched_idf / total_q_idf
             if cov > best_idf_cov:
                 best_idf_cov = cov
@@ -513,6 +512,11 @@ class SmartRAGChain:
             (max_dense_score >= 0.43)
             and (max_bm25_score >= 18.0)
             and (best_idf_cov >= 0.37)
+        ) or (
+            has_doc_title_anchor
+            and (max_bm25_score >= 16.0)
+            and (max_dense_score >= 0.33)
+            and (best_idf_cov >= 0.32)
         )
         accepted = bool(dense_strong or lexical_strong or both_moderate)
 
@@ -785,7 +789,7 @@ _CURRENT_KEY_INDEX = 0
 _CURRENT_GROQ_KEY_INDEX = 0
 _GROQ_STATE_LOCK = threading.Lock()
 
-MAX_CONTEXT_SNIPPET_CHARS = 560
+MAX_CONTEXT_SNIPPET_CHARS = 680
 
 
 def clip_context_text(text: str, max_chars: int = MAX_CONTEXT_SNIPPET_CHARS) -> str:
@@ -817,6 +821,8 @@ _ACADEMIC_ACRONYM_EXPANSIONS = {
     "khtc": ("kế", "hoạch", "tài", "chính"),
     "cvht": ("cố", "vấn", "học", "tập"),
     "cbvc": ("cán", "bộ", "viên", "chức"),
+    "cđr": ("chuẩn", "đầu", "ra"),
+    "ctđt": ("chương", "trình", "đào", "tạo"),
 }
 
 _ACADEMIC_SYNONYM_BIGRAMS = {
@@ -825,6 +831,11 @@ _ACADEMIC_SYNONYM_BIGRAMS = {
     "nhờ_người": ("nhờ", "thay", "thi_thay"),
     "rớt_môn": ("học", "lại", "điểm", "c", "học_lại", "điểm_c"),
     "nợ_môn": ("học", "lại", "điểm", "c", "học_lại", "điểm_c"),
+    "môn_học": ("học", "phần", "học_phần"),
+    "thầy_cô": ("giảng", "viên", "giảng_viên"),
+    "ai_dạy": ("giảng", "viên", "phụ", "trách", "giảng_viên", "phụ_trách"),
+    "tính_điểm": ("kiểm", "tra", "đánh", "giá", "hệ", "số", "đánh_giá", "hệ_số"),
+    "chấm_điểm": ("kiểm", "tra", "đánh", "giá", "hệ", "số", "đánh_giá", "hệ_số"),
 }
 
 _BM25_STOPWORDS = frozenset({
@@ -910,7 +921,11 @@ def _expand_bm25_corpus(raw_docs: list[str], raw_metas: list[dict], departments:
 
         u_set = set(tokenize_vietnamese_for_bm25(text, include_bigrams=False))
         unigram_sets.append(u_set)
-        for u in u_set:
+        # Khi tính df_counts cho IDF, bỏ dòng tiền tố [Tài liệu: ...] lặp trên mọi chunk của cùng 1 file
+        # để các từ khóa tiêu đề tài liệu/môn học giữ nguyên trọng số IDF cao.
+        body_without_prefix = re.sub(r"^\[(?:Tài liệu|Đề cương học phần):[^\n]+\]\n?", "", text.strip())
+        df_u_set = set(tokenize_vietnamese_for_bm25(body_without_prefix or text, include_bigrams=False))
+        for u in df_u_set:
             df_counts[u] = df_counts.get(u, 0) + 1
 
         src_base = os.path.splitext(src_name)[0].replace("_", " ")

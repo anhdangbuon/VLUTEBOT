@@ -123,13 +123,17 @@ function SidebarContent({
 
   return (
     <div
-      className={`flex flex-col h-full w-full bg-[#1d262a] text-[#b8c7ce] border-r border-[#1a2226] shadow-[4px_0_24px_rgba(0,0,0,0.3)] select-none ${
+      data-testid="sidebar-content"
+      className={`flex flex-col h-full w-full text-[#b8c7ce] select-none ${
         isResizing ? "pointer-events-none" : ""
       }`}
     >
       {/* Header badge & collapse button */}
-      <div className="w-full px-3.5 pt-3 pb-1 shrink-0">
-        <div className="w-full flex items-center justify-between gap-2 bg-[#141a1d] border border-[#2b3b42] rounded-[8px] min-h-[46px] px-4 py-2">
+      <div className="w-full pl-3.5 pr-[20px] pt-3 pb-1 shrink-0">
+        <div
+          data-testid="sidebar-header-card"
+          className="w-full flex items-center justify-between gap-2 bg-[#141a1d] border border-[#2b3b42] rounded-[8px] min-h-[46px] px-4 py-2"
+        >
           <div className="text-[#b8c7ce] text-[0.73rem] font-bold tracking-[0.3px] uppercase whitespace-nowrap truncate">
             BẢNG ĐIỀU KHIỂN HỌC VỤ
           </div>
@@ -146,7 +150,10 @@ function SidebarContent({
       </div>
 
       {/* Scrollable sidebar interior */}
-      <div className="w-full flex-1 overflow-y-auto sidebar-scroll px-3.5 pb-5">
+      <div
+        className="w-full flex-1 overflow-y-auto overflow-x-hidden sidebar-scroll px-3.5 pb-5"
+        style={{ scrollbarGutter: "stable" }}
+      >
         <div className="flex justify-center items-center w-full pt-3.5 pb-2">
           <img
             src={logoUrl}
@@ -326,11 +333,12 @@ export default function Sidebar({
             <motion.aside
               key="sidebar-mobile-drawer"
               data-testid="vlute-sidebar"
+              style={{ backgroundColor: "#1d262a" }}
               initial={{ x: "-100%" }}
               animate={{ x: 0 }}
               exit={{ x: "-100%" }}
               transition={FM_SPRING}
-              className="fixed inset-y-0 left-0 z-50 w-[85vw] max-w-[340px] h-full overflow-hidden"
+              className="fixed inset-y-0 left-0 z-50 w-[85vw] max-w-[340px] h-full overflow-hidden shadow-[inset_-1px_0_0_#1a2226,4px_0_24px_rgba(0,0,0,0.3)]"
             >
               <SidebarContent
                 width={332}
@@ -358,12 +366,12 @@ export default function Sidebar({
         <motion.aside
           key="sidebar-desktop"
           data-testid="vlute-sidebar"
-          style={{ width: clampedWidth }}
+          style={{ width: `${clampedWidth}px`, backgroundColor: "#1d262a" }}
           initial={{ x: -clampedWidth }}
           animate={{ x: 0 }}
           exit={{ x: -clampedWidth }}
           transition={{ duration: 0.34, ease: FM_EASE_OUT }}
-          className="fixed inset-y-0 left-0 z-30 h-full overflow-hidden"
+          className="fixed inset-y-0 left-0 z-30 h-full overflow-hidden shadow-[inset_-1px_0_0_#1a2226,4px_0_24px_rgba(0,0,0,0.3)]"
         >
           <SidebarContent
             width={clampedWidth}
@@ -380,10 +388,10 @@ export default function Sidebar({
             aria-label="Kéo để thay đổi độ rộng bảng điều khiển"
             data-testid="sidebar-resize-handle"
             onMouseDown={onResizeStart}
-            className={`absolute top-0 right-0 w-1.5 h-full cursor-col-resize z-40 transition-colors ${
+            className={`absolute top-0 right-0 w-[5px] h-full cursor-col-resize z-40 transition-colors ${
               isResizing
-                ? "bg-[#00a65a]"
-                : "hover:bg-[#00a65a]/60 active:bg-[#00a65a]"
+                ? "bg-[#00a65a]/80"
+                : "hover:bg-[#00a65a]/45 active:bg-[#00a65a]/80"
             }`}
           />
         </motion.aside>
