@@ -26,6 +26,7 @@ from rag import (
     get_rag_chain,
     load_departments_config,
     rewrite_conversational_query,
+    sanitize_no_markdown_tables,
 )
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -189,12 +190,72 @@ def is_greeting(query: str) -> bool:
         "ctxh", "công tác xã hội", "kỷ luật", "thi hộ", "thi thay",
         "học thay", "tốt nghiệp", "khóa luận", "rèn luyện", "hoàn trả",
         "hồ sơ", "thủ tục", "mật khẩu", "email", "trang phục", "ứng xử",
-        "ban cán sự", "khiếu nại", "vượt khó",
+        "ban cán sự", "khiếu nại", "vượt khó", "đề cương", "học phần",
+        "giảng viên", "tiên quyết", "chuẩn đầu ra", "giáo trình", "hệ số",
     ]
     if len(words) <= 4 and any(re.search(rf"\b{re.escape(k)}\b", clean) for k in GREETING_KEYWORDS):
         if not any(dk in clean for dk in duty_keywords):
             return True
     return False
+
+
+def check_social_or_command_reply(query: str) -> str | None:
+    """
+    Nhận diện các câu cảm thán, cảm ơn, xác nhận hoặc câu lệnh ngắn không có nội dung tra cứu quy chế
+    (như 'đặt câu hỏi đi', 'hỏi đi', 'nói đi', 'ok', 'cảm ơn', 'thanks') để phản hồi thân thiện
+    và không gắn huy hiệu đối soát.
+    """
+    clean = re.sub(r"^[\s\.,!?;:\-]+|[\s\.,!?;:\-]+$", "", (query or "").lower()).strip()
+    clean = re.sub(r"\s+", " ", clean)
+    if not clean:
+        return None
+    words = clean.split()
+    if len(words) > 7:
+        return None
+
+    duty_keywords = [
+        "học bổng", "học phí", "tín chỉ", "cảnh báo", "điểm", "rút môn",
+        "thôi học", "miễn giảm", "bảo hiểm", "quy chế", "quy định", "điều",
+        "ctxh", "công tác xã hội", "kỷ luật", "thi hộ", "thi thay",
+        "học thay", "tốt nghiệp", "khóa luận", "rèn luyện", "hoàn trả",
+        "hồ sơ", "thủ tục", "mật khẩu", "email", "trang phục", "ứng xử",
+        "ban cán sự", "khiếu nại", "vượt khó", "đề cương", "học phần",
+        "giảng viên", "tiên quyết", "chuẩn đầu ra", "giáo trình", "hệ số",
+        "đào tạo", "sinh viên", "phòng", "trung tâm", "it1216", "mã nguồn mở",
+    ]
+    if any(dk in clean for dk in duty_keywords):
+        return None
+
+    thanks_or_ack_exact = {
+        "ok", "okay", "oke", "oki", "okie", "okela", "dạ", "vâng", "dạ vâng",
+        "ừ", "ờ", "rồi", "hiểu rồi", "biết rồi", "đã hiểu", "ok bạn", "ok lucas",
+        "ok cảm ơn", "dạ cảm ơn", "vâng cảm ơn", "tốt quá", "hay quá", "tuyệt vời",
+        "chuẩn", "đúng rồi", "cảm ơn", "cám ơn", "thank", "thanks", "tks", "thank you",
+    }
+    thanks_prefixes = (
+        "cảm ơn", "cám ơn", "thank", "tks", "ok cảm ơn", "dạ cảm ơn", "vâng cảm ơn",
+    )
+    if clean in thanks_or_ack_exact or any(clean.startswith(p) for p in thanks_prefixes):
+        return (
+            "Rất vui được hỗ trợ bạn! Nếu cần tra cứu thêm quy chế học vụ, học bổng, học phí hay đề cương học phần, "
+            "bạn có thể chọn nhanh 1 trong các gợi ý bên dưới hoặc nhập trực tiếp chủ đề cần tìm hiểu nhé!"
+        )
+
+    command_exact = {
+        "đặt câu hỏi đi", "đặt câu hỏi", "hỏi đi", "hỏi tiếp đi", "nói đi", "nói tiếp đi",
+        "trả lời đi", "tiếp đi", "tiếp tục đi", "gợi ý đi", "cho câu hỏi đi",
+        "bắt đầu đi", "làm đi", "xem nào", "đâu rồi", "sao nữa",
+    }
+    command_prefixes = (
+        "đặt câu hỏi", "hỏi đi", "nói đi", "trả lời đi", "gợi ý đi", "cho câu hỏi",
+    )
+    if clean in command_exact or any(clean.startswith(p) for p in command_prefixes):
+        return (
+            "Mình luôn sẵn sàng! Bạn hãy chọn nhanh 1 trong các câu hỏi gợi ý bên dưới "
+            "hoặc nhập trực tiếp chủ đề quy chế, học vụ, học bổng, học phí cần tra cứu để Lucas giải đáp ngay nhé!"
+        )
+
+    return None
 
 
 def is_refusal_answer(text: str) -> bool:
@@ -892,14 +953,18 @@ def chat_stream(body: ChatStreamRequest):
             yield _sse_event({"type": "done"})
             return
 
-        if is_greeting(current_user_query):
-            if body.greeting_turn_count is not None:
-                idx = int(body.greeting_turn_count) % len(GREETING_REPLIES)
+        social_reply = check_social_or_command_reply(current_user_query)
+        if social_reply or is_greeting(current_user_query):
+            if social_reply:
+                greeting_reply = social_reply
             else:
-                with _greeting_lock:
-                    idx = _greeting_counter % len(GREETING_REPLIES)
-                    _greeting_counter += 1
-            greeting_reply = GREETING_REPLIES[idx]
+                if body.greeting_turn_count is not None:
+                    idx = int(body.greeting_turn_count) % len(GREETING_REPLIES)
+                else:
+                    with _greeting_lock:
+                        idx = _greeting_counter % len(GREETING_REPLIES)
+                        _greeting_counter += 1
+                greeting_reply = GREETING_REPLIES[idx]
             turns_msgs = list(body.messages or []) + [{"role": "user", "content": current_user_query}]
             followups = select_followup_prompts(
                 current_user_query, prompts_cfg, messages=turns_msgs, sources=[], assistant_reply=greeting_reply, asked_queries=body.asked_queries
@@ -1068,7 +1133,7 @@ def chat_stream(body: ChatStreamRequest):
                 streamed_chunks.append(notice)
                 yield _sse_event({"type": "chunk", "content": notice})
 
-            full_answer = "".join(streamed_chunks).strip()
+            full_answer = sanitize_no_markdown_tables("".join(streamed_chunks).strip())
             elapsed_time = round(time.time() - start_time, 2)
             is_interrupted = "phản hồi bị gián đoạn giữa chừng" in full_answer.lower()
 

@@ -1,4 +1,6 @@
 import os
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 import sys
 if hasattr(sys.stdout, "reconfigure"):
     try:
@@ -654,8 +656,8 @@ class SmartRAGChain:
                     if len(adjacent_extras) >= max_neighbor_adds or added_for_anchor >= per_anchor_cap:
                         break
 
-        # Chèn đoạn nối trang liền kề ngay sau 4 kết quả anchor chính để luôn giữ đủ anchor top trong docs[:5]
-        insert_pos = min(4, len(selected_indices))
+        # Chèn đoạn nối trang liền kề ngay sau 3 kết quả anchor chính để luôn giữ đủ cả đoạn trước và đoạn sau của anchor đầu trong docs[:5]
+        insert_pos = min(3, len(selected_indices))
         ordered_indices = selected_indices[:insert_pos] + adjacent_extras + selected_indices[insert_pos:]
 
         result_docs = []
@@ -758,6 +760,7 @@ class SmartRAGChain:
         formatted_prompt = self.prompt.format(context=context_str, input=query)
         raw_answer = self.llm.invoke(formatted_prompt)
         answer = raw_answer if isinstance(raw_answer, str) else getattr(raw_answer, 'content', str(raw_answer))
+        answer = sanitize_no_markdown_tables(answer)
         is_refusal = (REFUSAL_MESSAGE in str(answer)) or ("không được đề cập" in str(answer).lower())
 
         return {
@@ -790,6 +793,91 @@ _CURRENT_GROQ_KEY_INDEX = 0
 _GROQ_STATE_LOCK = threading.Lock()
 
 MAX_CONTEXT_SNIPPET_CHARS = 680
+
+
+def sanitize_no_markdown_tables(text: str) -> str:
+    """
+    Hậu xử lý đảm bảo tuyệt đối không còn bảng kẻ bằng dấu gạch đứng (| ... |) hoặc thẻ <br>:
+    Tự động chuyển mọi bảng Markdown (nhiều dòng hoặc bị gộp 1 dòng) thành các gạch đầu dòng phân cấp rõ ràng.
+    """
+    if not text:
+        return ""
+    s = str(text)
+    s = re.sub(r"<br\s*/?>", "; ", s, flags=re.IGNORECASE)
+
+    # Nếu bảng Markdown bị gộp trên cùng 1 dòng (ví dụ: "| Cột 1 | Cột 2 | |---|---| | A | B |")
+    if "|---" in s or "| ---" in s or " :---" in s:
+        s = re.sub(r"\|\s*\|\s*(?=[-:]+\s*\|)", "|\n|", s)
+        s = re.sub(r"(\|[\s\-:]+\|)\s*\|", r"\1\n|", s)
+        s = re.sub(r"\|\s*\|\s*(?=\*\*|[A-Za-zÀ-ỹ0-9])", "|\n|", s)
+
+    lines = s.splitlines()
+    out_lines: list[str] = []
+    i = 0
+    n = len(lines)
+
+    def _split_pipe_row(row_line: str) -> list[str]:
+        inner = row_line.strip()
+        if inner.startswith("|"):
+            inner = inner[1:]
+        if inner.endswith("|"):
+            inner = inner[:-1]
+        return [re.sub(r"\s+", " ", c).strip() for c in inner.split("|")]
+
+    def _is_sep_row(cells: list[str]) -> bool:
+        return bool(cells) and all(not c or bool(re.match(r"^[:\-]+$", c)) for c in cells)
+
+    while i < n:
+        line_str = lines[i].strip()
+        if line_str.count("|") >= 2 and (line_str.startswith("|") or (i + 1 < n and re.search(r"\|[\s\-:]+\|", lines[i + 1]))):
+            table_rows: list[list[str]] = []
+            while i < n and lines[i].strip().count("|") >= 2:
+                cells = _split_pipe_row(lines[i])
+                if cells and any(cells):
+                    table_rows.append(cells)
+                i += 1
+
+            has_sep = any(_is_sep_row(r) for r in table_rows)
+            data_rows = [r for r in table_rows if not _is_sep_row(r)]
+            if has_sep and len(data_rows) >= 2:
+                headers = [re.sub(r"^\*\*|\*\*$", "", h).strip() for h in data_rows[0]]
+                last_first_col = ""
+                for r in data_rows[1:]:
+                    if not any(r):
+                        continue
+                    c0 = r[0].strip() if len(r) > 0 else ""
+                    if c0 in ("", "-", "–", "—") and last_first_col:
+                        c0 = last_first_col
+                    elif c0:
+                        last_first_col = c0
+                    c0_clean = re.sub(r"^\*\*|\*\*$", "", c0).strip()
+                    sub_parts = []
+                    for col_idx in range(1, len(r)):
+                        val = r[col_idx].strip()
+                        if not val or val in ("-", "–", "—"):
+                            continue
+                        hdr = headers[col_idx] if col_idx < len(headers) and headers[col_idx] else f"Cột {col_idx + 1}"
+                        sub_parts.append(f"{hdr}: {val}")
+                    if c0_clean and sub_parts:
+                        out_lines.append(f"- **{c0_clean}**:")
+                        for sp in sub_parts:
+                            out_lines.append(f"  - {sp}")
+                    elif c0_clean:
+                        out_lines.append(f"- **{c0_clean}**")
+                    elif sub_parts:
+                        out_lines.append("- " + "; ".join(sub_parts))
+                continue
+            else:
+                for r in data_rows:
+                    non_empty = [c for c in r if c and c not in ("-", "–", "—")]
+                    if non_empty:
+                        out_lines.append("- " + " — ".join(non_empty))
+                continue
+
+        out_lines.append(lines[i])
+        i += 1
+
+    return "\n".join(out_lines).strip()
 
 
 def clip_context_text(text: str, max_chars: int = MAX_CONTEXT_SNIPPET_CHARS) -> str:
@@ -1588,6 +1676,8 @@ def rewrite_conversational_query(query: str, chat_history: list | None = None) -
         "cái đó", "cái này", "mức này", "mức đó", "loại này", "loại đó",
         "khoản này", "quy định này", "trường hợp này", "đối tượng này",
         "phòng này", "phòng đó", "đơn vị này", "đơn vị đó", "ở đó", "bên đó",
+        "học phần này", "học phần đó", "môn này", "môn đó", "ngành này", "ngành đó",
+        "bảng này", "mục này", "chế độ này", "chính sách này",
         "vậy thì", "vậy còn", "vậy mức", "thế còn", "còn hồ sơ", "còn thủ tục",
         "còn thời gian", "còn điều kiện", "còn mức", "thì sao"
     ]
@@ -1597,6 +1687,20 @@ def rewrite_conversational_query(query: str, chat_history: list | None = None) -
         or q_lower.startswith(("vậy ", "còn ", "thế "))
     )
 
+    # Bỏ qua ngay các câu cảm thán, cảm ơn, xác nhận hoặc câu lệnh ngắn không có nội dung tra cứu
+    short_non_query_phrases = (
+        "đặt câu hỏi đi", "hỏi đi", "nói đi", "trả lời đi", "tiếp đi", "tiếp tục đi",
+        "gợi ý đi", "cho câu hỏi đi", "bắt đầu đi", "làm đi", "cảm ơn", "cám ơn",
+        "thanks", "thank you", "tks", "ok", "okay", "oke", "oki", "hiểu rồi", "biết rồi",
+        "đã hiểu", "vâng", "dạ", "ừ", "ờ", "rồi", "tốt quá", "hay quá", "tuyệt vời",
+    )
+    q_stripped_punct = re.sub(r"^[\s\.,!?;:\-]+|[\s\.,!?;:\-]+$", "", q_lower).strip()
+    if len(q_stripped_punct.split()) <= 6 and not has_explicit_marker and "?" not in q_lower:
+        if q_stripped_punct in short_non_query_phrases or any(
+            q_stripped_punct.startswith(p) for p in ("cảm ơn", "cám ơn", "thank", "đặt câu hỏi", "hỏi đi", "nói đi", "trả lời đi")
+        ):
+            return raw_query
+
     contextual_question_markers = [
         "bao lâu", "như thế nào", "ra sao", "nộp ở đâu", "nộp cho ai",
         "gồm những gì", "bao nhiêu tiền", "mức tiền", "công thức tính",
@@ -1604,6 +1708,19 @@ def rewrite_conversational_query(query: str, chat_history: list | None = None) -
         "như vậy", "được không", "mấy buổi", "bao nhiêu buổi"
     ]
     has_contextual_marker = any(marker in q_lower for marker in contextual_question_markers)
+
+    interrogative_words = (
+        "gì", "nào", "bao nhiêu", "bao lâu", "mấy", "thế nào", "như thế nào",
+        "ra sao", "sao", "ở đâu", "đâu", "ai", "được không", "phải không",
+        "đúng không", "hay không", "có được", "có bị", "có phải", "khi nào",
+    )
+    has_interrogative = (
+        "?" in q_lower
+        or any(
+            (w in q_lower if " " in w else bool(re.search(rf"\b{re.escape(w)}\b", q_lower)))
+            for w in interrogative_words
+        )
+    )
 
     standalone_subjects = [
         "học bổng", "kkht", "spkt", "miễn giảm học phí", "miễn, giảm học phí",
@@ -1613,7 +1730,8 @@ def rewrite_conversational_query(query: str, chat_history: list | None = None) -
         "thi hộ", "thi thay", "học thay", "phòng thi", "khiển trách",
         "cảnh cáo", "đình chỉ", "buộc thôi học", "điểm rèn luyện",
         "khóa luận", "tốt nghiệp", "danh hiệu", "xuất sắc", "sinh viên giỏi",
-        "khen thưởng", "quy định", "quy chế", "quy trình", "thông báo", "hướng dẫn"
+        "khen thưởng", "quy định", "quy chế", "quy trình", "thông báo", "hướng dẫn",
+        "đề cương", "it1216", "mã nguồn mở"
     ]
     has_article_or_section_ref = bool(
         re.search(r"\b(?:điều|khoản|mục|chương|phụ\s+lục|biểu\s+mẫu|mẫu)\s+[ivxlcdm\d]+", q_lower)
@@ -1624,7 +1742,9 @@ def rewrite_conversational_query(query: str, chat_history: list | None = None) -
     )
 
     needs_rewrite = has_explicit_marker or (
-        (has_contextual_marker or len(q_lower.split()) <= 15) and not has_standalone_subject
+        (has_contextual_marker or has_interrogative)
+        and len(q_lower.split()) <= 15
+        and not has_standalone_subject
     )
     if not needs_rewrite:
         return raw_query
@@ -1698,6 +1818,7 @@ def get_rag_chain():
         "   - Đi thẳng vào câu hỏi, diễn đạt tự nhiên, rõ ràng, súc tích.\n"
         "   - KHÔNG cần trích dẫn rườm rà số hiệu quyết định hay điều khoản trừ khi câu hỏi yêu cầu cụ thể.\n"
         "   - Trình bày dạng gạch đầu dòng ngắn gọn để sinh viên nắm bắt thông tin nhanh nhất.\n"
+        "   - Tuyệt đối KHÔNG kẻ bảng Markdown bằng dấu gạch đứng (| ... |) và KHÔNG dùng thẻ HTML như <br>; luôn chuyển dữ liệu bảng thành các gạch đầu dòng phân cấp rõ ràng.\n"
         "   - Tuyệt đối KHÔNG dùng ký hiệu toán học LaTeX như '\\[ ... \\]', '\\( ... \\)', '$$ ... $$', '\\text', '\\frac', '\\div', '\\times'. Luôn viết phép tính bằng chữ và số thuần túy rõ ràng (ví dụ: 15 - 3 = 12 ngày còn thiếu; 12 : 0,5 = 24 buổi).\n"
         f"4. CHỈ trả về hằng số REFUSAL_MESSAGE duy nhất (không giải thích thêm) khi câu hỏi hoàn toàn nằm ngoài phạm vi các văn bản quy chế tham khảo (ví dụ: hỏi giá phòng ký túc xá, điểm chuẩn tuyển sinh, tuyến xe buýt, học phí 1 tín chỉ...). Nếu tài liệu quy chế đã có quy định liên quan đến chủ đề câu hỏi, tuyệt đối KHÔNG trả về REFUSAL_MESSAGE:\n{REFUSAL_MESSAGE}\n\n"
         "Nội dung quy chế tham khảo:\n{context}\n\n"

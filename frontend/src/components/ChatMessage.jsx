@@ -7,6 +7,87 @@ import ContactCard from "./ContactCard.jsx";
 const FM_EASE_OUT = [0.22, 1, 0.36, 1];
 const FM_SPRING = { type: "spring", stiffness: 360, damping: 28 };
 
+function convertPipeTablesToBullets(rawText) {
+  if (!rawText) return "";
+  let s = String(rawText).replace(/<br\s*\/?>/gi, "; ");
+  if (s.includes("|---") || s.includes("| ---") || s.includes(":---")) {
+    s = s.replace(/\|\s*\|\s*(?=[-:]+\s*\|)/g, "|\n|");
+    s = s.replace(/(\|[\s\-:]+\|)\s*\|/g, "$1\n|");
+    s = s.replace(/\|\s*\|\s*(?=\*\*|[A-Za-zÀ-ỹ0-9])/g, "|\n|");
+  }
+  const lines = s.split(/\r?\n/);
+  const out = [];
+  let i = 0;
+
+  const splitRow = (line) => {
+    let inner = line.trim();
+    if (inner.startsWith("|")) inner = inner.slice(1);
+    if (inner.endsWith("|")) inner = inner.slice(0, -1);
+    return inner.split("|").map((c) => c.replace(/\s+/g, " ").trim());
+  };
+
+  const isSep = (cells) =>
+    cells.length > 0 && cells.every((c) => !c || /^[:\-]+$/.test(c));
+
+  while (i < lines.length) {
+    const trimmed = lines[i].trim();
+    const pipeCount = (trimmed.match(/\|/g) || []).length;
+    if (
+      pipeCount >= 2 &&
+      (trimmed.startsWith("|") ||
+        (i + 1 < lines.length && /\|[\s\-:]+\|/.test(lines[i + 1])))
+    ) {
+      const tableRows = [];
+      while (
+        i < lines.length &&
+        (lines[i].trim().match(/\|/g) || []).length >= 2
+      ) {
+        const cells = splitRow(lines[i]);
+        if (cells.some(Boolean)) tableRows.push(cells);
+        i += 1;
+      }
+      const hasSep = tableRows.some(isSep);
+      const dataRows = tableRows.filter((r) => !isSep(r));
+      if (hasSep && dataRows.length >= 2) {
+        const headers = dataRows[0].map((h) =>
+          h.replace(/^\*\*|\*\*$/g, "").trim()
+        );
+        let lastFirst = "";
+        for (let rIdx = 1; rIdx < dataRows.length; rIdx += 1) {
+          const r = dataRows[rIdx];
+          if (!r.some(Boolean)) continue;
+          let c0 = (r[0] || "").trim();
+          if ((!c0 || c0 === "-" || c0 === "–" || c0 === "—") && lastFirst) {
+            c0 = lastFirst;
+          } else if (c0) {
+            lastFirst = c0;
+          }
+          const c0Clean = c0.replace(/^\*\*|\*\*$/g, "").trim();
+          const subParts = [];
+          for (let cIdx = 1; cIdx < r.length; cIdx += 1) {
+            const val = (r[cIdx] || "").trim();
+            if (!val || val === "-" || val === "–" || val === "—") continue;
+            const hdr = headers[cIdx] || `Cột ${cIdx + 1}`;
+            subParts.push(`${hdr}: ${val}`);
+          }
+          if (c0Clean && subParts.length > 0) {
+            out.push(`- **${c0Clean}**:`);
+            subParts.forEach((sp) => out.push(`  - ${sp}`));
+          } else if (c0Clean) {
+            out.push(`- **${c0Clean}**`);
+          } else if (subParts.length > 0) {
+            out.push(`- ${subParts.join("; ")}`);
+          }
+        }
+        continue;
+      }
+    }
+    out.push(lines[i]);
+    i += 1;
+  }
+  return out.join("\n");
+}
+
 export default function ChatMessage({
   message,
   avatarUrl,
@@ -110,7 +191,7 @@ export default function ChatMessage({
                     ),
                   }}
                 >
-                  {message.content}
+                  {convertPipeTablesToBullets(message.content)}
                 </ReactMarkdown>
               </div>
 

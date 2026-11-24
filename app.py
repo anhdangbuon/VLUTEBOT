@@ -17,6 +17,7 @@ from rag import (
     load_departments_config,
     rewrite_conversational_query,
     auto_sync_knowledge_base,
+    sanitize_no_markdown_tables,
 )
 
 st.set_page_config(
@@ -1563,7 +1564,8 @@ def _escape_unsafe_lt(text: str) -> str:
 
 def build_assistant_bubble_html(content: str, contact_html: str = "", elapsed_time=None, is_refusal: bool = False, is_welcome_or_greeting: bool = False) -> str:
     """Gộp Huy hiệu + Nội dung + Khối liên hệ vào chung 1 chuỗi Markdown/HTML duy nhất để cố định 1 DOM Slot."""
-    body = _escape_unsafe_lt((content or "").strip())
+    cleaned_content = sanitize_no_markdown_tables((content or "").strip())
+    body = _escape_unsafe_lt(cleaned_content)
     if is_welcome_or_greeting:
         return body
     if is_refusal:
@@ -1914,12 +1916,72 @@ def is_greeting(query: str) -> bool:
         "ctxh", "công tác xã hội", "kỷ luật", "thi hộ", "thi thay",
         "học thay", "tốt nghiệp", "khóa luận", "rèn luyện", "hoàn trả",
         "hồ sơ", "thủ tục", "mật khẩu", "email", "trang phục", "ứng xử",
-        "ban cán sự", "khiếu nại", "vượt khó",
+        "ban cán sự", "khiếu nại", "vượt khó", "đề cương", "học phần",
+        "giảng viên", "tiên quyết", "chuẩn đầu ra", "giáo trình", "hệ số",
     ]
     if len(words) <= 4 and any(re.search(rf"\b{re.escape(k)}\b", clean) for k in GREETING_KEYWORDS):
         if not any(dk in clean for dk in duty_keywords):
             return True
     return False
+
+
+def check_social_or_command_reply(query: str) -> str | None:
+    """
+    Nhận diện các câu cảm thán, cảm ơn, xác nhận hoặc câu lệnh ngắn không có nội dung tra cứu quy chế
+    (như 'đặt câu hỏi đi', 'hỏi đi', 'nói đi', 'ok', 'cảm ơn', 'thanks') để phản hồi thân thiện
+    và không gắn huy hiệu đối soát.
+    """
+    clean = re.sub(r"^[\s\.,!?;:\-]+|[\s\.,!?;:\-]+$", "", (query or "").lower()).strip()
+    clean = re.sub(r"\s+", " ", clean)
+    if not clean:
+        return None
+    words = clean.split()
+    if len(words) > 7:
+        return None
+
+    duty_keywords = [
+        "học bổng", "học phí", "tín chỉ", "cảnh báo", "điểm", "rút môn",
+        "thôi học", "miễn giảm", "bảo hiểm", "quy chế", "quy định", "điều",
+        "ctxh", "công tác xã hội", "kỷ luật", "thi hộ", "thi thay",
+        "học thay", "tốt nghiệp", "khóa luận", "rèn luyện", "hoàn trả",
+        "hồ sơ", "thủ tục", "mật khẩu", "email", "trang phục", "ứng xử",
+        "ban cán sự", "khiếu nại", "vượt khó", "đề cương", "học phần",
+        "giảng viên", "tiên quyết", "chuẩn đầu ra", "giáo trình", "hệ số",
+        "đào tạo", "sinh viên", "phòng", "trung tâm", "it1216", "mã nguồn mở",
+    ]
+    if any(dk in clean for dk in duty_keywords):
+        return None
+
+    thanks_or_ack_exact = {
+        "ok", "okay", "oke", "oki", "okie", "okela", "dạ", "vâng", "dạ vâng",
+        "ừ", "ờ", "rồi", "hiểu rồi", "biết rồi", "đã hiểu", "ok bạn", "ok lucas",
+        "ok cảm ơn", "dạ cảm ơn", "vâng cảm ơn", "tốt quá", "hay quá", "tuyệt vời",
+        "chuẩn", "đúng rồi", "cảm ơn", "cám ơn", "thank", "thanks", "tks", "thank you",
+    }
+    thanks_prefixes = (
+        "cảm ơn", "cám ơn", "thank", "tks", "ok cảm ơn", "dạ cảm ơn", "vâng cảm ơn",
+    )
+    if clean in thanks_or_ack_exact or any(clean.startswith(p) for p in thanks_prefixes):
+        return (
+            "Rất vui được hỗ trợ bạn! Nếu cần tra cứu thêm quy chế học vụ, học bổng, học phí hay đề cương học phần, "
+            "bạn có thể chọn nhanh 1 trong các gợi ý bên dưới hoặc nhập trực tiếp chủ đề cần tìm hiểu nhé!"
+        )
+
+    command_exact = {
+        "đặt câu hỏi đi", "đặt câu hỏi", "hỏi đi", "hỏi tiếp đi", "nói đi", "nói tiếp đi",
+        "trả lời đi", "tiếp đi", "tiếp tục đi", "gợi ý đi", "cho câu hỏi đi",
+        "bắt đầu đi", "làm đi", "xem nào", "đâu rồi", "sao nữa",
+    }
+    command_prefixes = (
+        "đặt câu hỏi", "hỏi đi", "nói đi", "trả lời đi", "gợi ý đi", "cho câu hỏi",
+    )
+    if clean in command_exact or any(clean.startswith(p) for p in command_prefixes):
+        return (
+            "Mình luôn sẵn sàng! Bạn hãy chọn nhanh 1 trong các câu hỏi gợi ý bên dưới "
+            "hoặc nhập trực tiếp chủ đề quy chế, học vụ, học bổng, học phí cần tra cứu để Lucas giải đáp ngay nhé!"
+        )
+
+    return None
 
 def is_refusal_answer(text: str) -> bool:
     """Kiểm tra xem phản hồi của mô hình có phải là câu từ chối ngoài phạm vi dữ liệu, quá tải hoặc bị gián đoạn giữa chừng hay không."""
@@ -2643,10 +2705,14 @@ if current_user_query:
                 "elapsed_time": None
             })
             render_followup_suggestions(current_user_query, key_suffix=str(new_msg_idx), sources=[], assistant_reply=clarify_reply, preselected_prompts=pre_followups)
-        elif is_greeting(current_user_query):
-            greeting_idx = int(st.session_state.get("greeting_turn_count", 0)) % len(GREETING_REPLIES)
-            greeting_reply = GREETING_REPLIES[greeting_idx]
-            st.session_state.greeting_turn_count = greeting_idx + 1
+        elif check_social_or_command_reply(current_user_query) or is_greeting(current_user_query):
+            social_reply = check_social_or_command_reply(current_user_query)
+            if social_reply:
+                greeting_reply = social_reply
+            else:
+                greeting_idx = int(st.session_state.get("greeting_turn_count", 0)) % len(GREETING_REPLIES)
+                greeting_reply = GREETING_REPLIES[greeting_idx]
+                st.session_state.greeting_turn_count = greeting_idx + 1
             pre_followups = _preselect_followups(current_user_query, sources=[], assistant_reply=greeting_reply)
             status_placeholder.markdown(
                 build_assistant_bubble_html(greeting_reply, is_welcome_or_greeting=True),
