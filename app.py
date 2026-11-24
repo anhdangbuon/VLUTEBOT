@@ -10,16 +10,21 @@ import unicodedata
 import streamlit as st
 import streamlit.components.v1 as components
 from rag import (
-    get_rag_chain,
-    extract_article_info,
-    clip_context_text,
+    MAX_QUERY_LENGTH,
     REFUSAL_MESSAGE,
-    load_departments_config,
-    rewrite_conversational_query,
+    TOO_LONG_QUERY_MESSAGE,
     auto_sync_knowledge_base,
-    sanitize_no_markdown_tables,
-    is_greeting_or_chitchat,
+    clip_context_text,
+    extract_article_info,
     get_greeting_or_chitchat_reply,
+    get_rag_chain,
+    is_greeting_or_chitchat,
+    is_prompt_injection,
+    load_departments_config,
+    normalize_chat_slang,
+    rewrite_conversational_query,
+    sanitize_client_error_message,
+    sanitize_no_markdown_tables,
 )
 
 st.set_page_config(
@@ -2145,6 +2150,7 @@ def check_department_inquiry(query: str):
         "địa chỉ", "ở đâu", "vị trí", "nằm ở", "tòa nào", "phòng mấy",
         "liên hệ", "gặp ai", "số điện thoại", "sđt", "hotline",
         "địa chỉ email", "email của", "email liên hệ", "email phòng", "email trung tâm",
+        "đường link", "link cổng", "link trang", "trang web", "website", "cổng thông tin phòng",
         "liên hệ phòng nào", "liên hệ đơn vị nào", "liên hệ bộ phận nào",
         "hỏi phòng nào", "tới phòng nào", "đến phòng nào", "qua phòng nào",
         "phòng nào hỗ trợ", "đơn vị nào hỗ trợ", "bộ phận nào hỗ trợ",
@@ -2639,7 +2645,42 @@ if current_user_query:
         status_placeholder = st.empty()
         status_placeholder.markdown(THINKING_HTML, unsafe_allow_html=True)
 
-        if not re.search(r"[0-9a-zA-ZÀ-ỹ]", current_user_query):
+        if len(current_user_query) > 2000:
+            from rag import TOO_LONG_QUERY_MESSAGE
+            pre_followups = _preselect_followups("", sources=[], assistant_reply=TOO_LONG_QUERY_MESSAGE)
+            status_placeholder.markdown(
+                build_assistant_bubble_html(TOO_LONG_QUERY_MESSAGE, contact_html="", is_refusal=True),
+                unsafe_allow_html=True
+            )
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": TOO_LONG_QUERY_MESSAGE,
+                "contact": "",
+                "sources": [],
+                "query": current_user_query[:200],
+                "is_refusal": True,
+                "is_greeting": False,
+                "elapsed_time": None
+            })
+            render_followup_suggestions("", key_suffix=str(new_msg_idx), sources=[], assistant_reply=TOO_LONG_QUERY_MESSAGE, preselected_prompts=pre_followups)
+        elif "is_prompt_injection" in globals() and is_prompt_injection(current_user_query):
+            pre_followups = _preselect_followups("", sources=[], assistant_reply=REFUSAL_MESSAGE)
+            status_placeholder.markdown(
+                build_assistant_bubble_html(REFUSAL_MESSAGE, contact_html="", is_refusal=True),
+                unsafe_allow_html=True
+            )
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": REFUSAL_MESSAGE,
+                "contact": "",
+                "sources": [],
+                "query": current_user_query,
+                "is_refusal": True,
+                "is_greeting": False,
+                "elapsed_time": None
+            })
+            render_followup_suggestions("", key_suffix=str(new_msg_idx), sources=[], assistant_reply=REFUSAL_MESSAGE, preselected_prompts=pre_followups)
+        elif not re.search(r"[0-9a-zA-ZÀ-ỹ]", current_user_query):
             clarify_reply = "Bạn vui lòng nhập nội dung câu hỏi cụ thể về quy chế hoặc chọn một gợi ý bên dưới để Lucas hỗ trợ nhé!"
             pre_followups = _preselect_followups(current_user_query, sources=[], assistant_reply=clarify_reply)
             status_placeholder.markdown(
@@ -2682,7 +2723,8 @@ if current_user_query:
             })
             render_followup_suggestions(current_user_query, key_suffix=str(new_msg_idx), sources=[], assistant_reply=greeting_reply, preselected_prompts=pre_followups)
         else:
-            canonical_query = normalize_query_intent(current_user_query)
+            from rag import normalize_chat_slang, sanitize_client_error_message
+            canonical_query = normalize_query_intent(normalize_chat_slang(current_user_query))
             ensure_kb_synced_and_fresh_cache()
             answer_cache = get_answer_cache()
             canonical_cache_key = _strip_accents(canonical_query)
@@ -2862,30 +2904,26 @@ if current_user_query:
                                 render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=sources_to_save, assistant_reply=full_answer, preselected_prompts=pre_followups)
 
                 except Exception as e:
+                    from rag import sanitize_client_error_message
                     status_placeholder.empty()
-                    err_str = str(e)
-                    if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str.upper():
-                        contact_footer = ""
-                        pre_followups = _preselect_followups(rewritten_query, sources=[], assistant_reply=RATE_LIMIT_MESSAGE)
-                        status_placeholder.markdown(
-                            build_assistant_bubble_html(RATE_LIMIT_MESSAGE, contact_html=contact_footer, is_refusal=True),
-                            unsafe_allow_html=True
-                        )
-                        st.session_state.messages.append({
-                            "role": "assistant",
-                            "content": RATE_LIMIT_MESSAGE,
-                            "contact": contact_footer,
-                            "sources": [],
-                            "query": rewritten_query,
-                            "is_refusal": True,
-                            "is_greeting": False,
-                            "elapsed_time": None
-                        })
-                        render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=[], assistant_reply=RATE_LIMIT_MESSAGE, preselected_prompts=pre_followups)
-                    else:
-                        import traceback
-                        traceback.print_exc()
-                        status_placeholder.error(f"Lỗi: {e}")
+                    safe_err_msg = sanitize_client_error_message(e, rate_limit_msg=RATE_LIMIT_MESSAGE)
+                    contact_footer = ""
+                    pre_followups = _preselect_followups(rewritten_query, sources=[], assistant_reply=safe_err_msg)
+                    status_placeholder.markdown(
+                        build_assistant_bubble_html(safe_err_msg, contact_html=contact_footer, is_refusal=True),
+                        unsafe_allow_html=True
+                    )
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": safe_err_msg,
+                        "contact": contact_footer,
+                        "sources": [],
+                        "query": rewritten_query,
+                        "is_refusal": True,
+                        "is_greeting": False,
+                        "elapsed_time": None
+                    })
+                    render_followup_suggestions(rewritten_query, key_suffix=str(new_msg_idx), sources=[], assistant_reply=safe_err_msg, preselected_prompts=pre_followups)
 
 with st.sidebar:
     if LOGO_B64:

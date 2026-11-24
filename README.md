@@ -17,14 +17,15 @@
 - **Giao diện Chính (Production):** Backend **FastAPI + SSE Streaming** ([`api.py`](api.py)) phục vụ SPA **React + Tailwind CSS + Framer Motion** ([`frontend/`](frontend/)) trên cổng **`8000`**.
 - **Giao diện Dự phòng (Fallback):** Ứng dụng **Streamlit** ([`app.py`](app.py)) trên cổng **`8501`**, dùng chung lõi RAG, logic định tuyến phòng ban và quy tắc ẩn thẻ liên hệ khi từ chối OOS.
 
-Hệ thống nhúng văn bản bằng `bkai-foundation-models/vietnamese-bi-encoder`, lập chỉ mục **`386` đoạn trích** từ **`7` văn bản quy chế chính thức** trong **ChromaDB**, kết hợp **BM25Okapi** và **`RotatingResilientLLM`** đa tầng an toàn luồng (**Groq LPU** chính $\rightarrow$ **Local LM Studio `qwen/qwen3.5-4b`** $\rightarrow$ **Gemini `gemini-2.5-flash`**).
+Hệ thống nhúng văn bản bằng `bkai-foundation-models/vietnamese-bi-encoder`, lập chỉ mục **`433` đoạn trích** từ **`8` tài liệu chính thức** (`7` văn bản quy chế PDF = `386` chunks + `1` đề cương học phần `.docx` mã `IT1216` = `47` chunks) trong **ChromaDB**, kết hợp **BM25Okapi** và **`RotatingResilientLLM`** đa tầng an toàn luồng (**Groq LPU** chính $\rightarrow$ **Local LM Studio `qwen/qwen3.5-4b`** $\rightarrow$ **Gemini `gemini-2.5-flash`**).
 
-Các nhóm quy chế được hỗ trợ tra cứu trực tiếp:
+Các nhóm quy chế & học thuật được hỗ trợ tra cứu trực tiếp:
 - 🏆 **Học bổng & Khen thưởng:** Tiêu chuẩn, điều kiện tín chỉ, mức học bổng KKHT/SPKT và học bổng vượt khó (**QĐ 201**).
 - 💰 **Học phí & Chính sách:** Chế độ miễn giảm học phí, hỗ trợ chi phí học tập (**QĐ 904**) và quy trình hoàn trả học phí thừa (**QT-SV-04**).
 - 🤝 **Công tác xã hội (CTXH):** Số ngày tích lũy, phân bổ theo năm học, điều kiện làm khóa luận/tốt nghiệp và quy đổi hoạt động (**QĐ 55**).
 - 📋 **Quy chế Công tác sinh viên:** Quyền và nghĩa vụ sinh viên, kỷ luật, chấm dứt hiệu lực kỷ luật và Ban cán sự lớp (**QĐ 1079**).
 - 🛡️ **Quy tắc ứng xử & An toàn thông tin:** Văn hóa học đường, trang phục thực hành (**QĐ 367**), mật khẩu, email `@st.vlute.edu.vn` và an ninh mạng (**QĐ 979**).
+- 📘 **Đề cương học phần & Chương trình đào tạo:** Thông tin tín chỉ (lý thuyết/thực hành), giảng viên phụ trách, học phần tiên quyết, chuẩn đầu ra (CĐR), giáo trình và hệ số đánh giá học phần (**BM-DT-04 / IT1216** và các đề cương/văn bản `.docx`, `.pdf`, `.txt` nạp mới).
 
 ---
 
@@ -63,8 +64,10 @@ flowchart TD
      - Giao diện React 18 + Tailwind CSS + Framer Motion (`60fps`), thanh Sidebar Dark Charcoal (`#1d262a`) mặc định rộng `420px` (kéo giãn linh hoạt `240–600px`), hiển thị đầy đủ 2 nhóm nút `HỆ THỐNG HỌC TẬP` & `ĐƠN VỊ HỖ TRỢ`, thẻ `ĐẦU MỐI LIÊN HỆ PHÒNG BAN` đọc động từ `departments.json`, bong bóng chat chống XSS, và hỗ trợ Responsive Mobile Drawer.
    - **Streamlit Fallback (`app.py`, cổng `8501`):**
      - Dùng chung lõi `rag.py`, đồng bộ toàn bộ phân nhánh chào hỏi, tra cứu danh bạ phòng ban, viết lại câu hỏi nối tiếp, `ANSWER_CACHE`, 4/24 gợi ý ngẫu nhiên + LRU Recycling, và **ẩn thẻ liên hệ phòng ban ở toàn bộ nhánh từ chối ngoài phạm vi (`is_refusal == True`)** giống hệt `api.py`.
-2. **Tự động đồng bộ kho văn bản (`Zero-Command Auto-Sync` trong `ingest.py` & `rag.py`):**
-   - Hỗ trợ trích xuất `.pdf` (`PyMuPDF`), `.docx` (`python-docx`, cả văn bản và bảng biểu) và `.txt`.
+2. **Tự động đồng bộ kho văn bản đa định dạng & Fallback OCR (`Universal Plug & Play Auto-Sync` trong `ingest.py` & `rag.py`):**
+   - Hỗ trợ trích xuất `.pdf` (`PyMuPDF` + **Fallback OCR tiếng Việt bằng `EasyOCR ['vi', 'en']`** ở độ phân giải `dpi=200` khi gặp trang PDF ảnh scan `len(page_clean_text) <= 25`), `.docx` (`python-docx`, duyệt tuần tự `CT_P` và `CT_Tbl` đúng thứ tự gốc, khôi phục ô gộp ngang/dọc `cell._tc` và ghép tiêu đề cột) và `.txt`.
+   - **Universal Context Prefix:** Tự động trích xuất tiêu đề `doc_title` và gắn nhãn `[Tài liệu: <doc_title>]` vào đầu mỗi chunk (`chunk_size=600`, `chunk_overlap=100`, `MAX_CONTEXT_SNIPPET_CHARS=680`) để mọi bảng biểu ở các trang sau luôn giữ trọn ngữ cảnh tên văn bản/môn học.
+   - **Tự động phát hiện Cache Hugging Face (`_HF_MODEL_CACHE_DIR`):** Nếu máy đã có cache `bkai-foundation-models/vietnamese-bi-encoder`, tự động bật `HF_HUB_OFFLINE=1` và `TRANSFORMERS_OFFLINE=1` giúp khởi động tức thì (`< 2s`); nếu triển khai sang máy chủ mới chưa có cache, hệ thống tự động tải model ở lần chạy đầu tiên mà không bị kẹt.
    - Khi khởi tạo/truy vấn, `auto_sync_knowledge_base()` kiểm tra chữ ký thư mục `data/` (`< 5ms` khi không đổi). Nếu có file mới/sửa/xóa, hệ thống tự cập nhật tăng cường ChromaDB, làm mới chỉ mục BM25 (`get_bm25_index`) và xóa `ANSWER_CACHE`.
    - Loại trừ có chủ đích 3 nghị quyết hành chính (`nghi_quyet_71.pdf`, `nghi_quyet_72.pdf`, `nghi_quyet_153.pdf`) qua `EXCLUDED_FILES` / `EXCLUDED_SOURCE_FILES`.
 3. **Hybrid Search RRF & Cấu hình ngữ cảnh `max_total=7` / `docs[:5]` (`rag.py`):**
@@ -96,7 +99,17 @@ Kiểm thử toàn diện Tầng 1 Hybrid Search + định tuyến phòng ban tr
 | `quy_che_an_toan_thong_tin.pdf` | 99.0% | 98.0% | 98.0% | 1 | 206.13 | 302.76 | 539.69 |
 | **TỔNG HỢP 700 CÂU** | **98.43%** | **95.29%** | **97.29%** | **11** | **194.89** | **313.64** | **727.94** |
 
-### 2. Các bộ kiểm thử bổ sung trong `evaluation/`
+### 2. Bộ Kiểm thử Đối kháng & Đa lượt 1.000 câu (`evaluation/run_benchmark_1000.py`)
+Đánh giá toàn diện 4 nhóm kịch bản thực tế và đối kháng trên toàn bộ **8 tài liệu** (`433` chunks; bộ câu hỏi lưu tại [`evaluation/benchmark_1000_adversarial.json`](evaluation/benchmark_1000_adversarial.json), kết quả chi tiết lưu tại [`evaluation/benchmark_1000_results.csv`](evaluation/benchmark_1000_results.csv)):
+- **Tổng hợp 1.000 câu hỏi:** Đạt **994 / 1.000 câu (`99.40%` Pass)**, độ trễ xử lý trung bình `124.00 ms`:
+  - **Nhóm 1 — 250 câu Ngớ ngẩn / Vô nghĩa / Ra lệnh meta / Xã giao (`is_greeting_or_chitchat`):** Đạt **250 / 250 (`100.00%` Pass)** — `100%` phản hồi thân thiện, không gắn huy hiệu đối soát (`verified=False, contact=None`).
+  - **Nhóm 2 — 250 câu Hỏi kiểu ChatGPT / Ngoài phạm vi quy chế (OOS):** Đạt **250 / 250 (`100.00%` Pass)** — `100%` bị Dual Refusal Gate từ chối chuẩn bằng `REFUSAL_MESSAGE`.
+  - **Nhóm 3 — 150 kịch bản Hội thoại nối tiếp đa lượt:**
+    - `75` cặp hội thoại nối tiếp hợp lệ: Đạt **74 / 75 (`98.67%` Pass)** (viết lại đúng chủ ngữ và tìm trúng tài liệu nguồn).
+    - `75` cặp hội thoại bẫy chống dính ngữ cảnh: Đạt **75 / 75 (`100.00%` Pass)** (`0%` bị dính ngữ cảnh câu hỏi trước).
+  - **Nhóm 4 — 350 câu Hỏi đáp đúng phạm vi quy chế & Đề cương `IT1216`:** Đạt **345 / 350 (`98.57%` Pass)** (riêng đề cương `BM-DT-04_IT1216_PHAN_MEM_MA_NGUON_MO (2026).docx`, `xet_cap_hoc_bong.pdf`, `quy_dinh_mien_giam_hoc_phi.pdf`, `quy_trinh_hoan_tra_hoc_phi.pdf` đạt **100.00% Pass**).
+
+### 3. Các bộ kiểm thử bổ sung trong `evaluation/`
 - **Stress test 70 câu & Baseline 35 câu (`evaluation/run_stress_test_70.py`):** Bộ kiểm thử nhanh theo bảng biểu/phụ lục (`stress_test_70.json`, `test_dataset.json`, xuất ra `stress_test_70_results.csv`).
 - **Đánh giá End-to-End LLM Judge (`evaluation/run_eval.py`):** Chấm điểm chất lượng trả lời thực tế 35 câu (`test_dataset.json`, xuất ra `eval_results.csv`).
 
@@ -109,26 +122,29 @@ D:\VLUTEBOT\
 ├── .streamlit/
 │   ├── config.toml                  # Cấu hình Streamlit
 │   └── secrets.toml                 # API keys (GROQ_API_KEY / GROQ_API_KEYS) - đã loại khỏi Git
-├── chroma_db/                       # Vector Database (386 chunks, 768 chiều)
-├── data/                            # Kho tài liệu nguồn (.pdf, .docx, .txt; 7 quy chế nạp DB + 3 nghị quyết loại trừ)
+├── chroma_db/                       # Vector Database (433 chunks = 386 PDF + 47 DOCX, 768 chiều)
+├── data/                            # Kho tài liệu nguồn (.pdf, .docx, .txt; 8 tài liệu chính thức)
+│   ├── BM-DT-04_IT1216_PHAN_MEM_MA_NGUON_MO (2026).docx
 │   ├── xet_cap_hoc_bong.pdf
 │   ├── quy_dinh_mien_giam_hoc_phi.pdf
 │   ├── quy_trinh_hoan_tra_hoc_phi.pdf
 │   ├── quy_dinh_cong_tac_sinh_vien.pdf
 │   ├── tin_chi_cong_tac_xa_hoi.pdf
 │   ├── quy_tac_ung_xu.pdf
-│   ├── quy_che_an_toan_thong_tin.pdf
-│   ├── nghi_quyet_71.pdf            # Loại trừ bởi EXCLUDED_FILES
-│   ├── nghi_quyet_72.pdf            # Loại trừ bởi EXCLUDED_FILES
-│   └── nghi_quyet_153.pdf           # Loại trừ bởi EXCLUDED_FILES
-├── evaluation/                      # Bộ kiểm thử RAG & định tuyến phòng ban
-│   ├── run_benchmark_700.py         # Benchmark 700 câu (98.43% Hit@k, 97.29% Dept OK)
+│   └── quy_che_an_toan_thong_tin.pdf
+├── evaluation/                      # Bộ kiểm thử RAG, đối kháng & định tuyến phòng ban
+│   ├── run_benchmark_1000.py        # Benchmark đối kháng & đa lượt 1.000 câu (99.40% Pass)
+│   ├── benchmark_1000_adversarial.json
+│   ├── benchmark_1000_results.csv
+│   ├── run_benchmark_700.py         # Benchmark 700 câu theo văn bản (98.43% Hit@k)
 │   ├── benchmark_700_per_doc.json   # Bộ 700 câu hỏi sinh theo từng quy chế
 │   ├── benchmark_700_results.csv    # Kết quả chi tiết 700 câu
 │   ├── run_stress_test_70.py        # Benchmark nhanh 70 + 35 câu
 │   ├── run_eval.py                  # Đánh giá E2E bằng LLM Judge
 │   ├── stress_test_70.json
-│   └── test_dataset.json
+│   ├── stress_test_70_results.csv
+│   ├── test_dataset.json
+│   └── eval_results.csv
 ├── frontend/                        # SPA React + Vite + Tailwind + Framer Motion
 │   ├── src/
 │   │   ├── App.jsx                  # Luồng chat SSE, Resizable Sidebar (420px), Error/Abort recovery

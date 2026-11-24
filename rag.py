@@ -1,6 +1,12 @@
 import os
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
-os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+_HF_MODEL_CACHE_DIR = os.path.join(
+    os.getenv("HF_HOME", os.path.join(os.path.expanduser("~"), ".cache", "huggingface")),
+    "hub",
+    "models--bkai-foundation-models--vietnamese-bi-encoder",
+)
+if os.path.isdir(_HF_MODEL_CACHE_DIR):
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 import sys
 if hasattr(sys.stdout, "reconfigure"):
     try:
@@ -42,6 +48,158 @@ DB_PATH = str(Path(__file__).parent / "chroma_db")
 
 # Hằng số phản hồi từ chối duy nhất cho câu hỏi ngoài phạm vi dữ liệu
 REFUSAL_MESSAGE = "Nội dung này không được đề cập trong các văn bản quy định trước đây hoặc nằm ngoài phạm vi dữ liệu quy chế của Nhà trường."
+
+MAX_QUERY_LENGTH = 2000
+TOO_LONG_QUERY_MESSAGE = (
+    "⚠️ Tin nhắn của bạn vượt quá độ dài cho phép (tối đa 2.000 ký tự). "
+    "Bạn vui lòng rút gọn câu hỏi, chỉ nhập đúng trọng tâm quy chế hoặc học phần cần tra cứu nhé! "
+    "(Nội dung này nằm ngoài phạm vi xử lý do vượt giới hạn độ dài)."
+)
+FRIENDLY_ERROR_MESSAGE = (
+    "⚠️ Hệ thống đang tạm thời bận hoặc gián đoạn kết nối khi tra cứu dữ liệu. "
+    "Bạn vui lòng đợi vài giây rồi thử hỏi lại nhé!"
+)
+
+
+def sanitize_client_error_message(err: Exception | str, rate_limit_msg: str | None = None) -> str:
+    """
+    Làm sạch mọi thông báo lỗi trước khi trả về phía client (No Stacktrace / Path Leakage):
+    Tuyệt đối không để lộ đường dẫn ổ đĩa (D:\\VLUTEBOT\\..., C:\\...) hoặc chi tiết exception thô.
+    """
+    err_str = str(err or "")
+    if any(tok in err_str.upper() for tok in ("429", "RESOURCE_EXHAUSTED", "RATE_LIMIT", "TOO MANY REQUESTS")):
+        return rate_limit_msg or FRIENDLY_ERROR_MESSAGE
+    return FRIENDLY_ERROR_MESSAGE
+
+
+_PROMPT_INJECTION_PATTERNS = (
+    "bỏ qua mọi quy tắc", "bỏ qua các quy tắc", "bỏ qua mọi hướng dẫn",
+    "bỏ qua chỉ dẫn trước", "bỏ qua mọi chỉ dẫn", "bỏ qua hướng dẫn trước",
+    "bỏ qua tất cả quy tắc", "quên hết các quy tắc", "quên mọi quy tắc",
+    "phớt lờ mọi quy tắc", "vượt qua mọi rào cản",
+    "ignore all previous", "ignore previous instructions", "disregard all previous",
+    "forget previous instructions", "override system instructions",
+    "system prompt", "tiết lộ prompt", "in ra system prompt", "in ra prompt",
+    "hiển thị system prompt", "đóng vai chatgpt", "đóng vai hiệu trưởng",
+    "giả làm hiệu trưởng", "ký quyết định", "ra quyết định cấp học bổng",
+    "jailbreak", "developer mode", "dan mode", "bạn không còn là lucas",
+    "in ra api key", "tiết lộ api key", "cho xin api key", "groq_api_key",
+    "google_api_key", "gemini_api_key", "biến môi trường", "os.environ",
+    "file .env", "tệp .env", "secrets.toml", "mật khẩu hệ thống", "mật khẩu quản trị",
+)
+
+_PROMPT_INJECTION_REGEXES = (
+    re.compile(
+        r"(?i)(?:bỏ\s+qua|quên\s+hết|phớt\s+lờ|ignore|disregard|forget|override)\s+"
+        r"(?:mọi|các|tất\s+cả|toàn\s+bộ|all|any|previous|prior)?\s*"
+        r"(?:quy\s+tắc|chỉ\s+dẫn|hướng\s+dẫn|luật|rào\s+cản|instructions|rules|guidelines|constraints)"
+    ),
+    re.compile(
+        r"(?i)(?:in\s+ra|tiết\s+lộ|hiển\s+thị|xuất\s+ra|cho\s+xem|cho\s+xin|show|print|dump|leak|reveal)\s+"
+        r"(?:toàn\s+bộ\s+|full\s+|original\s+)?(?:system\s*prompt|prompt\s*gốc|cấu\s+hình\s+prompt|"
+        r"api\s*key|mật\s*khẩu\s*hệ\s*thống|biến\s*môi\s*trường|environment\s*variables|secrets?\.toml|\.env)"
+    ),
+    re.compile(
+        r"(?i)(?:đóng\s+vai|giả\s+làm|nhập\s+vai|hóa\s+thân\s+thành|act\s+as|pretend\s+to\s+be)\s+"
+        r"(?:thầy\s+)?(?:hiệu\s+trưởng|phó\s+hiệu\s+trưởng|quản\s+trị\s+viên\s+hệ\s+thống|chatgpt\s+không\s+giới\s+hạn)"
+    ),
+)
+
+
+def is_prompt_injection(query: str) -> bool:
+    """Nhận diện các mẫu tấn công Prompt Injection / Jailbreak / khai thác thông tin nhạy cảm."""
+    raw = (query or "").strip()
+    if not raw:
+        return False
+    clean = re.sub(r"\s+", " ", raw.lower())
+    if any(pat in clean for pat in _PROMPT_INJECTION_PATTERNS):
+        return True
+    return any(rx.search(clean) for rx in _PROMPT_INJECTION_REGEXES)
+
+
+_HP_HOC_PHAN_CUES = (
+    "môn", "mon", "đăng ký", "dang ky", "tín chỉ", "tin chi",
+    "tiên quyết", "tien quyet", "đề cương", "de cuong", "it1216",
+    "mã nguồn mở", "ma nguon mo", "giảng viên", "giang vien", "gv",
+    "chuẩn đầu ra", "chuan dau ra", "cđr", "cdr", "giáo trình", "giao trinh",
+    "lý thuyết", "ly thuyet", "thực hành", "thuc hanh", "mã hp", "ma hp",
+    "rút hp", "rut hp", "học lại", "hoc lai", "lớp hp", "lop hp",
+)
+
+_HP_HOC_PHI_CUES = (
+    "đóng", "dong", "nộp", "nop", "miễn", "mien", "giảm", "giam",
+    "hoàn trả", "hoan tra", "hoàn", "hoan", "thừa", "thua",
+    "tiền", "tien", "thu", "mức", "muc", "biên lai", "bien lai",
+    "hóa đơn", "hoa don", "khtc", "tài chính", "tai chinh", "nợ hp",
+)
+
+
+def normalize_chat_slang(query: str) -> str:
+    """
+    Chuẩn hóa tiếng chat Zalo/Messenger & từ viết tắt sinh viên bằng khớp ranh giới từ (?<!\\w)...(?!\\w).
+    - Chạy ở đầu pipeline (trước bộ lọc xã giao, viết lại câu hỏi và tìm kiếm) nhưng giữ nguyên câu gốc trên UI.
+    - Tự động phân giải ngữ cảnh cho 'hp' -> 'học phí' hoặc 'học phần'.
+    - Giữ nguyên tuyệt đối các mã chuẩn (IT1216, BM-DT-04, KKHT, CTXH, CTSV, KHTC, ATTT, VLUTE, QT-SV-04, CĐR).
+    """
+    if not query:
+        return ""
+    s = str(query)
+    if len(s) > MAX_QUERY_LENGTH or is_prompt_injection(s):
+        return s
+
+    # 1. Cụm nhiều từ trước
+    multi_word_rules = (
+        (r"(?i)(?<!\w)bao\s+nhiu(?!\w)", "bao nhiêu"),
+        (r"(?i)(?<!\w)như\s+nào(?!\w)", "như thế nào"),
+        (r"(?i)(?<!\w)nhu\s+nao(?!\w)", "như thế nào"),
+    )
+    for pat, repl in multi_word_rules:
+        s = re.sub(pat, repl, s)
+
+    # 2. Phân giải thông minh từ viết tắt 'hp' theo ngữ cảnh cửa sổ cục bộ & toàn câu
+    if re.search(r"(?i)(?<!\w)hp(?!\w)", s):
+        s_low_full = s.lower()
+        def _resolve_hp(match: re.Match) -> str:
+            start, end = match.span()
+            prefix_slice = s[max(0, start - 10):start].lower()
+            if "mã " in prefix_slice and s[end:end + 2].startswith(":"):
+                return match.group(0)
+            window = s_low_full[max(0, start - 40):min(len(s_low_full), end + 40)]
+            win_phan = sum(1 for c in _HP_HOC_PHAN_CUES if c in window)
+            win_phi = sum(1 for c in _HP_HOC_PHI_CUES if c in window)
+            if win_phan > win_phi:
+                return "học phần"
+            if win_phi > win_phan:
+                return "học phí"
+            full_phan = sum(1 for c in _HP_HOC_PHAN_CUES if c in s_low_full)
+            full_phi = sum(1 for c in _HP_HOC_PHI_CUES if c in s_low_full)
+            return "học phần" if full_phan > full_phi else "học phí"
+
+        s = re.sub(r"(?i)(?<!\w)hp(?!\w)", _resolve_hp, s)
+
+    # 3. Từ đơn tiếng chat Zalo/Messenger & từ viết tắt sinh viên
+    single_word_rules = (
+        (r"(?i)(?<!\w)(?:ko|kh|khong)(?!\w)", "không"),
+        (r"(?i)(?<=\s)k(?=\s|[?.!,;:]|$)", "không"),
+        (r"(?i)(?<!\w)(?:dc|đc|duoc)(?!\w)", "được"),
+        (r"(?i)(?<!\w)roi(?!\w)", "rồi"),
+        (r"(?i)(?<=\s)r(?=\s|[?.!,;:]|$)", "rồi"),
+        (r"(?i)(?<!\w)(?:j|gi)(?!\w)", "gì"),
+        (r"(?i)(?<!\w)(?:bn|bnhiu)(?!\w)", "bao nhiêu"),
+        (r"(?i)(?<!\w)ntn(?!\w)", "như thế nào"),
+        (r"(?i)(?:^(?=\s*[zv]\s)|(?<=[.?!,;]\s))([zv])(?=\s)", "vậy"),
+        (r"(?i)(?<=\s)([zv])(?=\s*[?.!]*\s*$)", "vậy"),
+        (r"(?i)(?<!\w)vs(?!\w)", "với"),
+        (r"(?i)(?<!\w)sv(?!\w)", "sinh viên"),
+        (r"(?i)(?<!\w)gv(?!\w)", "giảng viên"),
+        (r"(?i)(?<!\w)hb(?!\w)", "học bổng"),
+        (r"(?i)(?<!\w)(?:đrl|drl)(?!\w)", "điểm rèn luyện"),
+        (r"(?i)(?<!\w)mghp(?!\w)", "miễn giảm học phí"),
+    )
+    for pat, repl in single_word_rules:
+        s = re.sub(pat, repl, s)
+
+    return s
 
 # Danh sách tệp nghị quyết bị loại khỏi phạm vi tra cứu theo chính sách hệ thống
 EXCLUDED_SOURCE_FILES = {"nghi_quyet_71.pdf", "nghi_quyet_72.pdf", "nghi_quyet_153.pdf"}
@@ -131,11 +289,32 @@ class SmartRAGChain:
         return any(pat in q_lower for pat in excluded_patterns)
 
     @staticmethod
+    def _has_core_in_scope_regulation_anchor(q_lower: str) -> bool:
+        """
+        Kiểm tra câu hỏi có chứa chủ đề quy chế/học phần cốt lõi nằm trong 8 tài liệu chính thức hay không.
+        Giúp nhận diện câu hỏi ghép 'nửa trong – nửa ngoài' (Hybrid Trap) để không từ chối oan toàn bộ câu.
+        """
+        core_anchors = (
+            "học bổng khuyến khích", "học bổng kkht", "học bổng spkt", "xét cấp học bổng",
+            "xét học bổng", "trợ cấp học tập", "miễn giảm học phí", "miễn, giảm học phí",
+            "miễn 100% học phí", "giảm 70% học phí", "giảm 50% học phí", "hỗ trợ chi phí học tập",
+            "hoàn trả học phí", "học phí thừa", "qt-sv-04", "công tác xã hội", "ngày ctxh",
+            "tín chỉ ctxh", "hiến máu tình nguyện", "mùa hè xanh", "điểm rèn luyện",
+            "ban cán sự lớp", "kỷ luật sinh viên", "thi hộ", "học hộ", "quy tắc ứng xử",
+            "an toàn thông tin", "an ninh mạng", "it1216", "phần mềm mã nguồn mở", "đề cương học phần",
+        )
+        return any(anchor in q_lower for anchor in core_anchors)
+
+    @staticmethod
     def _is_explicit_out_of_scope_query(q_lower: str) -> bool:
         """
-        Nhận diện các câu hỏi kiểu ChatGPT / Gemini đa năng hoặc chủ đề đời sống/tuyển sinh
-        nằm ngoài phạm vi 8 văn bản quy chế & đề cương học phần của Nhà trường.
+        Nhận diện các câu hỏi kiểu ChatGPT / Gemini đa năng hoặc chủ đề đời sống/tuyển sinh/sau đại học
+        nằm ngoài phạm vi 8 văn bản quy chế đại học chính quy & đề cương học phần của Nhà trường.
+        Nếu là câu hỏi ghép 'nửa trong – nửa ngoài' (có chứa chủ đề quy chế cốt lõi), cho phép đi qua
+        để LLM trả lời vế đúng quy chế và bác bỏ vế bịa đặt.
         """
+        if SmartRAGChain._has_core_in_scope_regulation_anchor(q_lower):
+            return False
         oos_patterns = (
             "viết code", "đoạn code", "code python", "code c++", "code java", "code javascript",
             "code c#", "code php", "code html", "code sql", "lập trình python", "lập trình c++",
@@ -151,14 +330,18 @@ class SmartRAGChain:
             "giá xăng", "bóng đá", "ngoại hạng anh", "world cup", "champions league",
             "xổ số", "vietlott", "cung hoàng đạo", "tử vi", "bói toán", "xem bói", "phong thủy",
             "căn tin", "cantin", "căng tin", "ký túc xá trường", "phòng ký túc xá",
-            "đăng ký ở ký túc xá", "cổng ký túc xá", "ktx trường", "ktx của trường",
-            "tiền điện nước ở ktx", "tiền phòng trọ", "thuê trọ",
+            "nội quy ký túc xá", "quy chế nội trú", "đăng ký ở ký túc xá", "cổng ký túc xá",
+            "ktx trường", "ktx của trường", "tiền điện nước ở ktx", "tiền phòng trọ", "thuê trọ",
             "nhà trọ sinh viên", "vé gửi xe", "giữ xe tháng", "gửi xe tháng", "bãi giữ xe",
             "nhà xe sinh viên", "tuyến xe buýt", "xe buýt số", "xe bus số",
             "điểm chuẩn", "điểm sàn xét tuyển", "chỉ tiêu tuyển sinh", "xét học bạ", "mã trường tuyển sinh",
             "lịch nghỉ tết", "tết nguyên đán", "nghỉ lễ 30/4", "nghỉ lễ 2/9", "lịch nghỉ hè",
             "thư viện mở cửa", "giờ mở cửa thư viện", "đơn giá 1 tín chỉ là bao nhiêu tiền",
-            "1 tín chỉ bao nhiêu tiền", "một tín chỉ bao nhiêu tiền",
+            "1 tín chỉ bao nhiêu tiền", "một tín chỉ bao nhiêu tiền", "học phí 1 tín chỉ",
+            "học phí một tín chỉ", "quy chế sau đại học", "đào tạo sau đại học", "đào tạo thạc sĩ",
+            "đào tạo tiến sĩ", "trình độ thạc sĩ", "trình độ tiến sĩ", "luận văn thạc sĩ",
+            "luận án tiến sĩ", "tuyển sinh cao học", "học viên cao học",
+            "nghi_quyet_71", "nghi_quyet_72", "nghi_quyet_153",
         )
         return any(pat in q_lower for pat in oos_patterns)
 
@@ -213,8 +396,8 @@ class SmartRAGChain:
 
     @staticmethod
     def _prepare_retrieval_query(q_clean: str) -> str:
-        """Chuẩn hóa câu truy vấn tìm kiếm tổng quát: khử lặp chuỗi, giới hạn 450 ký tự và mở rộng viết tắt nếu ngắn."""
-        s = re.sub(r"\s+", " ", (q_clean or "").strip())
+        """Chuẩn hóa câu truy vấn tìm kiếm tổng quát: dịch tiếng chat Zalo/viết tắt, khử lặp chuỗi, giới hạn 450 ký tự và mở rộng viết tắt nếu ngắn."""
+        s = re.sub(r"\s+", " ", normalize_chat_slang((q_clean or "").strip()))
         if not s:
             return ""
 
@@ -236,6 +419,64 @@ class SmartRAGChain:
         s = " ".join(tokens).strip()
         if not s:
             return ""
+
+        # Khôi phục dấu tiếng Việt cho các cụm từ khóa quy chế gõ không dấu hoặc viết tắt phổ biến
+        unaccented_phrase_map = (
+            ("dieu kien", "điều kiện"),
+            ("hoc bong khuyen khich hoc tap", "học bổng khuyến khích học tập"),
+            ("khuyen khich hoc tap", "khuyến khích học tập"),
+            ("hoc bong", "học bổng"),
+            ("mien giam hoc phi", "miễn giảm học phí"),
+            ("ho tro chi phi hoc tap", "hỗ trợ chi phí học tập"),
+            ("hoan tra hoc phi thua", "hoàn trả học phí thừa"),
+            ("hoan tra hoc phi", "hoàn trả học phí"),
+            ("hoc phi thua", "học phí thừa"),
+            ("cong tac xa hoi", "công tác xã hội"),
+            ("cong tac sinh vien", "công tác sinh viên"),
+            ("diem ren luyen", "điểm rèn luyện"),
+            ("ren luyen", "rèn luyện"),
+            ("ban can su lop", "ban cán sự lớp"),
+            ("xu ly ky luat", "xử lý kỷ luật"),
+            ("ky luat", "kỷ luật"),
+            ("thi ho", "thi hộ"),
+            ("hoc ho", "học hộ"),
+            ("quy tac ung xu", "quy tắc ứng xử"),
+            ("an toan thong tin", "an toàn thông tin"),
+            ("an ninh mang", "an ninh mạng"),
+            ("mat khau", "mật khẩu"),
+            ("de cuong hoc phan", "đề cương học phần"),
+            ("phan mem ma nguon mo", "phần mềm mã nguồn mở"),
+            ("ma nguon mo", "mã nguồn mở"),
+            ("so tin chi", "số tín chỉ"),
+            ("tin chi", "tín chỉ"),
+            ("ly thuyet", "lý thuyết"),
+            ("thuc hanh", "thực hành"),
+            ("giang vien phu trach", "giảng viên phụ trách"),
+            ("giang vien", "giảng viên"),
+            ("hoc phan tien quyet", "học phần tiên quyết"),
+            ("tien quyet", "tiên quyết"),
+            ("chuan dau ra", "chuẩn đầu ra"),
+            ("phuong phap kiem tra danh gia", "phương pháp kiểm tra đánh giá"),
+            ("he so", "hệ số"),
+            ("chuyen can", "chuyên cần"),
+            ("qua trinh", "quá trình"),
+            ("cuoi ky", "cuối kỳ"),
+            ("giao trinh", "giáo trình"),
+            ("dan toc thieu so", "dân tộc thiểu số"),
+            ("ho ngheo", "hộ nghèo"),
+            ("can ngheo", "cận nghèo"),
+            ("khuyet tat", "khuyết tật"),
+            ("mo coi", "mồ côi"),
+            ("hien mau", "hiến máu"),
+            ("mua he xanh", "mùa hè xanh"),
+            ("khoa luan tot nghiep", "khóa luận tốt nghiệp"),
+            ("tot nghiep", "tốt nghiệp"),
+        )
+        s_low_check = s.lower()
+        for unacc, acc in unaccented_phrase_map:
+            if unacc in s_low_check:
+                s = re.sub(rf"\b{re.escape(unacc)}\b", acc, s, flags=re.IGNORECASE)
+                s_low_check = s.lower()
 
         words = s.split()
         if len(words) <= 5:
@@ -715,15 +956,20 @@ class SmartRAGChain:
         Với câu hỏi ghép nhiều hành vi/quy định độc lập, truy xuất cho cả câu đầy đủ lẫn
         từng vế con rồi trộn xen kẽ (round-robin, khử trùng lặp) tối đa 7 đoạn trích.
         """
-        if is_greeting_or_chitchat(query):
+        raw_q = str(query or "")
+        if len(raw_q) > MAX_QUERY_LENGTH or is_prompt_injection(raw_q):
+            self.last_retrieval_debug = {"reason": "security_or_length_block", "accepted": False}
+            return []
+        norm_query = normalize_chat_slang(raw_q)
+        if is_greeting_or_chitchat(norm_query):
             self.last_retrieval_debug = {"reason": "greeting_or_chitchat", "accepted": False}
             return []
-        q_low_raw = (query or "").lower()
+        q_low_raw = norm_query.lower()
         if self._is_excluded_resolution_query(q_low_raw) or self._is_explicit_out_of_scope_query(q_low_raw):
             self.last_retrieval_debug = {"reason": "excluded_or_explicit_oos", "accepted": False}
             return []
 
-        prepared_query = self._prepare_retrieval_query(query)
+        prepared_query = self._prepare_retrieval_query(norm_query)
         primary_docs = self._retrieve_single_query(prepared_query, k=k)
         primary_debug = dict(self.last_retrieval_debug)
 
@@ -954,7 +1200,10 @@ _ACADEMIC_ACRONYM_EXPANSIONS = {
     "cvht": ("cố", "vấn", "học", "tập"),
     "cbvc": ("cán", "bộ", "viên", "chức"),
     "cđr": ("chuẩn", "đầu", "ra"),
+    "cdr": ("chuẩn", "đầu", "ra"),
     "ctđt": ("chương", "trình", "đào", "tạo"),
+    "đrl": ("điểm", "rèn", "luyện"),
+    "drl": ("điểm", "rèn", "luyện"),
 }
 
 _ACADEMIC_SYNONYM_BIGRAMS = {
@@ -1419,14 +1668,14 @@ class RotatingResilientLLM:
             return
         if any(tok in err_msg for tok in ("429", "rate_limit", "rate limit", "too many requests")):
             with _GROQ_STATE_LOCK:
-                _COOLDOWN_GROQ_MODELS[groq_model] = time.time() + 45.0
+                _COOLDOWN_GROQ_MODELS[groq_model] = time.time() + 4.0
             with self._models_lock:
                 if groq_model in self._groq_models:
                     self._groq_models.remove(groq_model)
                     self._groq_models.append(groq_model)
 
     def _get_candidate_groq_models(self, prioritize_fast: bool = False) -> list[str]:
-        """Lọc bỏ các model đã chết (404) hoặc đang trong thời gian cooldown 45s do 429 TPM."""
+        """Lọc bỏ các model đã chết (404) hoặc đang trong thời gian cooldown ngắn do 429 TPM."""
         now = time.time()
         with _GROQ_STATE_LOCK:
             for m_expired in [m for m, until in _COOLDOWN_GROQ_MODELS.items() if until <= now]:
@@ -1441,6 +1690,12 @@ class RotatingResilientLLM:
             m for m in models_snapshot
             if m not in dead_snapshot and cooldown_snapshot.get(m, 0.0) <= now
         ]
+        if not candidates:
+            time.sleep(1.0)
+            candidates = sorted(
+                [m for m in models_snapshot if m not in dead_snapshot],
+                key=lambda m: cooldown_snapshot.get(m, 0.0),
+            )
         if prioritize_fast:
             for fast_model in ("openai/gpt-oss-20b", "openai/gpt-oss-120b", "llama-3.1-8b-instant"):
                 if fast_model in candidates:
@@ -1699,15 +1954,40 @@ _ANAPHORIC_FOLLOWUP_CUES = (
 )
 
 
+_PROMPT_INJECTION_PATTERNS = (
+    "bỏ qua mọi quy tắc", "bỏ qua các quy tắc", "bỏ qua mọi hướng dẫn",
+    "bỏ qua chỉ dẫn trước", "bỏ qua tất cả quy tắc", "quên hết các quy tắc",
+    "ignore all previous", "ignore previous instructions", "disregard all previous",
+    "system prompt", "tiết lộ prompt", "in ra system prompt", "đóng vai chatgpt",
+    "jailbreak", "developer mode", "dan mode", "bạn không còn là lucas",
+)
+
+
+def _is_prompt_injection_or_long_noise(raw: str, clean: str) -> bool:
+    """Nhận diện bẫy Prompt Injection hoặc văn bản rác copy dài > 1.200 ký tự không phải câu hỏi quy chế."""
+    if is_prompt_injection(raw) or is_prompt_injection(clean):
+        return True
+    if len(raw) > 1200:
+        return True
+    return False
+
+
 def get_greeting_or_chitchat_reply(query: str) -> str | None:
     """
-    Nhận diện câu chào hỏi, cảm ơn, xác nhận, ra lệnh meta cho bot hoặc câu vô nghĩa/xã giao ngắn
-    không có nội dung tra cứu quy chế. Trả về câu phản hồi thân thiện (hoặc None nếu là câu hỏi tra cứu).
+    Nhận diện câu chào hỏi, cảm ơn, xác nhận, ra lệnh meta cho bot, bẫy Prompt Injection
+    hoặc câu vô nghĩa/xã giao ngắn không có nội dung tra cứu quy chế.
     """
-    raw = (query or "").strip()
-    if not raw:
+    raw_orig = (query or "").strip()
+    if not raw_orig:
         return "Bạn vui lòng nhập nội dung câu hỏi cụ thể về quy chế hoặc chọn một gợi ý bên dưới để Lucas hỗ trợ nhé!"
 
+    if len(raw_orig) > MAX_QUERY_LENGTH:
+        return TOO_LONG_QUERY_MESSAGE
+
+    if is_prompt_injection(raw_orig):
+        return REFUSAL_MESSAGE
+
+    raw = normalize_chat_slang(raw_orig).strip()
     if not re.search(r"[a-zA-ZÀ-ỹ]", raw):
         return (
             "Mình chưa nhận diện được nội dung câu hỏi. Bạn hãy chọn nhanh 1 trong các câu hỏi gợi ý bên dưới "
@@ -1716,8 +1996,11 @@ def get_greeting_or_chitchat_reply(query: str) -> str | None:
 
     clean = re.sub(r"^[\s\.,!?;:\-\(\)\[\]\"']+|[\s\.,!?;:\-\(\)\[\]\"']+$", "", raw.lower()).strip()
     clean = re.sub(r"\s+", " ", clean)
-    if not clean:
+    if not clean or len(clean) <= 1:
         return "Bạn vui lòng nhập nội dung câu hỏi cụ thể về quy chế hoặc chọn một gợi ý bên dưới để Lucas hỗ trợ nhé!"
+
+    if _is_prompt_injection_or_long_noise(raw_orig, clean):
+        return REFUSAL_MESSAGE
 
     if any(kw in clean for kw in _REGULATION_SUBJECT_KEYWORDS):
         if not re.match(r"^(?:test|kiểm tra thử)\b", clean):
@@ -1798,6 +2081,7 @@ def get_greeting_or_chitchat_reply(query: str) -> str | None:
         "làm mới đi", "reset đi", "bạn đang làm gì", "có ai ở đó", "ai tạo ra bạn",
         "ai lập trình ra bạn", "bạn biết làm gì", "bạn có thông minh", "test ",
         "kiểm tra thử", "alo ", "ê bot", "này lucas", "này bot", "hôm nay trời đẹp",
+        "chào lucas", "chào bạn", "chào ad", "xin chào",
     )
     if clean in command_or_chitchat_exact or any(clean.startswith(p) for p in command_or_chitchat_prefixes):
         return (
@@ -1809,7 +2093,7 @@ def get_greeting_or_chitchat_reply(query: str) -> str | None:
         "chào", "xin chào", "hello", "hi", "hey", "alo", "bạn là ai", "tên gì",
         "bạn tên gì", "giới thiệu", "lucas", "ad", "admin", "bot ơi",
     )
-    if len(words) <= 5 and any(re.search(rf"\b{re.escape(k)}\b", clean) for k in greeting_keywords):
+    if len(words) <= 7 and any(re.search(rf"\b{re.escape(k)}\b", clean) for k in greeting_keywords):
         return (
             "Chào bạn! Mình là Lucas – trợ lý học vụ VLUTE. Hôm nay bạn muốn tra cứu quy định về học bổng, "
             "học phí, công tác xã hội hay học vụ? *(Bạn có thể bấm chọn nhanh gợi ý bên dưới hoặc nhập trực tiếp câu hỏi nhé!)*"
@@ -1836,7 +2120,7 @@ def _extract_topic_anchor_from_history(recent_history: list[tuple[str, str]]) ->
         (r"tập thể\s+lớp\s+xuất sắc|tập thể\s+lớp\s+tiên tiến", "danh hiệu Tập thể lớp Xuất sắc / Tiên tiến"),
         (r"thủ khoa", "danh hiệu khen thưởng Thủ khoa đầu khóa"),
         (r"hỗ trợ\s+chi phí\s+học tập", "chế độ hỗ trợ chi phí học tập đối với sinh viên dân tộc thiểu số thuộc hộ nghèo, cận nghèo"),
-        (r"miễn[,\s]+giảm\s+học phí|miễn\s+học phí|giảm\s+70%\s+học phí|giảm\s+50%\s+học phí", "chế độ miễn, giảm học phí"),
+        (r"miễn[,\s]+giảm\s+học phí|miễn\s+(?:100%\s+)?học phí|giảm\s+70%\s+học phí|giảm\s+50%\s+học phí", "chế độ miễn, giảm học phí"),
         (r"hoàn trả\s+học phí|học phí\s+thừa|qt-sv-04", "quy trình hoàn trả học phí thừa cho sinh viên (QT-SV-04)"),
         (r"công tác\s+xã hội|ctxh|ngày\s+ctxh|hiến máu|mùa hè xanh", "quy định hoạt động Công tác xã hội (CTXH)"),
         (r"ban cán sự\s+lớp|lớp trưởng|lớp phó", "Ban cán sự lớp theo Quy định công tác sinh viên"),
@@ -1845,15 +2129,22 @@ def _extract_topic_anchor_from_history(recent_history: list[tuple[str, str]]) ->
         (r"quy tắc\s+ứng xử|trang phục|mạng xã hội|hút thuốc", "Quy tắc ứng xử của sinh viên trong Nhà trường"),
         (r"an toàn\s+thông tin|an ninh\s+mạng|mật khẩu|email\s+@|st\.vlute\.edu\.vn", "Quy chế bảo đảm an toàn thông tin, an ninh mạng"),
     )
+    # Duyệt ngược từ lượt gần nhất về trước; ưu tiên lấy chủ ngữ từ câu hỏi gần nhất của người dùng
     for role, content in reversed(recent_history):
         if role != "user":
             continue
-        c_low = content.lower()
+        c_low = normalize_chat_slang(content).lower()
+        best_label = ""
+        best_pos = -1
         for pat, label in topic_patterns:
-            if re.search(pat, c_low):
-                return label
+            for m in re.finditer(pat, c_low):
+                if m.start() >= best_pos:
+                    best_pos = m.start()
+                    best_label = label
+        if best_label:
+            return best_label
     for role, content in reversed(recent_history):
-        c_low = content.lower()
+        c_low = normalize_chat_slang(content).lower()
         for pat, label in topic_patterns:
             if re.search(pat, c_low):
                 return label
@@ -1863,12 +2154,16 @@ def _extract_topic_anchor_from_history(recent_history: list[tuple[str, str]]) ->
 def rewrite_conversational_query(query: str, chat_history: list | None = None) -> str:
     """
     Viết lại câu hỏi nối tiếp có chứa đại từ/từ nối ngữ cảnh thành câu hỏi độc lập đầy đủ nghĩa.
-    Nếu lịch sử trống hoặc câu hỏi đã rõ chủ ngữ/đối tượng, giữ nguyên câu hỏi gốc để không tăng độ trễ.
+    Nếu lịch sử trống hoặc câu hỏi đã rõ chủ ngữ/đối tượng, giữ nguyên câu hỏi đã chuẩn hóa từ viết tắt.
     """
     if not query or not str(query).strip():
         return ""
 
-    raw_query = re.sub(r"\s+", " ", str(query).strip())
+    raw_orig = str(query).strip()
+    if len(raw_orig) > MAX_QUERY_LENGTH or is_prompt_injection(raw_orig):
+        return raw_orig
+
+    raw_query = re.sub(r"\s+", " ", normalize_chat_slang(raw_orig).strip())
     if not chat_history:
         return raw_query
 
@@ -1918,21 +2213,33 @@ def rewrite_conversational_query(query: str, chat_history: list | None = None) -
     recent_history = valid_history[-6:]
     q_lower = raw_query.lower()
 
+    # Tuyệt đối không viết lại nếu câu hiện tại là lời chào/cảm thán/ra lệnh meta/Prompt Injection hoặc câu hỏi OOS rõ ràng
+    if (
+        is_greeting_or_chitchat(raw_query)
+        or SmartRAGChain._is_excluded_resolution_query(q_lower)
+        or SmartRAGChain._is_explicit_out_of_scope_query(q_lower)
+    ):
+        return raw_query
+
     has_pronoun_no = bool(re.search(r"\bnó\b", q_lower))
-    explicit_phrases = [
+    anaphoric_pronoun_phrases = [
         "cái đó", "cái này", "mức này", "mức đó", "loại này", "loại đó",
-        "khoản này", "quy định này", "trường hợp này", "đối tượng này",
+        "khoản này", "quy định này", "quy trình này", "trường hợp này", "đối tượng này",
         "phòng này", "phòng đó", "đơn vị này", "đơn vị đó", "ở đó", "bên đó",
         "học phần này", "học phần đó", "môn này", "môn đó", "ngành này", "ngành đó",
-        "bảng này", "mục này", "chế độ này", "chính sách này",
+        "bảng này", "mục này", "chế độ này", "chính sách này", "hành vi này",
+        "học bổng này", "học bổng đó", "quy tắc này", "quy chế này", "hoạt động này", "danh hiệu này",
+    ]
+    has_anaphoric_pronoun = has_pronoun_no or any(phrase in q_lower for phrase in anaphoric_pronoun_phrases)
+    discourse_connector_phrases = [
         "vậy thì", "vậy còn", "vậy mức", "thế còn", "còn hồ sơ", "còn thủ tục",
         "còn thời gian", "còn điều kiện", "còn mức", "thì sao"
     ]
-    has_explicit_marker = (
-        has_pronoun_no
-        or any(phrase in q_lower for phrase in explicit_phrases)
+    has_discourse_connector = (
+        any(phrase in q_lower for phrase in discourse_connector_phrases)
         or q_lower.startswith(("vậy ", "còn ", "thế "))
     )
+    has_explicit_marker = has_anaphoric_pronoun or has_discourse_connector
 
     # Bỏ qua ngay các câu cảm thán, cảm ơn, xác nhận hoặc câu lệnh ngắn không có nội dung tra cứu
     short_non_query_phrases = (
@@ -1988,9 +2295,9 @@ def rewrite_conversational_query(query: str, chat_history: list | None = None) -
         or has_article_or_section_ref
     )
 
-    needs_rewrite = has_explicit_marker or (
-        (has_contextual_marker or has_interrogative)
-        and len(q_lower.split()) <= 15
+    needs_rewrite = has_anaphoric_pronoun or (
+        (has_discourse_connector or has_contextual_marker or has_interrogative)
+        and len(q_lower.split()) <= 28
         and not has_standalone_subject
     )
     if not needs_rewrite:
@@ -2003,7 +2310,8 @@ def rewrite_conversational_query(query: str, chat_history: list | None = None) -
         pronoun_sub_re = re.compile(
             r"\b(?:của\s+nó|nó|cái\s+đó|cái\s+này|mức\s+này|mức\s+đó|loại\s+này|loại\s+đó|"
             r"khoản\s+này|quy\s+định\s+này|quy\s+trình\s+này|trường\s+hợp\s+này|đối\s+tượng\s+này|"
-            r"học\s+phần\s+này|học\s+phần\s+đó|môn\s+này|môn\s+đó|chế\s+độ\s+này|chính\s+sách\s+này)\b",
+            r"học\s+phần\s+này|học\s+phần\s+đó|môn\s+này|môn\s+đó|chế\s+độ\s+này|chính\s+sách\s+này|"
+            r"học\s+bổng\s+này|học\s+bổng\s+đó|quy\s+tắc\s+này|quy\s+chế\s+này|hoạt\s+động\s+này|danh\s+hiệu\s+này)\b",
             flags=re.IGNORECASE,
         )
         if pronoun_sub_re.search(rewritten_det):
@@ -2087,6 +2395,8 @@ def get_rag_chain():
         "   - Khi đọc Bảng quy đổi ngày CTXH (Điều 8 Quyết định 55, Trang 9–10) bị tách cột qua 2 trang liên tiếp: đối chiếu theo mã số tương ứng gồm Mùa hè xanh (001101 - tham gia các đội hình chuyên), Tiếp sức mùa thi (001301), Tiếp sức tân sinh viên (001501) đều quy đổi 1 ngày CTXH / ngày tham gia (tối thiểu 5 giờ làm việc hoặc 1 ca trực theo phân công); Trực tiếp hiến máu tình nguyện (001202) quy đổi 1 ngày CTXH (theo Giấy xác nhận hiến máu); Hỗ trợ tổ chức hoạt động hiến máu tình nguyện (001201) quy đổi 0,5 ngày CTXH (theo Bảng phân công nhiệm vụ hỗ trợ).\n"
         "   - Khi đọc Phụ lục Khung xử lý kỷ luật sinh viên (Quyết định 1079, Trang 25–34, 4 cột mức kỷ luật theo thứ tự: Khiển trách | Cảnh cáo | Đình chỉ có thời hạn | Buộc thôi học): mục 4 (Học thay hoặc nhờ người khác học thay) xử lý từ Khiển trách đến Buộc thôi học tùy mức độ; mục 5 (Thi, kiểm tra thay hoặc nhờ thi, kiểm tra thay; làm thay, nhờ làm hoặc sao chép tiểu luận, đồ án, khóa luận tốt nghiệp) xử lý Đình chỉ học tập có thời hạn (vi phạm lần 1) và Buộc thôi học (vi phạm lần 2); mục 6 (Tổ chức học, thi, kiểm tra thay) xử lý Buộc thôi học ngay từ lần 1 (nếu nghiêm trọng giao cơ quan chức năng xử lý theo pháp luật).\n"
         "   - Khi sinh viên hỏi về quyền lợi điểm rèn luyện của Ban cán sự lớp / Cán bộ lớp / Đoàn – Hội, phải đối chiếu quy định trong tài liệu để nêu rõ số điểm rèn luyện được cộng cụ thể theo từng chức danh và mức độ hoàn thành nhiệm vụ (nếu văn bản có quy định) thay vì chỉ trả lời chung chung.\n"
+        "   - Độ chính xác tuyệt đối với điều kiện biên (Boundary Conditions): Khi đối chiếu điểm rèn luyện, điểm trung bình, tỷ lệ dự lớp/vắng mặt, số tín chỉ hoặc mức hỗ trợ, BẮT BUỘC phân biệt chính xác các dấu và cụm từ so sánh toán học: 'từ X trở lên' / 'tối thiểu X' / 'ít nhất X' nghĩa là >= X (đạt đúng bằng X là ĐỦ điều kiện); 'trên X' / 'lớn hơn X' nghĩa là > X; 'dưới X' / 'nhỏ hơn X' nghĩa là < X; 'không quá X' / 'tối đa X' nghĩa là <= X. Ví dụ cụ thể: (1) Quy chế học bổng KKHT yêu cầu kết quả rèn luyện đạt từ loại Khá trở lên (khung điểm rèn luyện loại Khá là từ 65 đến dưới 80 điểm), nên sinh viên đạt đúng 65 điểm rèn luyện là ĐẠT loại Khá (>= 65) và ĐỦ điều kiện về điểm rèn luyện để xét học bổng KKHT loại Khá; (2) Đề cương học phần IT1216 quy định sinh viên phải tham dự tối thiểu 80% số tiết học trên lớp, nên sinh viên vắng mặt đúng 20% số tiết (tức đã tham dự đúng 80% số tiết trên lớp, >= 80%) vẫn ĐỦ điều kiện chuyên cần dự lớp (chỉ khi vắng trên 20%, tức dự lớp dưới 80%, mới không đạt).\n"
+        "   - Xử lý câu hỏi ghép 'nửa trong – nửa ngoài' (Hybrid In-Scope + Out-of-Scope / Fabricated Trap): Khi câu hỏi của sinh viên ghép một vế có thật trong tài liệu quy chế/đề cương với một vế ngoài phạm vi hoặc thông tin bịa đặt (ví dụ: hỏi điều kiện học bổng KKHT hoặc miễn giảm học phí kèm chế độ 'tặng laptop / thưởng tiền Tết / miễn thi cuối kỳ / tặng vé gửi xe tháng'), BẮT BUỘC tách câu trả lời thành 2 phần gạch đầu dòng rõ ràng: (1) Trả lời đầy đủ, chính xác phần nội dung có trong tài liệu quy chế/đề cương; và (2) Khẳng định dứt khoát rằng vế còn lại KHÔNG có trong quy định hiện hành của Nhà trường, tuyệt đối không suy diễn hoặc hùa theo vế bịa đặt.\n"
         "3. Phong cách trả lời:\n"
         "   - Tuyệt đối KHÔNG dùng các cụm từ máy móc làm lộ kỹ thuật prompt như 'Dựa trên ngữ cảnh được cung cấp', 'Theo ngữ cảnh được cung cấp', 'Theo ngữ cảnh', 'Trong đoạn trích', 'Tài liệu cung cấp', 'Dựa vào đoạn văn bản trên', 'Trong văn bản được trích dẫn', 'Theo văn bản được trích dẫn', 'tài liệu được trích dẫn'; thay vào đó diễn đạt tự nhiên như cán bộ tư vấn học vụ (ví dụ: 'Theo quy định hiện hành của Nhà trường...', 'Theo quy định tại VLUTE...', hoặc đi thẳng vào nội dung trả lời).\n"
         "   - Đi thẳng vào câu hỏi, diễn đạt tự nhiên, rõ ràng, súc tích.\n"

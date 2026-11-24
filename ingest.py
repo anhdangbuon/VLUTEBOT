@@ -27,8 +27,16 @@ DB_PATH = str(BASE_DIR / "chroma_db")
 DEPT_FILE = BASE_DIR / "departments.json"
 DEPARTMENTS_PATH = str(DEPT_FILE)
 
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
-os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+# Tự động bật chế độ Offline cho Hugging Face nếu máy đã có sẵn cache mô hình vietnamese-bi-encoder
+# (Nếu triển khai sang máy chủ/máy mới chưa có cache, hệ thống vẫn tự động tải model ở lần chạy đầu tiên)
+_HF_MODEL_CACHE_DIR = os.path.join(
+    os.getenv("HF_HOME", os.path.join(os.path.expanduser("~"), ".cache", "huggingface")),
+    "hub",
+    "models--bkai-foundation-models--vietnamese-bi-encoder",
+)
+if os.path.isdir(_HF_MODEL_CACHE_DIR):
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 # Danh sách các văn bản nghị quyết hành chính không liên quan đến sinh viên (cần loại bỏ)
 EXCLUDED_FILES = [
@@ -435,6 +443,59 @@ def clean_text(text: str) -> str:
 
 _VIETNAMESE_OCR_READER = None
 _OCR_INIT_FAILED = False
+MAX_OCR_PAGES_PER_FILE = 25
+
+
+def _is_file_ready_for_reading(filepath: str, wait_sec: float = 0.3) -> bool:
+    """
+    Kiểm tra tệp đã hoàn tất sao chép/ghi xuống đĩa và không bị khóa bởi tiến trình khác:
+    - Kích thước tệp > 0 và không thay đổi sau wait_sec (0.3s).
+    - Mở thử ở chế độ đọc nhị phân ('rb') thành công.
+    """
+    try:
+        if not os.path.isfile(filepath):
+            return False
+        size_1 = os.path.getsize(filepath)
+        if size_1 <= 0:
+            return False
+        time.sleep(wait_sec)
+        if not os.path.isfile(filepath):
+            return False
+        size_2 = os.path.getsize(filepath)
+        if size_1 != size_2 or size_2 <= 0:
+            print(
+                f"[WARN] Tệp '{os.path.basename(filepath)}' đang được sao chép dở "
+                f"({size_1} -> {size_2} bytes), tạm bỏ qua ở lượt này và tự nạp ở lượt kế tiếp."
+            )
+            return False
+        with open(filepath, "rb") as f:
+            _ = f.read(16)
+        return True
+    except (PermissionError, OSError) as lock_err:
+        print(
+            f"[WARN] Tệp '{os.path.basename(filepath)}' đang bị khóa hoặc đang ghi dở ({lock_err}), "
+            "tạm bỏ qua ở lượt này và tự nạp ở lượt kế tiếp."
+        )
+        return False
+
+
+def _warn_duplicate_doc_titles(title_to_files: dict[str, list[str]]) -> None:
+    """In cảnh báo nếu phát hiện từ 2 tệp khác nhau trở lên trong data/ có cùng tiêu đề chính thức (doc_title)."""
+    for norm_title, entries in title_to_files.items():
+        if not norm_title:
+            continue
+        unique_files = []
+        display_title = norm_title
+        for fname, raw_title in entries:
+            if raw_title:
+                display_title = raw_title
+            if fname not in unique_files:
+                unique_files.append(fname)
+        if len(unique_files) >= 2:
+            print(
+                f"[WARN] Phát hiện {len(unique_files)} tệp có tiêu đề tương tự ('{display_title}'): "
+                f"{', '.join(unique_files)}. Quản trị viên vui lòng kiểm tra và gỡ bỏ bản cũ nếu cần."
+            )
 
 
 def _get_vietnamese_ocr_reader():
@@ -513,6 +574,8 @@ def extract_clean_text_from_pdf(pdf_path: str):
 
     full_text = []
     ocr_first_two_pages = []
+    ocr_pages_count = 0
+    ocr_limit_warned = False
     for page_num in range(len(doc)):
         page = doc[page_num]
         text = page.get_text("text")
@@ -528,8 +591,16 @@ def extract_clean_text_from_pdf(pdf_path: str):
         page_clean_text = clean_text(page_clean_text)
 
         if len(page_clean_text) <= 25:
-            print(f"[OCR] Đang nhận diện trang {page_num + 1} của {filename}...")
-            page_clean_text = _ocr_pdf_page(page)
+            if ocr_pages_count < MAX_OCR_PAGES_PER_FILE:
+                ocr_pages_count += 1
+                print(f"[OCR] Đang nhận diện trang {page_num + 1} của {filename} ({ocr_pages_count}/{MAX_OCR_PAGES_PER_FILE})...")
+                page_clean_text = _ocr_pdf_page(page)
+            elif not ocr_limit_warned:
+                print(
+                    f"[WARN] Tệp '{filename}' vượt ngưỡng tối đa MAX_OCR_PAGES_PER_FILE={MAX_OCR_PAGES_PER_FILE} trang OCR/tệp trên CPU. "
+                    "Tạm dừng OCR các trang còn lại để chống tràn RAM (OOM)."
+                )
+                ocr_limit_warned = True
 
         if page_num < 2 and len(page_clean_text) > 25:
             ocr_first_two_pages.append(page_clean_text)
@@ -981,11 +1052,21 @@ def create_vector_db():
     print("⏳ Đang trích xuất văn bản đa định dạng (.pdf, .docx, .txt) từ thư mục data/...")
     departments = load_departments(DEPARTMENTS_PATH)
     chunks = []
+    title_to_files: dict[str, list[tuple[str, str]]] = {}
     for file_path in _iter_valid_data_files(DATA_PATH):
         try:
-            chunks.extend(build_chunks_for_file(file_path, departments))
+            if not _is_file_ready_for_reading(file_path, wait_sec=0.3):
+                continue
+            file_chunks = build_chunks_for_file(file_path, departments)
+            if file_chunks:
+                raw_t = str(file_chunks[0].metadata.get("title", "") or "").strip()
+                norm_t = re.sub(r"\s+", " ", raw_t.lower())
+                title_to_files.setdefault(norm_t, []).append((os.path.basename(file_path), raw_t))
+                chunks.extend(file_chunks)
         except Exception as e:
             print(f"⚠️ Lỗi xử lý file {file_path}: {e}")
+
+    _warn_duplicate_doc_titles(title_to_files)
 
     print(f"🧩 Tổng số chunks tinh gọn được tạo: {len(chunks)}.")
 
@@ -1074,7 +1155,14 @@ def sync_knowledge_base_from_data_dir(vector_db=None) -> dict:
             except (TypeError, ValueError):
                 pass
 
-    added, updated, deleted = [], [], []
+    added, updated, deleted, skipped = [], [], [], []
+    title_to_files: dict[str, list[tuple[str, str]]] = {}
+    for src, meta_list in metas_by_src.items():
+        if src in disk_files and meta_list:
+            raw_t = str(meta_list[0].get("title", "") or "").strip()
+            norm_t = re.sub(r"\s+", " ", raw_t.lower())
+            if norm_t:
+                title_to_files.setdefault(norm_t, []).append((src, raw_t))
 
     # 1. Xóa chunk của file không còn trong data/ hoặc nằm trong danh sách loại trừ
     for src in list(ids_by_src.keys()):
@@ -1094,27 +1182,44 @@ def sync_knowledge_base_from_data_dir(vector_db=None) -> dict:
                 updated_metas = [{**m, "file_mtime": disk_mtime} for m in metas_by_src[src]]
                 vector_db._collection.update(ids=src_ids, metadatas=updated_metas)
         elif abs(disk_mtime - stored_mtime) > 1.0:
+            if not _is_file_ready_for_reading(full_path, wait_sec=0.3):
+                skipped.append(src)
+                continue
             vector_db.delete(where={"source": src})
             new_chunks = build_chunks_for_file(full_path, departments)
             if new_chunks:
                 vector_db.add_documents(new_chunks)
+                raw_t = str(new_chunks[0].metadata.get("title", "") or "").strip()
+                norm_t = re.sub(r"\s+", " ", raw_t.lower())
+                if norm_t:
+                    title_to_files.setdefault(norm_t, []).append((src, raw_t))
             updated.append(src)
             print(f"[AUTO-SYNC] Đã cập nhật lại trong ChromaDB ({len(new_chunks)} chunks): {src}")
 
     # 3. Nạp file mới được thêm vào data/
     for src, (full_path, _disk_mtime) in disk_files.items():
         if src not in ids_by_src:
+            if not _is_file_ready_for_reading(full_path, wait_sec=0.3):
+                skipped.append(src)
+                continue
             new_chunks = build_chunks_for_file(full_path, departments)
             if new_chunks:
                 vector_db.add_documents(new_chunks)
                 added.append(src)
+                raw_t = str(new_chunks[0].metadata.get("title", "") or "").strip()
+                norm_t = re.sub(r"\s+", " ", raw_t.lower())
+                if norm_t:
+                    title_to_files.setdefault(norm_t, []).append((src, raw_t))
                 print(f"[AUTO-SYNC] Đã nạp tài liệu mới vào ChromaDB ({len(new_chunks)} chunks): {src}")
+
+    _warn_duplicate_doc_titles(title_to_files)
 
     return {
         "changed": bool(added or updated or deleted),
         "added": added,
         "updated": updated,
         "deleted": deleted,
+        "skipped": skipped,
     }
 
 

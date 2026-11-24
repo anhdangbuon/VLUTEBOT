@@ -4,15 +4,22 @@ env/
 venv/
 ENV/
 
-# Python cache
+# Python cache & test artifacts
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
+.pytest_cache/
 
-# Environment variables
+# Environment variables & secrets (NEVER commit API keys)
 .env
 .env.local
+.env.*
+.streamlit/secrets.toml
+
+# Temporary ChromaDB swap/backup directories (chroma_db/ chính thức được giữ để chạy ngay khi clone/deploy)
+chroma_db_temp/
+chroma_db_old/
 
 # IDE settings
 .vscode/*
@@ -20,15 +27,16 @@ __pycache__/
 !.vscode/launch.json
 .idea/
 
-# Streamlit runtime
-.streamlit/secrets.toml
-
-.vscode/
+# OS & MS Office temporary lock files
+.DS_Store
+Thumbs.db
+~$*
 
 # Node / Frontend
 node_modules/
 frontend/node_modules/
 frontend/dist/
 
-# Logs
+# Logs & large compressed benchmark archives (> GitHub limit)
 *.log
+evaluation/*.gz

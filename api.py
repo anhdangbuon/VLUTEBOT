@@ -11,23 +11,29 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from rag import (
-    STREAM_INTERRUPTED_NOTICE,
+    FRIENDLY_ERROR_MESSAGE,
+    MAX_QUERY_LENGTH,
     REFUSAL_MESSAGE,
+    STREAM_INTERRUPTED_NOTICE,
+    TOO_LONG_QUERY_MESSAGE,
     auto_sync_knowledge_base,
     clip_context_text,
     extract_article_info,
     get_greeting_or_chitchat_reply,
     get_rag_chain,
     is_greeting_or_chitchat,
+    is_prompt_injection,
     load_departments_config,
+    normalize_chat_slang,
     rewrite_conversational_query,
+    sanitize_client_error_message,
     sanitize_no_markdown_tables,
 )
 
@@ -94,9 +100,39 @@ SIDEBAR_LINK_GROUPS = [
 _chain_lock = threading.Lock()
 _cache_lock = threading.Lock()
 _greeting_lock = threading.Lock()
+_rate_limit_lock = threading.Lock()
 _rag_chain: Any = None
 _ANSWER_CACHE: dict[str, dict[str, Any]] = {}
 _greeting_counter = 0
+
+RATE_LIMIT_MAX_REQUESTS = 20
+RATE_LIMIT_WINDOW_SECONDS = 60.0
+CLIENT_RATE_LIMIT_MESSAGE = (
+    "⚠️ Bạn đang gửi yêu cầu quá nhanh (vượt giới hạn 20 yêu cầu/phút). "
+    "Bạn vui lòng chờ vài giây rồi thử hỏi lại nhé!"
+)
+_client_request_timestamps: dict[str, list[float]] = {}
+
+
+def _check_client_rate_limit(request: Request | None) -> bool:
+    """Giới hạn tối đa 20 yêu cầu/phút trên mỗi IP/Session client."""
+    if request is None:
+        return False
+    client_key = (
+        request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        or request.headers.get("X-Client-Session", "").strip()
+        or (request.client.host if request.client else "127.0.0.1")
+    )
+    now = time.time()
+    cutoff = now - RATE_LIMIT_WINDOW_SECONDS
+    with _rate_limit_lock:
+        recent_ts = [ts for ts in _client_request_timestamps.get(client_key, []) if ts > cutoff]
+        if len(recent_ts) >= RATE_LIMIT_MAX_REQUESTS:
+            _client_request_timestamps[client_key] = recent_ts
+            return True
+        recent_ts.append(now)
+        _client_request_timestamps[client_key] = recent_ts
+        return False
 
 
 def get_cached_rag_chain():
@@ -230,10 +266,10 @@ def is_refusal_answer(text: str) -> bool:
 
 
 def normalize_query_intent(query: str) -> str:
-    """Làm sạch khoảng trắng, lọc từ gọi bot và mở rộng viết tắt quy chế ở câu hỏi ngắn."""
+    """Chuẩn hóa tiếng chat Zalo/viết tắt sinh viên, làm sạch khoảng trắng, lọc từ gọi bot và mở rộng viết tắt ở câu ngắn."""
     if not query:
         return ""
-    cleaned = re.sub(r"\s+", " ", query.strip())
+    cleaned = re.sub(r"\s+", " ", normalize_chat_slang(query.strip()))
     words = cleaned.split()
     if len(words) <= 5 and not is_greeting(cleaned):
         q_lower = cleaned.lower()
@@ -293,6 +329,7 @@ def check_department_inquiry(query: str) -> str | None:
         "địa chỉ", "ở đâu", "vị trí", "nằm ở", "tòa nào", "phòng mấy",
         "liên hệ", "gặp ai", "số điện thoại", "sđt", "hotline",
         "địa chỉ email", "email của", "email liên hệ", "email phòng", "email trung tâm",
+        "đường link", "link cổng", "link trang", "trang web", "website", "cổng thông tin phòng",
         "liên hệ phòng nào", "liên hệ đơn vị nào", "liên hệ bộ phận nào",
         "hỏi phòng nào", "tới phòng nào", "đến phòng nào", "qua phòng nào",
         "phòng nào hỗ trợ", "đơn vị nào hỗ trợ", "bộ phận nào hỗ trợ",
@@ -873,14 +910,149 @@ def shuffle_prompts(body: ShufflePromptsRequest):
     return {"prompts": get_random_welcome_prompts(previous_queries=body.previous_queries)}
 
 
+@app.post("/api/chat")
+def chat_sync(body: ChatStreamRequest, request: Request):
+    """Endpoint đồng bộ /api/chat tích hợp đầy đủ các chốt chặn bảo mật, độ dài và chống spam giống /api/chat/stream."""
+    current_user_query = (body.query or "").strip()
+    if _check_client_rate_limit(request):
+        return {
+            "answer": CLIENT_RATE_LIMIT_MESSAGE,
+            "verified": False,
+            "is_refusal": True,
+            "contact": None,
+            "sources": [],
+        }
+    if len(current_user_query) > MAX_QUERY_LENGTH:
+        return {
+            "answer": TOO_LONG_QUERY_MESSAGE,
+            "verified": False,
+            "is_refusal": True,
+            "contact": None,
+            "sources": [],
+        }
+    if is_prompt_injection(current_user_query):
+        return {
+            "answer": REFUSAL_MESSAGE,
+            "verified": False,
+            "is_refusal": True,
+            "contact": None,
+            "sources": [],
+        }
+    try:
+        norm_q = normalize_query_intent(current_user_query)
+        recent_chat_history = _build_filtered_history(body.messages, current_user_query)
+        rewritten_q = rewrite_conversational_query(norm_q, recent_chat_history)
+        dept_reply = check_department_inquiry(rewritten_q)
+        if dept_reply:
+            return {
+                "answer": dept_reply,
+                "verified": False,
+                "is_refusal": False,
+                "is_dept_inquiry": True,
+                "contact": None,
+                "sources": [],
+            }
+        chain = get_cached_rag_chain()
+        res = chain.invoke({"input": rewritten_q})
+        ans = sanitize_no_markdown_tables(str(res.get("answer") or REFUSAL_MESSAGE))
+        is_ref = bool(res.get("is_refusal")) or is_refusal_answer(ans)
+        docs = res.get("context") or []
+        contact = None if is_ref else get_contact_footer_data(rewritten_q, retrieved_docs=docs, is_refusal=False)
+        return {
+            "answer": ans,
+            "verified": not is_ref and bool(docs),
+            "is_refusal": is_ref,
+            "contact": contact,
+            "sources": [os.path.basename(str(d.metadata.get("source", ""))) for d in docs],
+        }
+    except Exception as err:
+        return {
+            "answer": sanitize_client_error_message(err, rate_limit_msg=RATE_LIMIT_MESSAGE),
+            "verified": False,
+            "is_refusal": True,
+            "contact": None,
+            "sources": [],
+        }
+
+
 @app.post("/api/chat/stream")
-def chat_stream(body: ChatStreamRequest):
+def chat_stream(body: ChatStreamRequest, request: Request):
     """Stream phản hồi qua SSE (chunk, meta, done) dùng chung 100% lõi RAG & logic app.py."""
     current_user_query = (body.query or "").strip()
     prompts_cfg = load_prompts_config()
+    rate_limited = _check_client_rate_limit(request)
 
     def _event_generator():
         global _greeting_counter
+
+        # 0a. Chốt chặn Rate Limiter (tối đa 20 yêu cầu/phút/IP)
+        if rate_limited:
+            turns_msgs = list(body.messages or []) + [{"role": "user", "content": current_user_query[:200]}]
+            followups = select_followup_prompts(
+                "", prompts_cfg, messages=turns_msgs, sources=[], assistant_reply=CLIENT_RATE_LIMIT_MESSAGE, asked_queries=body.asked_queries
+            )
+            yield _sse_event({"type": "chunk", "content": CLIENT_RATE_LIMIT_MESSAGE})
+            yield _sse_event({
+                "type": "meta",
+                "verified": False,
+                "elapsed_time": None,
+                "cache_hit": False,
+                "contact": None,
+                "followups": followups,
+                "sources": [],
+                "rewritten_query": current_user_query[:200],
+                "is_refusal": True,
+                "is_greeting": False,
+                "is_dept_inquiry": False,
+            })
+            yield _sse_event({"type": "done"})
+            return
+
+        # 0b. Chốt chặn tin nhắn quá dài (> 2.000 ký tự) trong < 5 ms trước khi gọi Embedding/LLM
+        if len(current_user_query) > MAX_QUERY_LENGTH:
+            turns_msgs = list(body.messages or []) + [{"role": "user", "content": current_user_query[:200]}]
+            followups = select_followup_prompts(
+                "", prompts_cfg, messages=turns_msgs, sources=[], assistant_reply=TOO_LONG_QUERY_MESSAGE, asked_queries=body.asked_queries
+            )
+            yield _sse_event({"type": "chunk", "content": TOO_LONG_QUERY_MESSAGE})
+            yield _sse_event({
+                "type": "meta",
+                "verified": False,
+                "elapsed_time": None,
+                "cache_hit": False,
+                "contact": None,
+                "followups": followups,
+                "sources": [],
+                "rewritten_query": current_user_query[:200],
+                "is_refusal": True,
+                "is_greeting": False,
+                "is_dept_inquiry": False,
+            })
+            yield _sse_event({"type": "done"})
+            return
+
+        # 0c. Chốt chặn Prompt Injection / Jailbreak bằng REFUSAL_MESSAGE (is_refusal=True, contact=None)
+        if is_prompt_injection(current_user_query):
+            turns_msgs = list(body.messages or []) + [{"role": "user", "content": current_user_query}]
+            followups = select_followup_prompts(
+                "", prompts_cfg, messages=turns_msgs, sources=[], assistant_reply=REFUSAL_MESSAGE, asked_queries=body.asked_queries
+            )
+            yield _sse_event({"type": "chunk", "content": REFUSAL_MESSAGE})
+            yield _sse_event({
+                "type": "meta",
+                "verified": False,
+                "elapsed_time": None,
+                "cache_hit": False,
+                "contact": None,
+                "followups": followups,
+                "sources": [],
+                "rewritten_query": current_user_query,
+                "is_refusal": True,
+                "is_greeting": False,
+                "is_dept_inquiry": False,
+            })
+            yield _sse_event({"type": "done"})
+            return
 
         if not current_user_query or not re.search(r"[0-9a-zA-ZÀ-ỹ]", current_user_query):
             reply = CLARIFY_EMPTY_QUERY_MESSAGE
@@ -1165,9 +1337,8 @@ def chat_stream(body: ChatStreamRequest):
             yield _sse_event({"type": "done"})
 
         except Exception as err:
-            err_str = str(err)
-            is_429 = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str.upper()
-            reply = RATE_LIMIT_MESSAGE if is_429 else f"⚠️ Đã xảy ra lỗi khi tra cứu quy chế: {err}"
+            print(f"[API STREAM ERROR] {type(err).__name__}")
+            reply = sanitize_client_error_message(err, rate_limit_msg=RATE_LIMIT_MESSAGE)
             contact = None
             followups = select_followup_prompts(
                 rewritten_query, prompts_cfg, messages=turns_msgs, sources=[], assistant_reply=reply, asked_queries=body.asked_queries
