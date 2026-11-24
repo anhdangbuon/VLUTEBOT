@@ -1,30 +1,38 @@
 {
   "khtc": {
     "name": "Phòng Kế hoạch - Tài chính (VLUTE)",
+    "full_name": "Phòng Kế hoạch - Tài chính (VLUTE)",
     "location": "Tòa nhà A (Tầng trệt)",
     "phone": "(0270) 3822 141",
     "email": "khtc@vlute.edu.vn",
+    "url": "https://vlute.edu.vn/phong-ke-hoach-tai-chinh",
     "patterns": ["hoc_phi", "tai_chinh", "hoan_tra", "khtc", "bien_lai"]
   },
   "ctsv": {
     "name": "Phòng Công tác Sinh viên (VLUTE)",
+    "full_name": "Phòng Công tác sinh viên và Truyền thông (VLUTE)",
     "location": "Tòa nhà A (Phòng A1.102 - Tầng trệt)",
     "phone": "(0270) 3862 436",
     "email": "ctsv@vlute.edu.vn",
-    "patterns": ["cong_tac_sinh_vien", "hoc_bong", "ctxh", "khen_thuong", "ky_luat", "ung_xu", "ctsv"]
+    "url": "http://cgtdt-dsa.vlute.edu.vn/",
+    "patterns": ["cong_tac_sinh_vien", "hoc_bong", "ctxh", "khen_thuong", "ky_luat", "ung_xu", "ctsv", "truyen_thong"]
   },
   "cntt": {
     "name": "Trung tâm Công nghệ Thông tin (VLUTE)",
+    "full_name": "Trung tâm Công nghệ Thông tin (VLUTE)",
     "location": "Tòa nhà B",
     "phone": "(0270) 3862 250",
     "email": "ttcntt@vlute.edu.vn",
+    "url": "https://vlute.edu.vn/",
     "patterns": ["an_toan_thong_tin", "mat_khau", "email", "mang", "cntt", "phan_mem"]
   },
   "dao_tao": {
     "name": "Phòng Đào tạo (VLUTE)",
+    "full_name": "Phòng Đào tạo - Đảm bảo chất lượng (VLUTE)",
     "location": "Tòa nhà A (Tầng 1)",
     "phone": "(0270) 3822 140",
     "email": "daotao@vlute.edu.vn",
-    "patterns": ["dao_tao", "hoc_vu", "tin_chi", "dang_ky_mon", "tot_nghiep"]
+    "url": "http://pdt.vlute.edu.vn/",
+    "patterns": ["dao_tao", "hoc_vu", "tin_chi", "dang_ky_mon", "tot_nghiep", "dam_bao_chat_luong"]
   }
 }

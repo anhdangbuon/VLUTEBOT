@@ -23,7 +23,9 @@ from rag import (
     auto_sync_knowledge_base,
     clip_context_text,
     extract_article_info,
+    get_greeting_or_chitchat_reply,
     get_rag_chain,
+    is_greeting_or_chitchat,
     load_departments_config,
     rewrite_conversational_query,
     sanitize_no_markdown_tables,
@@ -82,9 +84,9 @@ SIDEBAR_LINK_GROUPS = [
         "icon": "landmark",
         "items": [
             {"label": "Tuyển sinh", "title": "Phòng Tuyển sinh", "url": "https://tuyensinh.vlute.edu.vn/", "icon": "compass"},
-            {"label": "Đào tạo (A1.101)", "title": "Phòng Đào tạo (A1.101)", "url": "http://pdt.vlute.edu.vn/", "icon": "clipboard-list"},
-            {"label": "CTSV (A1.102)", "title": "Phòng Công tác SV (A1.102)", "url": "http://cgtdt-dsa.vlute.edu.vn/", "icon": "users"},
-            {"label": "KHTC (Tầng trệt)", "title": "Phòng Kế hoạch - Tài chính", "url": "https://vlute.edu.vn", "icon": "wallet"},
+            {"label": "Đào tạo (A1.101)", "title": "Phòng Đào tạo - Đảm bảo chất lượng (A1.101)", "url": "http://pdt.vlute.edu.vn/", "icon": "clipboard-list"},
+            {"label": "CTSV (A1.102)", "title": "Phòng Công tác sinh viên và Truyền thông (A1.102)", "url": "http://cgtdt-dsa.vlute.edu.vn/", "icon": "users"},
+            {"label": "KHTC (Tầng trệt)", "title": "Phòng Kế hoạch - Tài chính (Tầng trệt)", "url": "https://vlute.edu.vn/phong-ke-hoach-tai-chinh", "icon": "wallet"},
         ],
     },
 ]
@@ -205,57 +207,7 @@ def check_social_or_command_reply(query: str) -> str | None:
     (như 'đặt câu hỏi đi', 'hỏi đi', 'nói đi', 'ok', 'cảm ơn', 'thanks') để phản hồi thân thiện
     và không gắn huy hiệu đối soát.
     """
-    clean = re.sub(r"^[\s\.,!?;:\-]+|[\s\.,!?;:\-]+$", "", (query or "").lower()).strip()
-    clean = re.sub(r"\s+", " ", clean)
-    if not clean:
-        return None
-    words = clean.split()
-    if len(words) > 7:
-        return None
-
-    duty_keywords = [
-        "học bổng", "học phí", "tín chỉ", "cảnh báo", "điểm", "rút môn",
-        "thôi học", "miễn giảm", "bảo hiểm", "quy chế", "quy định", "điều",
-        "ctxh", "công tác xã hội", "kỷ luật", "thi hộ", "thi thay",
-        "học thay", "tốt nghiệp", "khóa luận", "rèn luyện", "hoàn trả",
-        "hồ sơ", "thủ tục", "mật khẩu", "email", "trang phục", "ứng xử",
-        "ban cán sự", "khiếu nại", "vượt khó", "đề cương", "học phần",
-        "giảng viên", "tiên quyết", "chuẩn đầu ra", "giáo trình", "hệ số",
-        "đào tạo", "sinh viên", "phòng", "trung tâm", "it1216", "mã nguồn mở",
-    ]
-    if any(dk in clean for dk in duty_keywords):
-        return None
-
-    thanks_or_ack_exact = {
-        "ok", "okay", "oke", "oki", "okie", "okela", "dạ", "vâng", "dạ vâng",
-        "ừ", "ờ", "rồi", "hiểu rồi", "biết rồi", "đã hiểu", "ok bạn", "ok lucas",
-        "ok cảm ơn", "dạ cảm ơn", "vâng cảm ơn", "tốt quá", "hay quá", "tuyệt vời",
-        "chuẩn", "đúng rồi", "cảm ơn", "cám ơn", "thank", "thanks", "tks", "thank you",
-    }
-    thanks_prefixes = (
-        "cảm ơn", "cám ơn", "thank", "tks", "ok cảm ơn", "dạ cảm ơn", "vâng cảm ơn",
-    )
-    if clean in thanks_or_ack_exact or any(clean.startswith(p) for p in thanks_prefixes):
-        return (
-            "Rất vui được hỗ trợ bạn! Nếu cần tra cứu thêm quy chế học vụ, học bổng, học phí hay đề cương học phần, "
-            "bạn có thể chọn nhanh 1 trong các gợi ý bên dưới hoặc nhập trực tiếp chủ đề cần tìm hiểu nhé!"
-        )
-
-    command_exact = {
-        "đặt câu hỏi đi", "đặt câu hỏi", "hỏi đi", "hỏi tiếp đi", "nói đi", "nói tiếp đi",
-        "trả lời đi", "tiếp đi", "tiếp tục đi", "gợi ý đi", "cho câu hỏi đi",
-        "bắt đầu đi", "làm đi", "xem nào", "đâu rồi", "sao nữa",
-    }
-    command_prefixes = (
-        "đặt câu hỏi", "hỏi đi", "nói đi", "trả lời đi", "gợi ý đi", "cho câu hỏi",
-    )
-    if clean in command_exact or any(clean.startswith(p) for p in command_prefixes):
-        return (
-            "Mình luôn sẵn sàng! Bạn hãy chọn nhanh 1 trong các câu hỏi gợi ý bên dưới "
-            "hoặc nhập trực tiếp chủ đề quy chế, học vụ, học bổng, học phí cần tra cứu để Lucas giải đáp ngay nhé!"
-        )
-
-    return None
+    return get_greeting_or_chitchat_reply(query)
 
 
 def is_refusal_answer(text: str) -> bool:
@@ -374,8 +326,8 @@ def check_department_inquiry(query: str) -> str | None:
         "email": "ttcntt@vlute.edu.vn",
     })
 
-    has_pdt = any(k in q for k in ["đào tạo", "pdt", "học vụ"])
-    has_ctsv = any(k in q for k in ["công tác sinh viên", "ctsv"])
+    has_pdt = any(k in q for k in ["đào tạo", "đảm bảo chất lượng", "pdt", "học vụ"])
+    has_ctsv = any(k in q for k in ["công tác sinh viên", "truyền thông", "ctsv"])
     has_khtc = any(k in q for k in ["tài chính", "kế hoạch", "khtc", "học phí"])
     has_cntt = any(k in q for k in ["cntt", "công nghệ thông tin", "tin học", "mật khẩu", "wifi", "internet", "mạng", "e-learning"])
     has_all = "các phòng ban" in q or (int(has_pdt) + int(has_ctsv) + int(has_khtc) + int(has_cntt) >= 2)

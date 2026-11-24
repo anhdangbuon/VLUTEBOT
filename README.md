@@ -219,9 +219,9 @@ Truy cập trình duyệt tại: **`http://localhost:8501`**
 
 ## 📞 Đầu mối Liên hệ Hỗ trợ tại VLUTE (`departments.json`)
 
-- 🏢 **Phòng Đào tạo (VLUTE)** — *Tòa nhà A (Tầng 1)*
+- 🏢 **Phòng Đào tạo (VLUTE)** *(Tên đầy đủ trên cổng thông tin: Phòng Đào tạo - Đảm bảo chất lượng)* — *Tòa nhà A (Tầng 1)*
   - Điện thoại: `(0270) 3822 140` | Email: `daotao@vlute.edu.vn`
-- 🏢 **Phòng Công tác Sinh viên (VLUTE)** — *Tòa nhà A (Phòng A1.102 - Tầng trệt)*
+- 🏢 **Phòng Công tác Sinh viên (VLUTE)** *(Tên đầy đủ trên cổng thông tin: Phòng Công tác sinh viên và Truyền thông)* — *Tòa nhà A (Phòng A1.102 - Tầng trệt)*
   - Điện thoại: `(0270) 3862 436` | Email: `ctsv@vlute.edu.vn`
 - 🏢 **Phòng Kế hoạch - Tài chính (VLUTE)** — *Tòa nhà A (Tầng trệt)*
   - Điện thoại: `(0270) 3822 141` | Email: `khtc@vlute.edu.vn`
@@ -243,8 +243,9 @@ Truy cập trình duyệt tại: **`http://localhost:8501`**
 - 💻 **E-Learning:** [elearning.vlute.edu.vn](http://elearning.vlute.edu.vn/)
 - 💳 **Thanh toán:** [thanhtoan.vlute.edu.vn](https://thanhtoan.vlute.edu.vn/)
 - 🎯 **Tuyển sinh:** [tuyensinh.vlute.edu.vn](https://tuyensinh.vlute.edu.vn/)
-- 📋 **Phòng Đào tạo (A1.101):** [pdt.vlute.edu.vn](http://pdt.vlute.edu.vn/)
-- 👥 **Phòng CTSV (A1.102):** [cgtdt-dsa.vlute.edu.vn](http://cgtdt-dsa.vlute.edu.vn/)
+- 📋 **Đào tạo (A1.101 — Phòng Đào tạo - Đảm bảo chất lượng):** [pdt.vlute.edu.vn](http://pdt.vlute.edu.vn/)
+- 👥 **CTSV (A1.102 — Phòng Công tác sinh viên và Truyền thông):** [cgtdt-dsa.vlute.edu.vn](http://cgtdt-dsa.vlute.edu.vn/)
+- 💰 **KHTC (Tầng trệt — Phòng Kế hoạch - Tài chính):** [vlute.edu.vn/phong-ke-hoach-tai-chinh](https://vlute.edu.vn/phong-ke-hoach-tai-chinh)
 
 ---
 *© Bản quyền thuộc về Trường Đại học Công nghệ Kỹ thuật Vĩnh Long (VLUTE — tiền thân: Trường ĐH Sư phạm Kỹ thuật Vĩnh Long) | Copyright belongs to Vinh Long University of Technology and Engineering.*

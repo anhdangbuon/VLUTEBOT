@@ -131,6 +131,38 @@ class SmartRAGChain:
         return any(pat in q_lower for pat in excluded_patterns)
 
     @staticmethod
+    def _is_explicit_out_of_scope_query(q_lower: str) -> bool:
+        """
+        Nhận diện các câu hỏi kiểu ChatGPT / Gemini đa năng hoặc chủ đề đời sống/tuyển sinh
+        nằm ngoài phạm vi 8 văn bản quy chế & đề cương học phần của Nhà trường.
+        """
+        oos_patterns = (
+            "viết code", "đoạn code", "code python", "code c++", "code java", "code javascript",
+            "code c#", "code php", "code html", "code sql", "lập trình python", "lập trình c++",
+            "lập trình java", "lập trình web", "giải phương trình", "hệ phương trình",
+            "tính tích phân", "tính đạo hàm", "ma trận nghịch đảo", "thuật toán sắp xếp",
+            "cây nhị phân", "dịch đoạn văn", "dịch sang tiếng", "dịch câu này", "viết bài văn",
+            "viết đoạn văn", "làm bài thơ", "sáng tác thơ", "tóm tắt truyện", "tóm tắt tác phẩm",
+            "truyện kiều", "chí phèo", "tắt đèn", "vợ nhặt", "lão hạc", "cách làm món",
+            "cách nấu", "công thức nấu", "thịt kho tàu", "phở bò", "bún bò", "canh chua",
+            "thời tiết", "dự báo thời tiết", "nhiệt độ hôm nay", "trời có mưa không",
+            "cấu hình pc", "build pc", "pc gaming", "mua laptop", "tư vấn laptop", "tư vấn điện thoại",
+            "giá vàng", "tỷ giá ngoại tệ", "tỷ giá usd", "chứng khoán", "bitcoin", "tiền ảo",
+            "giá xăng", "bóng đá", "ngoại hạng anh", "world cup", "champions league",
+            "xổ số", "vietlott", "cung hoàng đạo", "tử vi", "bói toán", "xem bói", "phong thủy",
+            "căn tin", "cantin", "căng tin", "ký túc xá trường", "phòng ký túc xá",
+            "đăng ký ở ký túc xá", "cổng ký túc xá", "ktx trường", "ktx của trường",
+            "tiền điện nước ở ktx", "tiền phòng trọ", "thuê trọ",
+            "nhà trọ sinh viên", "vé gửi xe", "giữ xe tháng", "gửi xe tháng", "bãi giữ xe",
+            "nhà xe sinh viên", "tuyến xe buýt", "xe buýt số", "xe bus số",
+            "điểm chuẩn", "điểm sàn xét tuyển", "chỉ tiêu tuyển sinh", "xét học bạ", "mã trường tuyển sinh",
+            "lịch nghỉ tết", "tết nguyên đán", "nghỉ lễ 30/4", "nghỉ lễ 2/9", "lịch nghỉ hè",
+            "thư viện mở cửa", "giờ mở cửa thư viện", "đơn giá 1 tín chỉ là bao nhiêu tiền",
+            "1 tín chỉ bao nhiêu tiền", "một tín chỉ bao nhiêu tiền",
+        )
+        return any(pat in q_lower for pat in oos_patterns)
+
+    @staticmethod
     def _looks_like_table_or_split_page(text: str, page_chunk_count: int) -> bool:
         """Nhận diện tự động trang bảng biểu/phụ lục thưa hoặc đoạn trích vắt trang (không hardcode PDF)."""
         if page_chunk_count <= 2:
@@ -391,8 +423,12 @@ class SmartRAGChain:
             self.last_retrieval_debug = {"reason": "empty_query", "accepted": False}
             return []
 
-        if self._is_excluded_resolution_query(q_lower):
-            self.last_retrieval_debug = {"reason": "excluded_resolution", "accepted": False}
+        if is_greeting_or_chitchat(q_str):
+            self.last_retrieval_debug = {"reason": "greeting_or_chitchat", "accepted": False}
+            return []
+
+        if self._is_excluded_resolution_query(q_lower) or self._is_explicit_out_of_scope_query(q_lower):
+            self.last_retrieval_debug = {"reason": "excluded_or_explicit_oos", "accepted": False}
             return []
 
         # 1. Truy xuất Dense Vector từ ChromaDB
@@ -679,6 +715,14 @@ class SmartRAGChain:
         Với câu hỏi ghép nhiều hành vi/quy định độc lập, truy xuất cho cả câu đầy đủ lẫn
         từng vế con rồi trộn xen kẽ (round-robin, khử trùng lặp) tối đa 7 đoạn trích.
         """
+        if is_greeting_or_chitchat(query):
+            self.last_retrieval_debug = {"reason": "greeting_or_chitchat", "accepted": False}
+            return []
+        q_low_raw = (query or "").lower()
+        if self._is_excluded_resolution_query(q_low_raw) or self._is_explicit_out_of_scope_query(q_low_raw):
+            self.last_retrieval_debug = {"reason": "excluded_or_explicit_oos", "accepted": False}
+            return []
+
         prepared_query = self._prepare_retrieval_query(query)
         primary_docs = self._retrieve_single_query(prepared_query, k=k)
         primary_debug = dict(self.last_retrieval_debug)
@@ -924,6 +968,10 @@ _ACADEMIC_SYNONYM_BIGRAMS = {
     "ai_dạy": ("giảng", "viên", "phụ", "trách", "giảng_viên", "phụ_trách"),
     "tính_điểm": ("kiểm", "tra", "đánh", "giá", "hệ", "số", "đánh_giá", "hệ_số"),
     "chấm_điểm": ("kiểm", "tra", "đánh", "giá", "hệ", "số", "đánh_giá", "hệ_số"),
+    "trang_phục": ("quy", "tắc", "ứng", "xử", "quy_tắc", "ứng_xử"),
+    "mạng_xã": ("quy", "tắc", "ứng", "xử", "quy_tắc", "ứng_xử"),
+    "hút_thuốc": ("quy", "tắc", "ứng", "xử", "khuôn", "viên", "ứng_xử"),
+    "rượu_bia": ("quy", "tắc", "ứng", "xử", "khuôn", "viên", "ứng_xử"),
 }
 
 _BM25_STOPWORDS = frozenset({
@@ -1621,6 +1669,197 @@ def get_rewriter_llm():
     return _GLOBAL_REWRITER_LLM
 
 
+_REGULATION_SUBJECT_KEYWORDS = (
+    "học bổng", "kkht", "spkt", "học phí", "miễn giảm", "miễn, giảm", "hỗ trợ chi phí",
+    "trợ cấp", "hoàn trả", "qt-sv-04", "tín chỉ", "cảnh báo", "rèn luyện", "điểm trung bình",
+    "điểm c", "rút môn", "thôi học", "bảo lưu", "bảo hiểm", "quy chế", "quy định", "quy trình",
+    "quy tắc", "điều ", "khoản ", "chương ", "phụ lục", "ctxh", "công tác xã hội",
+    "công tác sinh viên", "ctsv", "kỷ luật", "khiển trách", "cảnh cáo", "đình chỉ",
+    "thi hộ", "thi thay", "học thay", "học hộ", "gian lận", "phòng thi", "tốt nghiệp",
+    "khóa luận", "đồ án", "tiểu luận", "hồ sơ", "thủ tục", "đơn đề nghị", "biên lai",
+    "hóa đơn", "mật khẩu", "tài khoản", "email", "an toàn thông tin", "attt", "an ninh mạng",
+    "trang phục", "ứng xử", "ban cán sự", "lớp trưởng", "cố vấn học tập", "cvht",
+    "khiếu nại", "vượt khó", "đề cương", "học phần", "môn học", "giảng viên", "tiên quyết",
+    "học trước", "song hành", "chuẩn đầu ra", "cđr", "giáo trình", "hệ số", "chuyên cần",
+    "quá trình", "cuối kỳ", "lý thuyết", "thực hành", "it1216", "mã nguồn mở", "linux",
+    "ubuntu", "elearning", "e-learning", "phòng đào tạo", "kế hoạch tài chính", "khtc",
+    "công nghệ thông tin", "cntt", "hiến máu", "mùa hè xanh", "tiếp sức", "thủ khoa",
+    "xuất sắc", "tiên tiến", "dân tộc thiểu số", "hộ nghèo", "cận nghèo", "khuyết tật",
+    "mồ côi", "cử tuyển", "thương binh", "liệt sĩ", "hút thuốc", "rượu bia", "mạng xã hội",
+    "thẻ sinh viên", "khen thưởng", "hội đồng", "phúc khảo", "học kỳ",
+)
+
+_ANAPHORIC_FOLLOWUP_CUES = (
+    "của nó", "cái đó", "cái này", "mức này", "mức đó", "loại này", "loại đó",
+    "khoản này", "quy định này", "quy trình này", "trường hợp này", "đối tượng này",
+    "học phần này", "học phần đó", "môn này", "môn đó", "chế độ này", "chính sách này",
+    "hành vi này", "vi phạm này", "phòng này", "đơn vị này", "nộp ở đâu", "nộp cho ai",
+    "bao lâu", "mấy ngày", "bao nhiêu ngày", "mấy tháng", "bao nhiêu tháng",
+    "bao nhiêu tiền", "mức phạt", "xử lý thế nào", "tính thế nào", "tính sao",
+)
+
+
+def get_greeting_or_chitchat_reply(query: str) -> str | None:
+    """
+    Nhận diện câu chào hỏi, cảm ơn, xác nhận, ra lệnh meta cho bot hoặc câu vô nghĩa/xã giao ngắn
+    không có nội dung tra cứu quy chế. Trả về câu phản hồi thân thiện (hoặc None nếu là câu hỏi tra cứu).
+    """
+    raw = (query or "").strip()
+    if not raw:
+        return "Bạn vui lòng nhập nội dung câu hỏi cụ thể về quy chế hoặc chọn một gợi ý bên dưới để Lucas hỗ trợ nhé!"
+
+    if not re.search(r"[a-zA-ZÀ-ỹ]", raw):
+        return (
+            "Mình chưa nhận diện được nội dung câu hỏi. Bạn hãy chọn nhanh 1 trong các câu hỏi gợi ý bên dưới "
+            "hoặc nhập chủ đề quy chế, học vụ, học bổng, học phí cần tra cứu nhé!"
+        )
+
+    clean = re.sub(r"^[\s\.,!?;:\-\(\)\[\]\"']+|[\s\.,!?;:\-\(\)\[\]\"']+$", "", raw.lower()).strip()
+    clean = re.sub(r"\s+", " ", clean)
+    if not clean:
+        return "Bạn vui lòng nhập nội dung câu hỏi cụ thể về quy chế hoặc chọn một gợi ý bên dưới để Lucas hỗ trợ nhé!"
+
+    if any(kw in clean for kw in _REGULATION_SUBJECT_KEYWORDS):
+        if not re.match(r"^(?:test|kiểm tra thử)\b", clean):
+            return None
+    if any(cue in clean for cue in _ANAPHORIC_FOLLOWUP_CUES):
+        return None
+    if SmartRAGChain._is_excluded_resolution_query(clean) or SmartRAGChain._is_explicit_out_of_scope_query(clean):
+        return None
+
+    words = clean.split()
+
+    alpha_tokens = re.findall(r"[a-zà-ỹđ]+", clean)
+    if alpha_tokens:
+        if len(alpha_tokens) >= 2 and len(set(alpha_tokens)) == 1:
+            return (
+                "Mình luôn sẵn sàng hỗ trợ! Bạn hãy chọn 1 trong các câu hỏi gợi ý bên dưới "
+                "hoặc nhập trực tiếp chủ đề quy chế, học vụ cần tra cứu nhé!"
+            )
+        vn_vowels = set("aeiouyàáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵ")
+        for tok in alpha_tokens:
+            if len(tok) >= 5 and not any(ch in vn_vowels for ch in tok):
+                return (
+                    "Mình chưa hiểu rõ ý bạn. Bạn hãy chọn 1 trong các câu hỏi gợi ý bên dưới "
+                    "hoặc nhập rõ chủ đề quy chế, học vụ cần tra cứu nhé!"
+                )
+            if re.search(r"(?:asdf|qwer|zxcv|hjkl|tyui|bnm|fghj|dfgh|cvbn)", tok):
+                return (
+                    "Mình chưa hiểu rõ ý bạn. Bạn hãy chọn 1 trong các câu hỏi gợi ý bên dưới "
+                    "hoặc nhập rõ chủ đề quy chế, học vụ cần tra cứu nhé!"
+                )
+
+    if len(words) > 9:
+        return None
+
+    thanks_or_ack_exact = {
+        "ok", "okay", "oke", "oki", "okie", "okela", "dạ", "vâng", "dạ vâng",
+        "ừ", "ờ", "ừm", "rồi", "rõ rồi", "đã rõ", "hiểu rồi", "biết rồi", "đã hiểu",
+        "nắm được rồi", "ok bạn", "ok lucas", "ok ad", "oke bạn", "oke lucas",
+        "ok cảm ơn", "oke cảm ơn", "dạ cảm ơn", "vâng cảm ơn", "cảm ơn bạn", "cảm ơn lucas",
+        "cảm ơn ad", "cảm ơn nhiều", "cảm ơn nhé", "cảm ơn nha", "cám ơn", "cám ơn bạn",
+        "cám ơn lucas", "tốt quá", "hay quá", "tuyệt vời", "giỏi quá", "xịn quá",
+        "đỉnh quá", "chuẩn", "chuẩn luôn", "đúng rồi", "cảm ơn", "thank", "thanks",
+        "tks", "thank you", "thanks lucas", "thanks bạn", "good", "nice", "great",
+    }
+    thanks_prefixes = (
+        "cảm ơn", "cám ơn", "thank", "tks", "ok cảm ơn", "oke cảm ơn", "dạ cảm ơn", "vâng cảm ơn",
+        "rõ rồi", "hiểu rồi", "đã hiểu", "hay quá", "tuyệt vời",
+    )
+    if clean in thanks_or_ack_exact or any(clean.startswith(p) for p in thanks_prefixes):
+        return (
+            "Rất vui được hỗ trợ bạn! Nếu cần tra cứu thêm quy chế học vụ, học bổng, học phí hay đề cương học phần, "
+            "bạn có thể chọn nhanh 1 trong các gợi ý bên dưới hoặc nhập trực tiếp chủ đề cần tìm hiểu nhé!"
+        )
+
+    command_or_chitchat_exact = {
+        "đặt câu hỏi đi", "đặt câu hỏi", "hỏi đi", "hỏi lại đi", "hỏi tiếp đi", "hỏi gì đi",
+        "hỏi mình đi", "hỏi em đi", "hỏi tôi đi", "nói đi", "nói gì đi", "nói tiếp đi",
+        "nói chuyện đi", "trả lời đi", "gợi ý đi", "cho gợi ý đi", "cho câu hỏi đi",
+        "tiếp đi", "tiếp tục đi", "bắt đầu đi", "làm đi", "xem nào", "đâu rồi", "sao nữa",
+        "sao im thế", "alo đâu rồi", "test", "testing", "test thử", "test bot", "alo test",
+        "kiểm tra thử", "bạn ăn cơm chưa", "ăn cơm chưa", "ăn sáng chưa", "ăn trưa chưa",
+        "ăn tối chưa", "ngủ chưa", "bạn ngủ chưa", "buồn ngủ quá", "mệt quá", "chán quá",
+        "đói quá", "đói bụng quá", "buồn quá", "vui quá", "bạn khỏe không", "khỏe không",
+        "dạo này thế nào", "bạn mấy tuổi", "bạn bao nhiêu tuổi", "bạn có người yêu chưa",
+        "kể chuyện cười đi", "kể chuyện đi", "hát đi", "hát một bài đi", "làm thơ đi",
+        "haha", "hihi", "hehe", "huhu", "kaka", "lol", "ahaha", "blabla", "bla bla",
+        "abc", "xyz", "abc xyz", "alo 123", "123", "1234", "12345", "123456",
+    }
+    command_or_chitchat_prefixes = (
+        "đặt câu hỏi", "hỏi đi", "hỏi lại", "hỏi tiếp", "hỏi gì", "hỏi câu khác",
+        "đổi câu hỏi", "nói đi", "nói gì", "nói tiếp", "nói chuyện", "trả lời đi",
+        "gợi ý đi", "cho câu hỏi", "cho gợi ý", "bạn ăn cơm", "ăn cơm chưa",
+        "ăn sáng chưa", "ăn trưa chưa", "ăn tối chưa", "buồn ngủ", "mệt quá",
+        "chán quá", "đói bụng", "đói quá", "buồn quá", "vui quá", "bạn khỏe không",
+        "bạn mấy tuổi", "bạn bao nhiêu tuổi", "bạn có người yêu", "kể chuyện",
+        "hát một bài", "hát đi", "tạm biệt", "chúc ngủ ngon", "chúc bạn", "bye",
+        "goodbye", "hẹn gặp lại", "dừng lại đi", "tắt đi", "im đi", "xóa lịch sử",
+        "làm mới đi", "reset đi", "bạn đang làm gì", "có ai ở đó", "ai tạo ra bạn",
+        "ai lập trình ra bạn", "bạn biết làm gì", "bạn có thông minh", "test ",
+        "kiểm tra thử", "alo ", "ê bot", "này lucas", "này bot", "hôm nay trời đẹp",
+    )
+    if clean in command_or_chitchat_exact or any(clean.startswith(p) for p in command_or_chitchat_prefixes):
+        return (
+            "Mình luôn sẵn sàng! Bạn hãy chọn nhanh 1 trong các câu hỏi gợi ý bên dưới "
+            "hoặc nhập trực tiếp chủ đề quy chế, học vụ, học bổng, học phí cần tra cứu để Lucas giải đáp ngay nhé!"
+        )
+
+    greeting_keywords = (
+        "chào", "xin chào", "hello", "hi", "hey", "alo", "bạn là ai", "tên gì",
+        "bạn tên gì", "giới thiệu", "lucas", "ad", "admin", "bot ơi",
+    )
+    if len(words) <= 5 and any(re.search(rf"\b{re.escape(k)}\b", clean) for k in greeting_keywords):
+        return (
+            "Chào bạn! Mình là Lucas – trợ lý học vụ VLUTE. Hôm nay bạn muốn tra cứu quy định về học bổng, "
+            "học phí, công tác xã hội hay học vụ? *(Bạn có thể bấm chọn nhanh gợi ý bên dưới hoặc nhập trực tiếp câu hỏi nhé!)*"
+        )
+
+    return None
+
+
+def is_greeting_or_chitchat(query: str) -> bool:
+    """Trả về True nếu câu truy vấn là lời chào, cảm ơn, xác nhận, câu lệnh meta hoặc câu vô nghĩa/xã giao."""
+    return get_greeting_or_chitchat_reply(query) is not None
+
+
+def _extract_topic_anchor_from_history(recent_history: list[tuple[str, str]]) -> str:
+    """Trích xuất chủ đề quy chế / tên học phần chính xác từ lượt hỏi gần nhất trong lịch sử hội thoại."""
+    topic_patterns = (
+        (r"(?:học phần|môn)\s+phần mềm mã nguồn mở(?:\s*\(it1216\))?|it1216|phần mềm mã nguồn mở", "học phần Phần mềm mã nguồn mở (IT1216)"),
+        (r"học bổng\s+(?:kkht\s+)?mức\s+1|học bổng\s+sư phạm kỹ thuật|học bổng\s+spkt", "Học bổng KKHT Mức 1 (Học bổng SPKT)"),
+        (r"học bổng\s+vượt khó", "Học bổng vượt khó"),
+        (r"học bổng\s+doanh nghiệp", "Học bổng do doanh nghiệp tài trợ"),
+        (r"trợ cấp\s+học tập", "Trợ cấp học tập"),
+        (r"học bổng\s+khuyến khích\s+học tập|học bổng\s+kkht|xét\s+cấp\s+học bổng", "Học bổng khuyến khích học tập (KKHT)"),
+        (r"sinh viên\s+xuất sắc\s+toàn khóa", "danh hiệu Sinh viên Xuất sắc toàn khóa"),
+        (r"tập thể\s+lớp\s+xuất sắc|tập thể\s+lớp\s+tiên tiến", "danh hiệu Tập thể lớp Xuất sắc / Tiên tiến"),
+        (r"thủ khoa", "danh hiệu khen thưởng Thủ khoa đầu khóa"),
+        (r"hỗ trợ\s+chi phí\s+học tập", "chế độ hỗ trợ chi phí học tập đối với sinh viên dân tộc thiểu số thuộc hộ nghèo, cận nghèo"),
+        (r"miễn[,\s]+giảm\s+học phí|miễn\s+học phí|giảm\s+70%\s+học phí|giảm\s+50%\s+học phí", "chế độ miễn, giảm học phí"),
+        (r"hoàn trả\s+học phí|học phí\s+thừa|qt-sv-04", "quy trình hoàn trả học phí thừa cho sinh viên (QT-SV-04)"),
+        (r"công tác\s+xã hội|ctxh|ngày\s+ctxh|hiến máu|mùa hè xanh", "quy định hoạt động Công tác xã hội (CTXH)"),
+        (r"ban cán sự\s+lớp|lớp trưởng|lớp phó", "Ban cán sự lớp theo Quy định công tác sinh viên"),
+        (r"thi hộ|thi thay|học hộ|học thay|kỷ luật\s+sinh viên|khung\s+xử lý\s+kỷ luật", "khung xử lý kỷ luật sinh viên theo Quy định công tác sinh viên"),
+        (r"điểm\s+rèn luyện|công tác\s+sinh viên", "Quy định công tác sinh viên đối với chương trình đào tạo đại học chính quy"),
+        (r"quy tắc\s+ứng xử|trang phục|mạng xã hội|hút thuốc", "Quy tắc ứng xử của sinh viên trong Nhà trường"),
+        (r"an toàn\s+thông tin|an ninh\s+mạng|mật khẩu|email\s+@|st\.vlute\.edu\.vn", "Quy chế bảo đảm an toàn thông tin, an ninh mạng"),
+    )
+    for role, content in reversed(recent_history):
+        if role != "user":
+            continue
+        c_low = content.lower()
+        for pat, label in topic_patterns:
+            if re.search(pat, c_low):
+                return label
+    for role, content in reversed(recent_history):
+        c_low = content.lower()
+        for pat, label in topic_patterns:
+            if re.search(pat, c_low):
+                return label
+    return ""
+
+
 def rewrite_conversational_query(query: str, chat_history: list | None = None) -> str:
     """
     Viết lại câu hỏi nối tiếp có chứa đại từ/từ nối ngữ cảnh thành câu hỏi độc lập đầy đủ nghĩa.
@@ -1631,6 +1870,14 @@ def rewrite_conversational_query(query: str, chat_history: list | None = None) -
 
     raw_query = re.sub(r"\s+", " ", str(query).strip())
     if not chat_history:
+        return raw_query
+
+    q_lower_init = raw_query.lower()
+    if (
+        is_greeting_or_chitchat(raw_query)
+        or SmartRAGChain._is_excluded_resolution_query(q_lower_init)
+        or SmartRAGChain._is_explicit_out_of_scope_query(q_lower_init)
+    ):
         return raw_query
 
     valid_history = []
@@ -1748,6 +1995,33 @@ def rewrite_conversational_query(query: str, chat_history: list | None = None) -
     )
     if not needs_rewrite:
         return raw_query
+
+    # Ưu tiên giải quyết đại từ/ngữ cảnh nối tiếp bằng bộ gắn chủ đề xác định (Deterministic Topic Resolver < 0.5ms)
+    topic_anchor = _extract_topic_anchor_from_history(recent_history)
+    if topic_anchor and topic_anchor.lower() not in q_lower:
+        rewritten_det = raw_query.strip()
+        pronoun_sub_re = re.compile(
+            r"\b(?:của\s+nó|nó|cái\s+đó|cái\s+này|mức\s+này|mức\s+đó|loại\s+này|loại\s+đó|"
+            r"khoản\s+này|quy\s+định\s+này|quy\s+trình\s+này|trường\s+hợp\s+này|đối\s+tượng\s+này|"
+            r"học\s+phần\s+này|học\s+phần\s+đó|môn\s+này|môn\s+đó|chế\s+độ\s+này|chính\s+sách\s+này)\b",
+            flags=re.IGNORECASE,
+        )
+        if pronoun_sub_re.search(rewritten_det):
+            def _repl(m):
+                matched_low = m.group(0).lower()
+                if matched_low.startswith("của "):
+                    return f"của {topic_anchor}"
+                return topic_anchor
+            rewritten_det = pronoun_sub_re.sub(_repl, rewritten_det, count=1)
+            rewritten_det = re.sub(r"^(?:vậy\s+thì|vậy\s+còn|thế\s+còn|vậy|còn|thế)\s+", "", rewritten_det, flags=re.IGNORECASE).strip()
+        else:
+            q_punct = "?" if rewritten_det.endswith("?") else ""
+            body_no_punct = rewritten_det.rstrip("?.! ").strip()
+            body_no_lead = re.sub(r"^(?:vậy\s+thì|vậy\s+còn|thế\s+còn|vậy|còn|thế)\s+", "", body_no_punct, flags=re.IGNORECASE).strip()
+            rewritten_det = f"{body_no_lead} đối với {topic_anchor}{q_punct}"
+        rewritten_det = re.sub(r"\s+", " ", rewritten_det).strip()
+        print(f"[QUERY REWRITE] (0.001s) '{raw_query}' -> '{rewritten_det}'")
+        return rewritten_det
 
     history_lines = []
     for role, content in recent_history:

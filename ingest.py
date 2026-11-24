@@ -315,7 +315,7 @@ def extract_doc_title(text: str, filename: str) -> str:
     )
     if m_block:
         title_str = re.sub(r"\s+", " ", m_block.group(1)).strip()
-        title_str = re.split(r"\s+(?:HIỆU TRƯỞNG|Căn cứ)\b", title_str, flags=re.IGNORECASE)[0].strip()
+        title_str = re.split(r"\s+(?:HIỆU TRƯỞNG|Căn cứ|Điều\s+1\b|Chương\s+I\b|1\.\s+)", title_str, flags=re.IGNORECASE)[0].strip()
         if len(title_str) > 10:
             return title_str
 
@@ -433,39 +433,107 @@ def clean_text(text: str) -> str:
     return text.strip()
 
 
+_VIETNAMESE_OCR_READER = None
+_OCR_INIT_FAILED = False
+
+
+def _get_vietnamese_ocr_reader():
+    """
+    Khởi tạo lazy singleton EasyOCR Reader hỗ trợ tiếng Việt và tiếng Anh (['vi', 'en'], gpu=False).
+    Bọc trong try...except ImportError/Exception để nếu môi trường thiếu thư viện vẫn bỏ qua an toàn.
+    """
+    global _VIETNAMESE_OCR_READER, _OCR_INIT_FAILED
+    if _VIETNAMESE_OCR_READER is not None:
+        return _VIETNAMESE_OCR_READER
+    if _OCR_INIT_FAILED:
+        return None
+    try:
+        import easyocr
+        _VIETNAMESE_OCR_READER = easyocr.Reader(["vi", "en"], gpu=False, verbose=False)
+        return _VIETNAMESE_OCR_READER
+    except ImportError as imp_err:
+        _OCR_INIT_FAILED = True
+        print(f"⚠️ [OCR] Thư viện easyocr chưa được cài đặt, bỏ qua nhận diện ảnh scan: {imp_err}")
+        return None
+    except Exception as ocr_err:
+        _OCR_INIT_FAILED = True
+        print(f"⚠️ [OCR] Không thể khởi tạo EasyOCR Reader, bỏ qua nhận diện ảnh scan: {ocr_err}")
+        return None
+
+
+def _ocr_pdf_page(page) -> str:
+    """
+    Kết xuất trang PDF sang ảnh độ phân giải dpi=200 bằng PyMuPDF (fitz),
+    nhận diện chữ tiếng Việt bằng EasyOCR (detail=0, paragraph=True) và làm sạch qua clean_text().
+    """
+    reader = _get_vietnamese_ocr_reader()
+    if reader is None:
+        return ""
+    try:
+        pix = page.get_pixmap(dpi=200)
+        img_bytes = pix.tobytes("png")
+        ocr_segments = reader.readtext(img_bytes, detail=0, paragraph=True)
+        if not ocr_segments:
+            return ""
+        cleaned_lines = []
+        for seg in ocr_segments:
+            line_str = str(seg or "").strip()
+            if not line_str:
+                continue
+            if re.search(r"(HUO TRU|DAI SU|UPH VIN)", line_str, re.IGNORECASE):
+                continue
+            cleaned_lines.append(line_str)
+        return clean_text("\n\n".join(cleaned_lines))
+    except Exception as err:
+        print(f"⚠️ [OCR] Lỗi khi nhận diện trang PDF: {err}")
+        return ""
+
+
 def extract_clean_text_from_pdf(pdf_path: str):
     """
-    Trích xuất văn bản và metadata từ file PDF bằng PyMuPDF (fitz):
+    Trích xuất văn bản và metadata từ file PDF bằng PyMuPDF (fitz) kết hợp Fallback OCR (EasyOCR):
     - Đọc 2 trang đầu để bóc tách tự động: title, year, doc_code.
-    - Loại bỏ triệt để các watermark, footer, con dấu quét mờ in hoa rác (HUO TRU, DAI SU, UPH VIN...).
-    - Giữ lại nội dung tiếng Việt chuẩn xác kèm số trang thực tế.
+    - Với mỗi trang, vẫn trích xuất văn bản bình thường trước (page.get_text("text")).
+    - Chỉ khi len(page_clean_text) <= 25 (trang trắng hoặc trang ảnh scan), tự động gọi _ocr_pdf_page(page)
+      để lấy nội dung tiếng Việt (in log [OCR] Đang nhận diện trang X của <filename>...).
+    - Nếu first_two_pages_text ban đầu rỗng/ngắn (<= 25 ký tự) do trang 1–2 là bản scan,
+      tự động cập nhật lại doc_title, doc_year, doc_code từ văn bản đã OCR của 2 trang đầu.
     """
     doc = fitz.open(pdf_path)
     filename = os.path.basename(pdf_path)
 
     # Bóc tách metadata tự động từ 2 trang đầu của file PDF
-    first_two_pages_text = "\n".join(
-        doc[i].get_text("text") for i in range(min(2, len(doc)))
+    first_two_pages_text = clean_text(
+        "\n".join(doc[i].get_text("text") for i in range(min(2, len(doc))))
     )
+    needs_meta_from_ocr = len(first_two_pages_text) <= 25
     doc_title = extract_doc_title(first_two_pages_text, filename)
     doc_year = extract_doc_year(first_two_pages_text, pdf_path)
     doc_code = extract_doc_code(first_two_pages_text)
 
     full_text = []
+    ocr_first_two_pages = []
     for page_num in range(len(doc)):
         page = doc[page_num]
         text = page.get_text("text")
-        
+
         cleaned_lines = []
         for line in text.split("\n"):
             line_str = line.strip()
-            if re.search(r'(HUO TRU|DAI SU|UPH VIN)', line_str, re.IGNORECASE):
+            if re.search(r"(HUO TRU|DAI SU|UPH VIN)", line_str, re.IGNORECASE):
                 continue
             cleaned_lines.append(line_str)
-            
+
         page_clean_text = "\n".join(cleaned_lines)
         page_clean_text = clean_text(page_clean_text)
-        
+
+        if len(page_clean_text) <= 25:
+            print(f"[OCR] Đang nhận diện trang {page_num + 1} của {filename}...")
+            page_clean_text = _ocr_pdf_page(page)
+
+        if page_num < 2 and len(page_clean_text) > 25:
+            ocr_first_two_pages.append(page_clean_text)
+
         if len(page_clean_text) > 25:
             full_text.append({
                 "page": page_num + 1,
@@ -474,8 +542,19 @@ def extract_clean_text_from_pdf(pdf_path: str):
                 "year": str(doc_year),
                 "doc_code": doc_code
             })
-            
+
     doc.close()
+
+    if needs_meta_from_ocr and ocr_first_two_pages and full_text:
+        combined_first_two = "\n".join(ocr_first_two_pages)
+        doc_title = extract_doc_title(combined_first_two, filename)
+        doc_year = extract_doc_year(combined_first_two, pdf_path)
+        doc_code = extract_doc_code(combined_first_two)
+        for item in full_text:
+            item["title"] = doc_title
+            item["year"] = str(doc_year)
+            item["doc_code"] = doc_code
+
     return full_text
 
 
