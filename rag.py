@@ -1954,15 +1954,6 @@ _ANAPHORIC_FOLLOWUP_CUES = (
 )
 
 
-_PROMPT_INJECTION_PATTERNS = (
-    "bỏ qua mọi quy tắc", "bỏ qua các quy tắc", "bỏ qua mọi hướng dẫn",
-    "bỏ qua chỉ dẫn trước", "bỏ qua tất cả quy tắc", "quên hết các quy tắc",
-    "ignore all previous", "ignore previous instructions", "disregard all previous",
-    "system prompt", "tiết lộ prompt", "in ra system prompt", "đóng vai chatgpt",
-    "jailbreak", "developer mode", "dan mode", "bạn không còn là lucas",
-)
-
-
 def _is_prompt_injection_or_long_noise(raw: str, clean: str) -> bool:
     """Nhận diện bẫy Prompt Injection hoặc văn bản rác copy dài > 1.200 ký tự không phải câu hỏi quy chế."""
     if is_prompt_injection(raw) or is_prompt_injection(clean):
