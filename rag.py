@@ -1263,6 +1263,7 @@ _BM25_BY_DB_ID = {}
 _GLOBAL_CORPUS_LEXICON = None
 _LEXICON_BY_DB_ID = {}
 _LAST_DATA_DIR_SIGNATURE = None
+_AUTO_SYNC_LOCK = threading.RLock()
 _DEAD_GROQ_MODELS = set()
 _COOLDOWN_GROQ_MODELS: dict[str, float] = {}
 _GROQ_CLIENTS_CACHE = {}
@@ -2427,21 +2428,27 @@ def auto_sync_knowledge_base(force: bool = False) -> dict:
     """
     Kiểm tra chữ ký thư mục data/ với chi phí < 5ms; chỉ đồng bộ ChromaDB & làm mới BM25 RRF
     + CorpusAdaptiveLexicon khi phát hiện có file mới, file sửa đổi hoặc file bị xóa.
+    An toàn đa luồng khi chạy song song với watcher nền 2 giây.
     """
     global _LAST_DATA_DIR_SIGNATURE
     current_sig = get_data_dir_signature(DATA_PATH)
     if not force and _LAST_DATA_DIR_SIGNATURE == current_sig:
         return {"changed": False, "added": [], "updated": [], "deleted": []}
 
-    vector_db = get_vector_db()
-    sync_res = sync_knowledge_base_from_data_dir(vector_db=vector_db)
-    _LAST_DATA_DIR_SIGNATURE = current_sig
+    with _AUTO_SYNC_LOCK:
+        current_sig = get_data_dir_signature(DATA_PATH)
+        if not force and _LAST_DATA_DIR_SIGNATURE == current_sig:
+            return {"changed": False, "added": [], "updated": [], "deleted": []}
 
-    if sync_res.get("changed"):
-        _on_kb_changed(vector_db, sync_res)
-        print(f"[AUTO-SYNC] Đồng bộ hoàn tất và đã làm mới Hybrid BM25 Index + Adaptive Lexicon: {sync_res}")
+        vector_db = get_vector_db()
+        sync_res = sync_knowledge_base_from_data_dir(vector_db=vector_db)
+        if not sync_res.get("skipped"):
+            _LAST_DATA_DIR_SIGNATURE = current_sig
 
-    return sync_res
+        if sync_res.get("changed"):
+            print(f"[AUTO-SYNC] Đồng bộ hoàn tất và đã làm mới Hybrid BM25 Index + Adaptive Lexicon: {sync_res}")
+
+        return sync_res
 
 
 def _parse_keys_value(raw_val):
@@ -2590,14 +2597,14 @@ def get_embedding_model():
 
     device = "cpu"
     try:
-        torch.set_num_threads(2)
+        torch.set_num_threads(min(8, os.cpu_count() or 4))
     except Exception:
         pass
 
     _GLOBAL_EMBEDDINGS = HuggingFaceEmbeddings(
         model_name="bkai-foundation-models/vietnamese-bi-encoder",
         model_kwargs={"device": device},
-        encode_kwargs={"normalize_embeddings": True}
+        encode_kwargs={"normalize_embeddings": True, "batch_size": 32}
     )
     return _GLOBAL_EMBEDDINGS
 

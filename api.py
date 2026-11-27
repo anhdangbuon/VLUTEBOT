@@ -766,7 +766,7 @@ def _sse_event(payload: dict[str, Any]) -> str:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Prewarm RAG chain và đồng bộ tri thức nền khi server FastAPI khởi động."""
+    """Prewarm RAG chain, đồng bộ tri thức và chạy luồng nền kiểm tra auto_sync_knowledge_base() mỗi 2 giây."""
     def _prewarm():
         try:
             chain = get_cached_rag_chain()
@@ -777,7 +777,27 @@ async def lifespan(app: FastAPI):
             print(f"[FastAPI Prewarm Warning] {exc}")
 
     await asyncio.to_thread(_prewarm)
-    yield
+
+    stop_watcher = threading.Event()
+
+    def _kb_hot_ingest_watcher():
+        while not stop_watcher.wait(2.0):
+            try:
+                ensure_kb_synced_and_fresh_cache()
+            except Exception as watch_exc:
+                print(f"[Hot-Ingest Watcher Warning] {watch_exc}")
+
+    watcher_thread = threading.Thread(
+        target=_kb_hot_ingest_watcher,
+        name="vlutebot-hot-ingest-watcher",
+        daemon=True,
+    )
+    watcher_thread.start()
+    try:
+        yield
+    finally:
+        stop_watcher.set()
+        watcher_thread.join(timeout=3.0)
 
 
 app = FastAPI(title="VLUTEBOT API", version="1.0.0", lifespan=lifespan)
