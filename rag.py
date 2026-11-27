@@ -17,14 +17,17 @@ import re
 import math
 import json
 import time
+import queue
 import socket
 import threading
 import unicodedata
+from collections import OrderedDict
 from pathlib import Path
 try:
     import tomllib
 except ImportError:
     tomllib = None
+import numpy as np
 import torch
 import streamlit as st
 from rank_bm25 import BM25Okapi
@@ -70,6 +73,44 @@ def sanitize_client_error_message(err: Exception | str, rate_limit_msg: str | No
     if any(tok in err_str.upper() for tok in ("429", "RESOURCE_EXHAUSTED", "RATE_LIMIT", "TOO MANY REQUESTS")):
         return rate_limit_msg or FRIENDLY_ERROR_MESSAGE
     return FRIENDLY_ERROR_MESSAGE
+
+
+def build_extractive_offline_fallback(
+    query: str,
+    docs: list,
+    err: Exception | str | None = None,
+    rate_limit_msg: str | None = None,
+) -> str:
+    """
+    Chế độ dự phòng ngoại tuyến (Offline Extractive Fallback):
+    Khi toàn bộ LLM/mạng gián đoạn nhưng đã truy xuất được đoạn quy chế khớp nội dung,
+    trả về thông báo lỗi đã làm sạch kèm tối đa 3 đoạn trích quy chế chuẩn hóa dạng gạch đầu dòng.
+    """
+    safe_msg = sanitize_client_error_message(err, rate_limit_msg=rate_limit_msg)
+    if not docs:
+        return safe_msg
+
+    lines = [
+        safe_msg,
+        "",
+        "Dưới đây là nội dung trích xuất trực tiếp từ văn bản quy chế chính thức của Nhà trường:",
+    ]
+    for doc in docs[:3]:
+        meta = getattr(doc, "metadata", {}) or {}
+        src_file = os.path.basename(str(meta.get("source", "") or "Tài liệu"))
+        title = str(meta.get("title", src_file) or src_file).strip()
+        page = meta.get("page", 1)
+        raw_content = getattr(doc, "page_content", "") or ""
+        article = extract_article_info(raw_content)
+        excerpt = sanitize_no_markdown_tables(clip_context_text(raw_content, max_chars=360))
+        excerpt = re.sub(r"\s+", " ", excerpt.replace("|", " - ")).strip()
+        loc_parts = [title]
+        if article:
+            loc_parts.append(article)
+        loc_parts.append(f"Trang {page}")
+        lines.append(f"- **[{ ' — '.join(loc_parts) }]**: {excerpt}")
+
+    return sanitize_no_markdown_tables("\n".join(lines))
 
 
 _PROMPT_INJECTION_PATTERNS = (
@@ -134,6 +175,35 @@ _HP_HOC_PHI_CUES = (
 )
 
 
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]+")
+_HAS_ALPHA_VN_RE = re.compile(r"[a-zA-ZÀ-ỹ]")
+
+_CHAT_SLANG_MULTI_RULES = (
+    (re.compile(r"(?i)(?<!\w)bao\s+nhiu(?!\w)"), "bao nhiêu"),
+    (re.compile(r"(?i)(?<!\w)như\s+nào(?!\w)"), "như thế nào"),
+    (re.compile(r"(?i)(?<!\w)nhu\s+nao(?!\w)"), "như thế nào"),
+)
+_CHAT_SLANG_HP_RE = re.compile(r"(?i)(?<!\w)hp(?!\w)")
+_CHAT_SLANG_SINGLE_RULES = (
+    (re.compile(r"(?i)(?<!\w)(?:ko|kh|khong)(?!\w)"), "không"),
+    (re.compile(r"(?i)(?<=\s)k(?=\s|[?.!,;:]|$)"), "không"),
+    (re.compile(r"(?i)(?<!\w)(?:dc|đc|duoc)(?!\w)"), "được"),
+    (re.compile(r"(?i)(?<!\w)roi(?!\w)"), "rồi"),
+    (re.compile(r"(?i)(?<=\s)r(?=\s|[?.!,;:]|$)"), "rồi"),
+    (re.compile(r"(?i)(?<!\w)(?:j|gi)(?!\w)"), "gì"),
+    (re.compile(r"(?i)(?<!\w)(?:bn|bnhiu)(?!\w)"), "bao nhiêu"),
+    (re.compile(r"(?i)(?<!\w)ntn(?!\w)"), "như thế nào"),
+    (re.compile(r"(?i)(?:^(?=\s*[zv]\s)|(?<=[.?!,;]\s))([zv])(?=\s)"), "vậy"),
+    (re.compile(r"(?i)(?<=\s)([zv])(?=\s*[?.!]*\s*$)"), "vậy"),
+    (re.compile(r"(?i)(?<!\w)vs(?!\w)"), "với"),
+    (re.compile(r"(?i)(?<!\w)sv(?!\w)"), "sinh viên"),
+    (re.compile(r"(?i)(?<!\w)gv(?!\w)"), "giảng viên"),
+    (re.compile(r"(?i)(?<!\w)hb(?!\w)"), "học bổng"),
+    (re.compile(r"(?i)(?<!\w)(?:đrl|drl)(?!\w)"), "điểm rèn luyện"),
+    (re.compile(r"(?i)(?<!\w)mghp(?!\w)"), "miễn giảm học phí"),
+)
+
+
 def normalize_chat_slang(query: str) -> str:
     """
     Chuẩn hóa tiếng chat Zalo/Messenger & từ viết tắt sinh viên bằng khớp ranh giới từ (?<!\\w)...(?!\\w).
@@ -146,18 +216,16 @@ def normalize_chat_slang(query: str) -> str:
     s = str(query)
     if len(s) > MAX_QUERY_LENGTH or is_prompt_injection(s):
         return s
+    s = _CONTROL_CHARS_RE.sub(" ", s)
+    if not _HAS_ALPHA_VN_RE.search(s):
+        return s
 
     # 1. Cụm nhiều từ trước
-    multi_word_rules = (
-        (r"(?i)(?<!\w)bao\s+nhiu(?!\w)", "bao nhiêu"),
-        (r"(?i)(?<!\w)như\s+nào(?!\w)", "như thế nào"),
-        (r"(?i)(?<!\w)nhu\s+nao(?!\w)", "như thế nào"),
-    )
-    for pat, repl in multi_word_rules:
-        s = re.sub(pat, repl, s)
+    for rx, repl in _CHAT_SLANG_MULTI_RULES:
+        s = rx.sub(repl, s)
 
     # 2. Phân giải thông minh từ viết tắt 'hp' theo ngữ cảnh cửa sổ cục bộ & toàn câu
-    if re.search(r"(?i)(?<!\w)hp(?!\w)", s):
+    if _CHAT_SLANG_HP_RE.search(s):
         s_low_full = s.lower()
         def _resolve_hp(match: re.Match) -> str:
             start, end = match.span()
@@ -175,29 +243,11 @@ def normalize_chat_slang(query: str) -> str:
             full_phi = sum(1 for c in _HP_HOC_PHI_CUES if c in s_low_full)
             return "học phần" if full_phan > full_phi else "học phí"
 
-        s = re.sub(r"(?i)(?<!\w)hp(?!\w)", _resolve_hp, s)
+        s = _CHAT_SLANG_HP_RE.sub(_resolve_hp, s)
 
     # 3. Từ đơn tiếng chat Zalo/Messenger & từ viết tắt sinh viên
-    single_word_rules = (
-        (r"(?i)(?<!\w)(?:ko|kh|khong)(?!\w)", "không"),
-        (r"(?i)(?<=\s)k(?=\s|[?.!,;:]|$)", "không"),
-        (r"(?i)(?<!\w)(?:dc|đc|duoc)(?!\w)", "được"),
-        (r"(?i)(?<!\w)roi(?!\w)", "rồi"),
-        (r"(?i)(?<=\s)r(?=\s|[?.!,;:]|$)", "rồi"),
-        (r"(?i)(?<!\w)(?:j|gi)(?!\w)", "gì"),
-        (r"(?i)(?<!\w)(?:bn|bnhiu)(?!\w)", "bao nhiêu"),
-        (r"(?i)(?<!\w)ntn(?!\w)", "như thế nào"),
-        (r"(?i)(?:^(?=\s*[zv]\s)|(?<=[.?!,;]\s))([zv])(?=\s)", "vậy"),
-        (r"(?i)(?<=\s)([zv])(?=\s*[?.!]*\s*$)", "vậy"),
-        (r"(?i)(?<!\w)vs(?!\w)", "với"),
-        (r"(?i)(?<!\w)sv(?!\w)", "sinh viên"),
-        (r"(?i)(?<!\w)gv(?!\w)", "giảng viên"),
-        (r"(?i)(?<!\w)hb(?!\w)", "học bổng"),
-        (r"(?i)(?<!\w)(?:đrl|drl)(?!\w)", "điểm rèn luyện"),
-        (r"(?i)(?<!\w)mghp(?!\w)", "miễn giảm học phí"),
-    )
-    for pat, repl in single_word_rules:
-        s = re.sub(pat, repl, s)
+    for rx, repl in _CHAT_SLANG_SINGLE_RULES:
+        s = rx.sub(repl, s)
 
     return s
 
@@ -419,6 +469,50 @@ class SmartRAGChain:
         s = " ".join(tokens).strip()
         if not s:
             return ""
+
+        q_end = "?" if s.endswith("?") else ""
+        s_core = re.sub(
+            r"^(?:lucas\s+ơi(?:\s+cho\s+hỏi)?|ad\s+ơi(?:\s+cho\s+hỏi)?|bạn\s+ơi(?:\s+cho\s+hỏi)?|"
+            r"bot\s+ơi|cho\s+(?:mình|em|tôi)?\s*hỏi(?:\s+về)?|xin\s+hỏi|giải\s+đáp\s+giúp|"
+            r"theo\s+quy\s+định\s+trường)\b[\s,\.\:\-]*",
+            "",
+            s,
+            flags=re.IGNORECASE,
+        ).strip()
+        s_core_body = s_core.rstrip("?.! ").strip()
+        s_core_body = re.sub(
+            r"\s+(?:dành\s+cho\s+sinh\s+viên\s+chính\s+quy|cho\s+em\s+biết|cho\s+mình\s+biết|"
+            r"giúp\s+mình|theo\s+văn\s+bản|năm\s+học\s+này|của\s+vlute|"
+            r"mới\s+nhất|hiện\s+nay|chi\s+tiết|cụ\s+thể|với\s+ạ|vậy\s+ạ|ạ|nhé)$",
+            "",
+            s_core_body,
+            flags=re.IGNORECASE,
+        ).strip()
+        if len(s_core_body) >= 4 and len(s_core_body.split()) >= 3:
+            s = f"{s_core_body}{q_end}"
+
+        q_end = "?" if s.endswith("?") else ""
+        s_core = re.sub(
+            r"^(?i:(?:lucas\s+ơi(?:\s+cho\s+hỏi)?|ad\s+ơi(?:\s+cho\s+hỏi)?|bạn\s+ơi(?:\s+cho\s+hỏi)?|"
+            r"bot\s+ơi(?:\s+cho\s+hỏi)?|cho\s+(?:mình|em|tôi)?\s*hỏi(?:\s+về)?|xin\s+hỏi|giải\s+đáp\s+giúp|"
+            r"theo\s+quy\s+định\s+trường|dạ|ủa|ơ))\s+",
+            "",
+            s,
+        ).strip()
+        s_core_body = s_core.rstrip("?.! ").strip()
+        for _ in range(2):
+            stripped_tail = re.sub(
+                r"\s+(?i:(?:dành\s+cho\s+sinh\s+viên\s+chính\s+quy|cho\s+em\s+biết|cho\s+mình\s+biết|"
+                r"giúp\s+mình|theo\s+văn\s+bản|năm\s+học\s+này|của\s+vlute|"
+                r"mới\s+nhất|hiện\s+nay|chi\s+tiết|cụ\s+thể|với\s+ạ|vậy\s+ạ|ạ|nhé))$",
+                "",
+                s_core_body,
+            ).strip()
+            if stripped_tail == s_core_body:
+                break
+            s_core_body = stripped_tail
+        if len(s_core_body) >= 4:
+            s = f"{s_core_body}{q_end}"
 
         # Khôi phục dấu tiếng Việt cho các cụm từ khóa quy chế gõ không dấu hoặc viết tắt phổ biến
         unaccented_phrase_map = (
@@ -1048,10 +1142,20 @@ class SmartRAGChain:
 
         context_str = "\n\n".join(context_parts)
         formatted_prompt = self.prompt.format(context=context_str, input=query)
-        raw_answer = self.llm.invoke(formatted_prompt)
+        try:
+            raw_answer = self.llm.invoke(formatted_prompt)
+        except Exception as llm_err:
+            fallback_ans = build_extractive_offline_fallback(query, docs, err=llm_err)
+            return {
+                "answer": fallback_ans,
+                "context": docs,
+                "is_refusal": False,
+                "api_error": True,
+                "offline_fallback": True,
+            }
         answer = raw_answer if isinstance(raw_answer, str) else getattr(raw_answer, 'content', str(raw_answer))
         answer = sanitize_no_markdown_tables(answer)
-        is_refusal = (REFUSAL_MESSAGE in str(answer)) or ("không được đề cập" in str(answer).lower())
+        is_refusal = is_llm_refusal_answer(answer)
 
         return {
             "answer": answer,
@@ -1085,14 +1189,177 @@ _GROQ_STATE_LOCK = threading.Lock()
 MAX_CONTEXT_SNIPPET_CHARS = 680
 
 
+_THINK_CLOSED_RE = re.compile(r"<think(?:ing)?\b[^>]*>.*?</think(?:ing)?>", re.IGNORECASE | re.DOTALL)
+_THINK_UNCLOSED_TAIL_RE = re.compile(r"<think(?:ing)?\b[^>]*>.*$", re.IGNORECASE | re.DOTALL)
+_THINK_ORPHAN_CLOSE_RE = re.compile(r"</think(?:ing)?>", re.IGNORECASE)
+
+
+def strip_think_tags(text: str) -> str:
+    """Loại bỏ triệt để mọi thẻ suy luận <think>...</think> hoặc <thinking>...</thinking> (kể cả chưa đóng)."""
+    if not text:
+        return ""
+    s = str(text)
+    s = _THINK_CLOSED_RE.sub("", s)
+    s = _THINK_UNCLOSED_TAIL_RE.sub("", s)
+    s = _THINK_ORPHAN_CLOSE_RE.sub("", s)
+    return re.sub(r"^\s*\n+", "", s).lstrip(" \t") if s.startswith(("\n", " ", "\t")) and "<think" in str(text).lower() else s.strip()
+
+
+class ThinkTagStreamFilter:
+    """
+    Bộ lọc trạng thái (Stateful O(1) Memory Stream Filter) cắt bỏ hoàn toàn khối <think>...</think>
+    và <thinking>...</thinking> theo thời gian thực ngay cả khi thẻ bị xẻ nhỏ qua nhiều chunk SSE.
+    Giữ nguyên các ký tự toán học bình thường như '< 2,5' hoặc '< 80%' mà không làm trễ luồng chữ.
+    """
+
+    _OPEN_TAG_RE = re.compile(r"<think(?:ing)?(?:\s[^>]*)?>", re.IGNORECASE)
+    _CLOSE_TAG_RE = re.compile(r"</think(?:ing)?>", re.IGNORECASE)
+    _PARTIAL_OPEN_RE = re.compile(
+        r"<(?:t(?:h(?:i(?:n(?:k(?:i(?:n(?:g)?)?)?)?)?)?)?)?(?:\s[^>]*)?$",
+        re.IGNORECASE,
+    )
+    _PARTIAL_OPEN_ATTR_RE = re.compile(r"<think(?:ing)?\b[^>]*$", re.IGNORECASE)
+    _PARTIAL_CLOSE_RE = re.compile(
+        r"<(?:/(?:t(?:h(?:i(?:n(?:k(?:i(?:n(?:g)?)?)?)?)?)?)?)?)?$",
+        re.IGNORECASE,
+    )
+
+    def __init__(self) -> None:
+        self._buf: str = ""
+        self._in_think: bool = False
+        self._emitted_any_visible: bool = False
+        self._trim_leading_ws: bool = False
+
+    def feed(self, chunk: str) -> str:
+        if not chunk:
+            return ""
+        self._buf += str(chunk)
+        out_parts: list[str] = []
+
+        while self._buf:
+            if self._in_think:
+                m_close = self._CLOSE_TAG_RE.search(self._buf)
+                if m_close:
+                    self._buf = self._buf[m_close.end():]
+                    self._trim_leading_ws = not self._emitted_any_visible
+                    self._in_think = False
+                    continue
+
+                m_part_close = self._PARTIAL_CLOSE_RE.search(self._buf)
+                self._buf = m_part_close.group(0) if m_part_close else ""
+                break
+
+            if self._trim_leading_ws:
+                self._buf = self._buf.lstrip("\r\n ")
+                if not self._buf:
+                    break
+                self._trim_leading_ws = False
+
+            m_open = self._OPEN_TAG_RE.search(self._buf)
+            if m_open:
+                before = self._buf[:m_open.start()]
+                if before:
+                    out_parts.append(before)
+                    self._emitted_any_visible = True
+                self._buf = self._buf[m_open.end():]
+                self._in_think = True
+                continue
+
+            hold_idx = len(self._buf)
+            m_attr = self._PARTIAL_OPEN_ATTR_RE.search(self._buf)
+            if m_attr:
+                hold_idx = min(hold_idx, m_attr.start())
+            else:
+                m_part = self._PARTIAL_OPEN_RE.search(self._buf)
+                if m_part:
+                    hold_idx = min(hold_idx, m_part.start())
+
+            emit_text = self._buf[:hold_idx]
+            if emit_text:
+                out_parts.append(emit_text)
+                self._emitted_any_visible = True
+            self._buf = self._buf[hold_idx:]
+            break
+
+        return "".join(out_parts)
+
+    def flush(self) -> str:
+        if self._in_think:
+            self._buf = ""
+            self._in_think = False
+            return ""
+        rem = self._buf
+        self._buf = ""
+        if rem:
+            self._emitted_any_visible = True
+        return rem
+
+
+def is_llm_refusal_answer(text: str) -> bool:
+    """
+    Nhận diện thống nhất mọi phản hồi từ chối ngoài phạm vi / gián đoạn / lỗi hệ thống từ LLM
+    (sau khi loại bỏ thẻ <think>) để đồng bộ chuẩn xác verified=False & contact=None.
+    Bảo vệ câu trả lời ghép 'nửa trong – nửa ngoài' (Hybrid) có trích xuất quy định hợp lệ.
+    """
+    cleaned = strip_think_tags(text or "").strip()
+    t = cleaned.lower()
+    if not t:
+        return True
+    if REFUSAL_MESSAGE.lower() in t:
+        return True
+    if "phản hồi bị gián đoạn giữa chừng" in t:
+        return True
+    if "lượng truy cập cao" in t or "đợi khoảng 30–60 giây" in t:
+        return True
+    if "tạm thời bận hoặc gián đoạn kết nối" in t or "vượt quá độ dài cho phép" in t:
+        return True
+
+    refusal_cues = (
+        "không được đề cập",
+        "nằm ngoài phạm vi dữ liệu",
+        "ngoài phạm vi dữ liệu quy chế",
+        "tài liệu không quy định",
+        "tài liệu tham khảo không quy định",
+        "văn bản hiện tại không quy định",
+        "văn bản quy chế không đề cập",
+        "tài liệu được cung cấp không đề cập",
+        "chưa quy định về",
+        "chưa được quy định trong",
+        "không có quy định về",
+        "không tìm thấy quy định",
+        "không có thông tin trong tài liệu",
+    )
+    if any(cue in t for cue in refusal_cues):
+        has_hybrid_affirmative_bullets = False
+        if len(t) >= 220:
+            bullets = [ln.strip() for ln in cleaned.splitlines() if ln.strip().startswith(("-", "*", "•"))]
+            affirmative_cues = ("tín chỉ", "học bổng", "miễn", "giảm", "học phí", "ngày ctxh", "điều ", "thang ")
+            for b in bullets:
+                b_low = b.lower()
+                if not any(cue in b_low for cue in refusal_cues) and any(ac in b_low for ac in affirmative_cues):
+                    has_hybrid_affirmative_bullets = True
+                    break
+        if not has_hybrid_affirmative_bullets:
+            return True
+
+    has_legal_citation = bool(
+        re.search(r"\b(?:điều|khoản|mục|chương|quyết\s+định|phụ\s+lục)\s+[ivxlcdm\d]+", t)
+    )
+    if len(t) < 220 and not has_legal_citation and any(kw in t for kw in ("không được đề cập", "ngoài phạm vi dữ liệu")):
+        return True
+    return False
+
+
 def sanitize_no_markdown_tables(text: str) -> str:
     """
-    Hậu xử lý đảm bảo tuyệt đối không còn bảng kẻ bằng dấu gạch đứng (| ... |) hoặc thẻ <br>:
+    Hậu xử lý đảm bảo tuyệt đối không còn thẻ <think>, bảng kẻ bằng dấu gạch đứng (| ... |) hoặc thẻ <br>:
     Tự động chuyển mọi bảng Markdown (nhiều dòng hoặc bị gộp 1 dòng) thành các gạch đầu dòng phân cấp rõ ràng.
     """
     if not text:
         return ""
-    s = str(text)
+    s = strip_think_tags(str(text))
+    if not s:
+        return ""
     s = re.sub(r"<br\s*/?>", "; ", s, flags=re.IGNORECASE)
 
     # Nếu bảng Markdown bị gộp trên cùng 1 dòng (ví dụ: "| Cột 1 | Cột 2 | |---|---| | A | B |")
@@ -1402,6 +1669,11 @@ def auto_sync_knowledge_base(force: bool = False) -> dict:
 
     if sync_res.get("changed"):
         _GLOBAL_BM25_DATA = None
+        if "_GLOBAL_SEMANTIC_CACHE" in globals() and _GLOBAL_SEMANTIC_CACHE is not None:
+            try:
+                _GLOBAL_SEMANTIC_CACHE.clear()
+            except Exception:
+                pass
         try:
             get_bm25_index.clear()
         except Exception:
@@ -1587,6 +1859,398 @@ def get_vector_db():
     return _GLOBAL_VECTOR_DB
 
 
+# ==============================================================================
+# SEMANTIC CACHE (REUSE RAM SINGLETON EMBEDDINGS + 3 STRICT GUARDS)
+# ==============================================================================
+_QUERY_VEC_LOCK = threading.Lock()
+_QUERY_VEC_CACHE: "OrderedDict[str, np.ndarray]" = OrderedDict()
+_QUERY_VEC_CACHE_MAX = 1024
+
+_SEMANTIC_CACHE_NUMERIC_CODE_RE = re.compile(
+    r'\b[a-zA-Z]{2,6}\d{2,6}\b|\d+(?:[.,/-]\d+)*%?'
+)
+_SEMANTIC_ABBREV_PATTERNS = (
+    (re.compile(r'(?<!\w)kkht(?!\w)', re.IGNORECASE), 'khuyến khích học tập'),
+    (re.compile(r'(?<!\w)đrl(?!\w)', re.IGNORECASE), 'điểm rèn luyện'),
+    (re.compile(r'(?<!\w)ctxh(?!\w)', re.IGNORECASE), 'công tác xã hội'),
+    (re.compile(r'(?<!\w)ctsv(?!\w)', re.IGNORECASE), 'công tác sinh viên'),
+    (re.compile(r'(?<!\w)attt(?!\w)', re.IGNORECASE), 'an toàn thông tin'),
+    (re.compile(r'(?<!\w)khtc(?!\w)', re.IGNORECASE), 'kế hoạch tài chính'),
+    (re.compile(r'(?<!\w)cđr(?!\w)', re.IGNORECASE), 'chuẩn đầu ra'),
+    (re.compile(r'(?<!\w)bcs(?!\w)', re.IGNORECASE), 'ban cán sự'),
+    (re.compile(r'(?<!\w)đoàn\s+phí(?!\w)', re.IGNORECASE), 'đoàn phí'),
+    (re.compile(r'(?<!\w)vlute(?!\w)', re.IGNORECASE), 'trường'),
+)
+_SEMANTIC_FILLER_PHRASES = (
+    'làm sao để đủ',
+    'làm sao để được',
+    'làm sao để',
+    'làm thế nào để',
+    'như thế nào để',
+    'cần những gì để',
+    'bao gồm những gì',
+    'gồm những gì',
+    'là những gì',
+    'gồm các',
+    'của trường',
+    'ở trường',
+    'tại trường',
+    'cho em hỏi',
+    'cho mình hỏi',
+    'cho tôi hỏi',
+    'cho hỏi',
+    'hỏi về',
+    'vui lòng cho biết',
+    'em muốn hỏi',
+    'mình muốn hỏi',
+    'cho mình biết',
+    'giúp mình',
+    'theo quy định',
+    'vậy bạn',
+    'vậy ạ',
+    'mới nhất',
+    'hiện nay',
+    'chi tiết',
+    'cụ thể',
+    'xét cấp',
+    'bạn ơi',
+    'lucas ơi',
+    'xin hỏi',
+    'ad ơi',
+    'bot ơi',
+    'là gì',
+    'thì sao',
+    'như thế nào',
+    'xét',
+    'cấp',
+    'nhận',
+    'để',
+    'cần',
+    'có',
+    'được',
+    'nhé',
+    'ạ',
+)
+_SEMANTIC_POLARITY_TERMS = (
+    'không',
+    'chưa',
+    'dưới',
+    'trên',
+    'hơn',
+    'tối thiểu',
+    'tối đa',
+    'cấm',
+    'bị',
+)
+_SEMANTIC_POLARITY_PATTERNS = tuple(
+    (term, re.compile(rf'(?<!\w){re.escape(term)}(?!\w)', re.IGNORECASE))
+    for term in _SEMANTIC_POLARITY_TERMS
+)
+
+
+def _resolve_existing_embedding_model(chain=None):
+    """Tái sử dụng instance vietnamese-bi-encoder đã nạp trong RAM, tuyệt đối không tạo bản sao mới."""
+    if chain is not None:
+        vdb = getattr(chain, "vector_db", None)
+        emb = getattr(vdb, "_embedding_function", None) if vdb is not None else None
+        if emb is not None:
+            return emb
+    if _GLOBAL_EMBEDDINGS is not None:
+        return _GLOBAL_EMBEDDINGS
+    if _GLOBAL_VECTOR_DB is not None:
+        emb = getattr(_GLOBAL_VECTOR_DB, "_embedding_function", None)
+        if emb is not None:
+            return emb
+    return get_embedding_model()
+
+
+def canonicalize_for_semantic_cache(query: str) -> str:
+    """
+    Chuẩn hóa câu truy vấn về lõi ngữ nghĩa (giữ nguyên số, mã môn/quyết định và từ phủ định/ngưỡng)
+    để nhận diện chuẩn xác paraphrase trên vietnamese-bi-encoder.
+    """
+    q = normalize_chat_slang(query or "")
+    q = unicodedata.normalize("NFC", q).lower().strip()
+    for pat, repl in _SEMANTIC_ABBREV_PATTERNS:
+        q = pat.sub(repl, q)
+    q = re.sub(r'[?!.,;:()\[\]"\'""'']+', ' ', q)
+    q = re.sub(r'\s+', ' ', q).strip()
+    for phrase in _SEMANTIC_FILLER_PHRASES:
+        q = re.sub(rf'(?<!\w){re.escape(phrase)}(?!\w)', ' ', q)
+    q = re.sub(r'\s+', ' ', q).strip()
+    return q or unicodedata.normalize("NFC", (query or "")).lower().strip()
+
+
+def extract_numeric_and_code_tokens(query: str) -> tuple:
+    """Trích xuất tập token số học, phần trăm, số quyết định và mã môn/lớp theo thứ tự chuẩn hóa."""
+    norm = unicodedata.normalize("NFC", (query or "")).lower()
+    tokens = []
+    for tok in _SEMANTIC_CACHE_NUMERIC_CODE_RE.findall(norm):
+        clean_tok = tok.replace(",", ".").strip()
+        if clean_tok:
+            tokens.append(clean_tok)
+    return tuple(sorted(tokens))
+
+
+def extract_polarity_signature(query: str) -> tuple:
+    """Trích xuất chữ ký phủ định và ngưỡng biên (không, chưa, dưới, trên, hơn, tối thiểu, tối đa, cấm, bị)."""
+    norm = unicodedata.normalize("NFC", normalize_chat_slang(query or "")).lower()
+    found = []
+    for term, pat in _SEMANTIC_POLARITY_PATTERNS:
+        matches = pat.findall(norm)
+        if matches:
+            found.append((term, len(matches)))
+    return tuple(found)
+
+
+def _l2_normalize_vec(vec_raw) -> np.ndarray:
+    vec = np.asarray(vec_raw, dtype=np.float32).reshape(-1)
+    norm_val = float(np.linalg.norm(vec))
+    if norm_val > 1e-12 and abs(norm_val - 1.0) > 1e-4:
+        vec = vec / norm_val
+    return vec
+
+
+def encode_queries_l2_batch(texts: list, chain=None) -> list:
+    """
+    Mã hóa theo lô các chuỗi truy vấn thành vector L2-normalized dùng chung model trong RAM.
+    """
+    keys = [unicodedata.normalize("NFC", (t or "")).strip() for t in texts]
+    results = [None] * len(keys)
+    missing_indices = []
+    missing_keys = []
+
+    with _QUERY_VEC_LOCK:
+        for idx, key in enumerate(keys):
+            if not key:
+                results[idx] = np.zeros(1, dtype=np.float32)
+                continue
+            cached_vec = _QUERY_VEC_CACHE.get(key)
+            if cached_vec is not None:
+                _QUERY_VEC_CACHE.move_to_end(key)
+                results[idx] = cached_vec
+            else:
+                missing_indices.append(idx)
+                missing_keys.append(key)
+
+    if not missing_keys:
+        return results
+
+    emb_model = _resolve_existing_embedding_model(chain=chain)
+    st_client = getattr(emb_model, "_client", None) or getattr(emb_model, "client", None)
+    if st_client is not None:
+        with torch.inference_mode():
+            vecs_raw = st_client.encode(
+                missing_keys,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+                convert_to_numpy=True,
+                batch_size=len(missing_keys),
+            )
+        encoded = [_l2_normalize_vec(v) for v in vecs_raw]
+    else:
+        encoded = [_l2_normalize_vec(emb_model.embed_query(k)) for k in missing_keys]
+
+    with _QUERY_VEC_LOCK:
+        for idx, key, vec in zip(missing_indices, missing_keys, encoded):
+            results[idx] = vec
+            _QUERY_VEC_CACHE[key] = vec
+            _QUERY_VEC_CACHE.move_to_end(key)
+        while len(_QUERY_VEC_CACHE) > _QUERY_VEC_CACHE_MAX:
+            _QUERY_VEC_CACHE.popitem(last=False)
+    return results
+
+
+def encode_query_l2_vector(text: str, chain=None) -> np.ndarray:
+    """
+    Mã hóa câu truy vấn thành vector L2-normalized dùng chung model trong RAM.
+    """
+    return encode_queries_l2_batch([text], chain=chain)[0]
+
+
+class SemanticAnswerCache:
+    """
+    Semantic Cache LRU (tối đa 500 mục, TTL 1800s, thread-safe) dùng Cosine >= 0.95
+    kết hợp Numeric/Code Guard và Polarity Guard.
+    """
+
+    def __init__(
+        self,
+        max_size: int = 500,
+        ttl_seconds: float = 1800.0,
+        similarity_threshold: float = 0.95,
+    ):
+        self.max_size = max_size
+        self.ttl_seconds = ttl_seconds
+        self.similarity_threshold = similarity_threshold
+        self._lock = threading.Lock()
+        self._entries: "OrderedDict[str, dict]" = OrderedDict()
+
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+
+    def _evict_expired_unlocked(self, now: float) -> None:
+        expired_keys = [
+            k for k, v in self._entries.items()
+            if (now - v["created_at"]) >= self.ttl_seconds
+        ]
+        for k in expired_keys:
+            self._entries.pop(k, None)
+
+    @staticmethod
+    def _build_query_features(effective_query: str, chain=None) -> dict:
+        norm_q = unicodedata.normalize("NFC", normalize_chat_slang(effective_query or "")).strip()
+        canonical_q = canonicalize_for_semantic_cache(norm_q)
+        if canonical_q == norm_q.lower():
+            raw_vec = encode_query_l2_vector(norm_q, chain=chain)
+            canon_vec = raw_vec
+        else:
+            raw_vec, canon_vec = encode_queries_l2_batch([norm_q, canonical_q], chain=chain)
+        return {
+            "norm_q": norm_q,
+            "canonical_q": canonical_q,
+            "raw_vec": raw_vec,
+            "canon_vec": canon_vec,
+            "numeric_tokens": extract_numeric_and_code_tokens(norm_q),
+            "polarity": extract_polarity_signature(norm_q),
+        }
+
+    def lookup(self, effective_query: str, chain=None):
+        """
+        Tìm câu trả lời khớp ngữ nghĩa đạt đồng thời cả 3 màng lọc an toàn:
+        1) Cosine Similarity >= 0.95 (so cả vector chuẩn hóa lõi ngữ nghĩa và vector câu gốc)
+        2) Khớp tuyệt đối tập token số & mã học phần/quyết định
+        3) Khớp tuyệt đối chữ ký phủ định / ngưỡng biên
+        """
+        norm_q_fast = unicodedata.normalize("NFC", normalize_chat_slang(effective_query or "")).strip()
+        if not norm_q_fast:
+            return None
+        fast_num = extract_numeric_and_code_tokens(norm_q_fast)
+        fast_pol = extract_polarity_signature(norm_q_fast)
+
+        now = time.time()
+        with self._lock:
+            self._evict_expired_unlocked(now)
+            if not self._entries:
+                return None
+            if not any(
+                e["numeric_tokens"] == fast_num and e["polarity"] == fast_pol
+                for e in self._entries.values()
+            ):
+                return None
+
+        features = self._build_query_features(effective_query, chain=chain)
+        now = time.time()
+
+        with self._lock:
+            self._evict_expired_unlocked(now)
+            if not self._entries:
+                return None
+
+            best_key = None
+            best_score = -1.0
+            best_payload = None
+
+            q_num = features["numeric_tokens"]
+            q_pol = features["polarity"]
+            q_raw_vec = features["raw_vec"]
+            q_canon_vec = features["canon_vec"]
+
+            for key, entry in list(self._entries.items()):
+                # Màng lọc 2: Numeric & Identifier Guard
+                if entry["numeric_tokens"] != q_num:
+                    continue
+                # Màng lọc 3: Negation & Polarity Guard
+                if entry["polarity"] != q_pol:
+                    continue
+
+                # Màng lọc 1: Cosine Similarity via dot product of L2 vectors
+                e_raw = entry["raw_vec"]
+                e_canon = entry["canon_vec"]
+                sim_raw = float(np.dot(q_raw_vec, e_raw)) if q_raw_vec.shape == e_raw.shape else 0.0
+                sim_canon = float(np.dot(q_canon_vec, e_canon)) if q_canon_vec.shape == e_canon.shape else 0.0
+                sim_score = max(sim_raw, sim_canon)
+
+                if sim_score >= self.similarity_threshold and sim_score > best_score:
+                    best_score = sim_score
+                    best_key = key
+                    best_payload = entry["payload"]
+
+            if best_key is not None and best_payload is not None:
+                self._entries.move_to_end(best_key)
+                result = dict(best_payload)
+                result["semantic_similarity"] = round(best_score, 4)
+                return result
+
+        return None
+
+    def store(self, effective_query: str, payload: dict, chain=None) -> bool:
+        """
+        Chỉ lưu kết quả đã đối soát thành công (verified=True, is_refusal=False, không lỗi API).
+        """
+        if not isinstance(payload, dict):
+            return False
+        if not payload.get("verified", False) or payload.get("is_refusal", False):
+            return False
+        if payload.get("api_error", False):
+            return False
+
+        answer_text = (payload.get("answer") or "").strip()
+        if not answer_text or answer_text == REFUSAL_MESSAGE or answer_text == FRIENDLY_ERROR_MESSAGE:
+            return False
+
+        features = self._build_query_features(effective_query, chain=chain)
+        cache_key = features["norm_q"].lower()
+        if not cache_key:
+            return False
+
+        now = time.time()
+        stored_payload = {
+            "answer": payload.get("answer", ""),
+            "sources": list(payload.get("sources", []) or []),
+            "contact": payload.get("contact"),
+            "followups": list(payload.get("followups", []) or []),
+            "verified": True,
+            "is_refusal": False,
+        }
+
+        with self._lock:
+            self._evict_expired_unlocked(now)
+            self._entries[cache_key] = {
+                "created_at": now,
+                "canonical_q": features["canonical_q"],
+                "raw_vec": features["raw_vec"],
+                "canon_vec": features["canon_vec"],
+                "numeric_tokens": features["numeric_tokens"],
+                "polarity": features["polarity"],
+                "payload": stored_payload,
+            }
+            self._entries.move_to_end(cache_key)
+            while len(self._entries) > self.max_size:
+                self._entries.popitem(last=False)
+        return True
+
+
+_GLOBAL_SEMANTIC_CACHE_LOCK = threading.Lock()
+_GLOBAL_SEMANTIC_CACHE = None
+
+
+def get_semantic_cache() -> SemanticAnswerCache:
+    """Trả về singleton SemanticAnswerCache dùng chung cho API và Streamlit."""
+    global _GLOBAL_SEMANTIC_CACHE
+    if _GLOBAL_SEMANTIC_CACHE is not None:
+        return _GLOBAL_SEMANTIC_CACHE
+    with _GLOBAL_SEMANTIC_CACHE_LOCK:
+        if _GLOBAL_SEMANTIC_CACHE is None:
+            _GLOBAL_SEMANTIC_CACHE = SemanticAnswerCache(
+                max_size=500,
+                ttl_seconds=1800.0,
+                similarity_threshold=0.95,
+            )
+    return _GLOBAL_SEMANTIC_CACHE
+
+
 class RotatingResilientLLM:
     """
     Lớp bọc LLM với Groq LPU làm Engine xử lý chính (Tier 1):
@@ -1595,12 +2259,27 @@ class RotatingResilientLLM:
     - TẦNG 2 (Dự phòng 2): Gemini (chỉ gọi nếu có key 'AIzaSy...' hợp lệ).
     - TẦNG 3: Báo lỗi quá tải an toàn (429 RESOURCE_EXHAUSTED).
     """
-    def __init__(self, local_llm, groq_llm=None, max_output_tokens: int = 2048, temperature: float = 0.0, preferred_model: str | None = None):
+    def __init__(
+        self,
+        local_llm,
+        groq_llm=None,
+        max_output_tokens: int = 2048,
+        temperature: float = 0.0,
+        preferred_model: str | None = None,
+        groq_timeout_sec: float | None = None,
+        local_timeout_sec: float = 5.0,
+        gemini_timeout_sec: float = 5.0,
+        total_thinking_budget_sec: float = 15.0,
+    ):
         self.local_llm = local_llm
         self.groq_llm = groq_llm
         self.max_output_tokens = max_output_tokens
         self.temperature = temperature
         self.preferred_model = preferred_model
+        self.groq_timeout_sec = groq_timeout_sec
+        self.local_timeout_sec = float(local_timeout_sec)
+        self.gemini_timeout_sec = float(gemini_timeout_sec)
+        self.total_thinking_budget_sec = float(total_thinking_budget_sec)
         self._cloud_clients = {}
         self._models_lock = threading.Lock()
         self._groq_models = [
@@ -1612,6 +2291,67 @@ class RotatingResilientLLM:
         ]
         self._dead_groq_models = _DEAD_GROQ_MODELS
         self._cooldown_groq_models = _COOLDOWN_GROQ_MODELS
+
+    def _effective_groq_timeout(self) -> float:
+        if self.groq_timeout_sec is not None:
+            return float(self.groq_timeout_sec)
+        return 4.0 if int(self.max_output_tokens) <= 200 else 6.5
+
+    @staticmethod
+    def _call_with_timeout(fn, timeout_sec: float):
+        """Thực thi lời gọi đồng bộ với giới hạn thời gian cứng để chặn treo vô hạn."""
+        result_q: queue.Queue = queue.Queue(maxsize=1)
+
+        def _runner():
+            try:
+                result_q.put(("ok", fn()))
+            except BaseException as exc:
+                result_q.put(("err", exc))
+
+        t = threading.Thread(target=_runner, daemon=True)
+        t.start()
+        try:
+            kind, val = result_q.get(timeout=max(0.01, float(timeout_sec)))
+        except queue.Empty:
+            raise TimeoutError(f"LLM invoke timed out after {timeout_sec}s")
+        if kind == "err":
+            raise val
+        return val
+
+    @staticmethod
+    def _iter_with_timeout(stream_factory, first_chunk_timeout: float, idle_chunk_timeout: float):
+        """Bao bọc stream generator với timeout riêng cho token đầu tiên và thời gian nhàn rỗi giữa các chunk."""
+        chunk_q: queue.Queue = queue.Queue()
+        stop_evt = threading.Event()
+
+        def _producer():
+            try:
+                for item in stream_factory():
+                    if stop_evt.is_set():
+                        return
+                    chunk_q.put(("chunk", item))
+                chunk_q.put(("done", None))
+            except BaseException as exc:
+                chunk_q.put(("err", exc))
+
+        t = threading.Thread(target=_producer, daemon=True)
+        t.start()
+        seen_first = False
+        try:
+            while True:
+                wait_s = first_chunk_timeout if not seen_first else idle_chunk_timeout
+                try:
+                    kind, val = chunk_q.get(timeout=max(0.01, float(wait_s)))
+                except queue.Empty:
+                    raise TimeoutError(f"LLM stream timed out waiting after {wait_s}s")
+                if kind == "done":
+                    return
+                if kind == "err":
+                    raise val
+                seen_first = True
+                yield val
+        finally:
+            stop_evt.set()
 
     def _get_cloud_client(self, api_key: str):
         with self._models_lock:
@@ -1633,7 +2373,7 @@ class RotatingResilientLLM:
             return None
         temp = self.temperature if temperature is None else temperature
         mtok = self.max_output_tokens if max_tokens is None else max_tokens
-        timeout_sec = 4.5 if int(mtok) <= 200 else 6.5
+        timeout_sec = self._effective_groq_timeout()
         is_gpt_oss = "gpt-oss" in model_name
         effective_mtok = max(int(mtok), 600 if int(mtok) <= 200 else 2500) if is_gpt_oss else int(mtok)
         extra_kwargs = {"reasoning_effort": "low"} if is_gpt_oss else {}
@@ -1666,7 +2406,7 @@ class RotatingResilientLLM:
             with _GROQ_STATE_LOCK:
                 _DEAD_GROQ_MODELS.add(groq_model)
             return
-        if any(tok in err_msg for tok in ("429", "rate_limit", "rate limit", "too many requests")):
+        if any(tok in err_msg for tok in ("429", "rate_limit", "rate limit", "too many requests", "timeout", "timed out")):
             with _GROQ_STATE_LOCK:
                 _COOLDOWN_GROQ_MODELS[groq_model] = time.time() + 4.0
             with self._models_lock:
@@ -1721,19 +2461,27 @@ class RotatingResilientLLM:
         groq_err = None
         local_err = None
         gemini_err = None
+        budget_start = time.monotonic()
 
         # TẦNG 1 (Engine chính): Ưu tiên gọi trực tiếp Groq LPU ngay từ đầu
         print("[LLM ENGINE] Đang tạo phản hồi qua Groq LPU...")
         candidate_models = self._get_candidate_groq_models(
             prioritize_fast=bool(self.max_output_tokens <= 200 or self.preferred_model)
         )
+        groq_timeout = self._effective_groq_timeout()
 
         for groq_model in candidate_models:
+            if (time.monotonic() - budget_start) >= self.total_thinking_budget_sec:
+                groq_err = TimeoutError(f"Groq tier budget exceeded ({self.total_thinking_budget_sec}s)")
+                break
             try:
                 groq_client = self._get_groq_client(model_name=groq_model)
                 if groq_client is None:
                     continue
-                groq_resp = groq_client.invoke(prompt, *args, **kwargs)
+                groq_resp = self._call_with_timeout(
+                    lambda: groq_client.invoke(prompt, *args, **kwargs),
+                    timeout_sec=groq_timeout,
+                )
                 groq_content = getattr(groq_resp, "content", str(groq_resp))
                 if groq_content and str(groq_content).strip():
                     if self.max_output_tokens > 200:
@@ -1751,7 +2499,10 @@ class RotatingResilientLLM:
         else:
             try:
                 print("[FAILOVER] Groq không khả dụng -> Chuyển sang Local LM Studio (qwen/qwen3.5-4b)...")
-                local_resp = self.local_llm.invoke(prompt, *args, **kwargs)
+                local_resp = self._call_with_timeout(
+                    lambda: self.local_llm.invoke(prompt, *args, **kwargs),
+                    timeout_sec=self.local_timeout_sec,
+                )
                 local_content = getattr(local_resp, "content", str(local_resp))
                 if local_content and str(local_content).strip():
                     return local_resp
@@ -1772,7 +2523,10 @@ class RotatingResilientLLM:
                 api_key = valid_gemini_keys[current_idx]
                 try:
                     client = self._get_cloud_client(api_key)
-                    response = client.invoke(prompt, *args, **kwargs)
+                    response = self._call_with_timeout(
+                        lambda: client.invoke(prompt, *args, **kwargs),
+                        timeout_sec=self.gemini_timeout_sec,
+                    )
                     content = getattr(response, "content", str(response))
                     if content and str(content).strip():
                         if offset > 0:
@@ -1792,17 +2546,26 @@ class RotatingResilientLLM:
         groq_err = None
         local_err = None
         gemini_err = None
+        budget_start = time.monotonic()
 
         # TẦNG 1 (Engine chính): Ưu tiên gọi trực tiếp Groq LPU ngay từ đầu
         print("[LLM ENGINE] Đang tạo phản hồi qua Groq LPU...")
         candidate_models = self._get_candidate_groq_models(prioritize_fast=False)
+        groq_timeout = self._effective_groq_timeout()
         for groq_model in candidate_models:
+            if (time.monotonic() - budget_start) >= self.total_thinking_budget_sec:
+                groq_err = TimeoutError(f"Groq stream budget exceeded ({self.total_thinking_budget_sec}s)")
+                break
             yielded_groq = False
             try:
                 groq_client = self._get_groq_client(model_name=groq_model)
                 if groq_client is None:
                     continue
-                for chunk in groq_client.stream(prompt, *args, **kwargs):
+                for chunk in self._iter_with_timeout(
+                    lambda: groq_client.stream(prompt, *args, **kwargs),
+                    first_chunk_timeout=groq_timeout,
+                    idle_chunk_timeout=max(groq_timeout, 8.0),
+                ):
                     chunk_text = getattr(chunk, "content", str(chunk))
                     if chunk_text:
                         yielded_groq = True
@@ -1827,14 +2590,21 @@ class RotatingResilientLLM:
         else:
             try:
                 print("[FAILOVER] Groq không khả dụng -> Chuyển sang Local LM Studio (qwen/qwen3.5-4b)...")
-                for chunk in self.local_llm.stream(prompt, *args, **kwargs):
+                for chunk in self._iter_with_timeout(
+                    lambda: self.local_llm.stream(prompt, *args, **kwargs),
+                    first_chunk_timeout=self.local_timeout_sec,
+                    idle_chunk_timeout=max(self.local_timeout_sec, 8.0),
+                ):
                     chunk_text = getattr(chunk, "content", str(chunk))
                     if chunk_text:
                         yielded_local = True
                         yield chunk
                 if yielded_local:
                     return
-                resp = self.local_llm.invoke(prompt, *args, **kwargs)
+                resp = self._call_with_timeout(
+                    lambda: self.local_llm.invoke(prompt, *args, **kwargs),
+                    timeout_sec=self.local_timeout_sec,
+                )
                 if getattr(resp, "content", ""):
                     yield resp
                     return
@@ -1859,7 +2629,11 @@ class RotatingResilientLLM:
                 yielded_from_this_key = False
                 try:
                     client = self._get_cloud_client(api_key)
-                    for chunk in client.stream(prompt, *args, **kwargs):
+                    for chunk in self._iter_with_timeout(
+                        lambda: client.stream(prompt, *args, **kwargs),
+                        first_chunk_timeout=self.gemini_timeout_sec,
+                        idle_chunk_timeout=max(self.gemini_timeout_sec, 8.0),
+                    ):
                         chunk_text = getattr(chunk, "content", str(chunk))
                         if chunk_text:
                             yielded_from_this_key = True
@@ -1977,6 +2751,13 @@ def get_greeting_or_chitchat_reply(query: str) -> str | None:
 
     if is_prompt_injection(raw_orig):
         return REFUSAL_MESSAGE
+
+    raw_orig = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]+", " ", raw_orig).strip()
+    if not raw_orig:
+        return (
+            "Mình chưa nhận diện được nội dung câu hỏi. Bạn hãy chọn nhanh 1 trong các câu hỏi gợi ý bên dưới "
+            "hoặc nhập chủ đề quy chế, học vụ, học bổng, học phí cần tra cứu nhé!"
+        )
 
     raw = normalize_chat_slang(raw_orig).strip()
     if not re.search(r"[a-zA-ZÀ-ỹ]", raw):
@@ -2142,6 +2923,119 @@ def _extract_topic_anchor_from_history(recent_history: list[tuple[str, str]]) ->
     return ""
 
 
+def _extract_assistant_drilldown_anchor(q_lower: str, recent_history: list[tuple[str, str]]) -> tuple[str, str]:
+    """
+    Phân tích 2 chiều (User + Assistant liền trước) để bóc tách đúng khái niệm/mốc điểm/giấy tờ/học phần
+    mà trợ lý vừa nhắc tới trong câu trả lời gần nhất khi người dùng hỏi đào sâu.
+    Trả về (drilldown_anchor, user_parent_topic).
+    """
+    user_topic = _extract_topic_anchor_from_history(recent_history)
+    last_assistant = ""
+    for role, content in reversed(recent_history):
+        if role == "assistant" and str(content or "").strip():
+            last_assistant = strip_think_tags(str(content))
+            break
+    if not last_assistant:
+        return "", user_topic
+
+    asst_low = last_assistant.lower()
+    asst_head_low = asst_low[:220]
+    bold_terms = [
+        re.sub(r"\s+", " ", b).strip(" .,:;-")
+        for b in re.findall(r"\*\*([^\*\n]{2,90})\*\*", last_assistant)
+        if len(b.strip()) >= 3
+    ]
+
+    # 1. Đào sâu về mức điểm / xếp loại điểm rèn luyện (vd: 'vậy loại Tốt là bao nhiêu điểm?')
+    if re.search(
+        r"(?:loại\s+(?:xuất\s+sắc|tốt|khá|trung\s+bình|yếu|kém)|bao\s+nhiêu\s+điểm|mấy\s+điểm|xếp\s+loại|mức\s+này|mức\s+đó)",
+        q_lower,
+    ) and ("rèn luyện" in asst_low or "điểm rèn luyện" in asst_low):
+        grade_bold = next(
+            (b for b in bold_terms if any(g in b.lower() for g in ("rèn luyện", "loại tốt", "loại khá", "xuất sắc"))),
+            "",
+        )
+        if grade_bold and "rèn luyện" in grade_bold.lower():
+            return grade_bold, user_topic or "điểm rèn luyện"
+        return "điểm rèn luyện (theo Quy định công tác sinh viên)", user_topic
+
+    # 2. Đào sâu về giấy tờ / biểu mẫu / đơn từ / cơ quan cấp (vd: 'giấy đó xin ở đâu?', 'đơn này nộp cho ai?')
+    if re.search(
+        r"(?:giấy\s+đó|giấy\s+này|giấy\s+tờ\s+(?:đó|này)|đơn\s+(?:đó|này)|biểu\s+mẫu\s+(?:đó|này)|"
+        r"mẫu\s+(?:đó|này)|minh\s+chứng\s+(?:đó|này)|xin\s+ở\s+đâu|lấy\s+ở\s+đâu|cấp\s+ở\s+đâu|ai\s+cấp|cơ\s+quan\s+nào)",
+        q_lower,
+    ):
+        paper_rx = re.compile(
+            r"(?:giấy\s+(?:xác\s+nhận|chứng\s+nhận|khai\s+sinh)|đơn\s+đề\s+nghị|"
+            r"biểu\s+mẫu\s+[A-Z0-9-]+|quyết\s+định\s+trợ\s+cấp|sổ\s+hộ\s+(?:nghèo|cận\s+nghèo)|"
+            r"bảng\s+phân\s+công|thẻ\s+sinh\s+viên|minh\s+chứng)[^,;\.\n\(\*]{0,55}",
+            re.IGNORECASE,
+        )
+        for b in bold_terms:
+            m_b = paper_rx.search(b)
+            if m_b:
+                paper_phrase = m_b.group(0).strip(" .,:;-")
+                if user_topic and user_topic.lower() not in paper_phrase.lower():
+                    return f"{paper_phrase} ({user_topic})", user_topic
+                return paper_phrase, user_topic
+        m_asst = paper_rx.search(last_assistant)
+        if m_asst:
+            paper_phrase = re.sub(r"\s+", " ", m_asst.group(0)).strip(" .,:;-")
+            if user_topic and user_topic.lower() not in paper_phrase.lower():
+                return f"{paper_phrase} ({user_topic})", user_topic
+            return paper_phrase, user_topic
+
+    # 3. Đào sâu về chuẩn ngày CTXH / quy đổi buổi-ngày (vd: 'chuẩn đó cần mấy ngày?', 'hoạt động đó tính mấy ngày?')
+    if re.search(
+        r"(?:chuẩn\s+(?:đó|này)|mấy\s+ngày|bao\s+nhiêu\s+ngày|mấy\s+buổi|bao\s+nhiêu\s+buổi|hoạt\s+động\s+(?:đó|này))",
+        q_lower,
+    ) and any(k in asst_low for k in ("ctxh", "công tác xã hội", "hiến máu", "mùa hè xanh", "tiếp sức")):
+        ctxh_bold = next(
+            (b for b in bold_terms if any(k in b.lower() for k in ("ctxh", "công tác xã hội", "hiến máu", "mùa hè xanh", "tiếp sức"))),
+            "",
+        )
+        if ctxh_bold:
+            if "ctxh" not in ctxh_bold.lower() and "công tác xã hội" not in ctxh_bold.lower():
+                return f"{ctxh_bold} trong Công tác xã hội (CTXH)", "quy định hoạt động Công tác xã hội (CTXH)"
+            return ctxh_bold, "quy định hoạt động Công tác xã hội (CTXH)"
+        return "chuẩn ngày Công tác xã hội (CTXH)", "quy định hoạt động Công tác xã hội (CTXH)"
+
+    # 4. Đào sâu về đề cương / học phần tiên quyết / hệ số / CĐR (vd: 'tiên quyết đó là môn nào?', 'hệ số đó tính sao?')
+    if re.search(
+        r"(?:học\s+phần\s+tiên\s+quyết|môn\s+tiên\s+quyết|tiên\s+quyết\s+(?:đó|này)|"
+        r"hệ\s+số\s+(?:đó|này)|chuẩn\s+đầu\s+ra\s+(?:đó|này)|cđr\s+(?:đó|này)|giáo\s+trình\s+(?:đó|này)|"
+        r"học\s+phần\s+(?:đó|này)|môn\s+(?:đó|này))",
+        q_lower,
+    ) and any(k in asst_low for k in ("it1216", "phần mềm mã nguồn mở", "tiên quyết", "chuẩn đầu ra", "hệ số")):
+        course_anchor = "học phần Phần mềm mã nguồn mở (IT1216)" if ("it1216" in asst_low or "mã nguồn mở" in asst_low) else user_topic
+        course_bold = next(
+            (b for b in bold_terms if any(k in b.lower() for k in ("tiên quyết", "it1216", "chuẩn đầu ra", "hệ số", "mã nguồn mở"))),
+            "",
+        )
+        if course_bold and course_anchor and course_anchor.lower() not in course_bold.lower():
+            return f"{course_bold} của {course_anchor}", course_anchor
+        return course_bold or course_anchor, user_topic
+
+    # 5. Đào sâu tổng quát qua cụm từ in đậm **...** ở phần đầu hoặc thân phản hồi Assistant khớp từ khóa câu hỏi
+    q_words = {w for w in re.findall(r"[a-zà-ỹđ0-9]+", q_lower) if len(w) >= 3 and w not in _BM25_STOPWORDS}
+    for b in bold_terms:
+        b_low = b.lower()
+        b_words = set(re.findall(r"[a-zà-ỹđ0-9]+", b_low))
+        overlap = q_words & b_words
+        if overlap:
+            if user_topic and user_topic.lower() not in b_low and len(b.split()) <= 6:
+                return f"{b} ({user_topic})", user_topic
+            return b, user_topic
+
+    if bold_terms and any(p in asst_head_low for p in bold_terms[0].lower().split()[:2]):
+        lead_bold = bold_terms[0]
+        if user_topic and user_topic.lower() not in lead_bold.lower() and len(lead_bold.split()) <= 5:
+            return f"{lead_bold} ({user_topic})", user_topic
+        return lead_bold, user_topic
+
+    return "", user_topic
+
+
 def rewrite_conversational_query(query: str, chat_history: list | None = None) -> str:
     """
     Viết lại câu hỏi nối tiếp có chứa đại từ/từ nối ngữ cảnh thành câu hỏi độc lập đầy đủ nghĩa.
@@ -2220,11 +3114,17 @@ def rewrite_conversational_query(query: str, chat_history: list | None = None) -
         "học phần này", "học phần đó", "môn này", "môn đó", "ngành này", "ngành đó",
         "bảng này", "mục này", "chế độ này", "chính sách này", "hành vi này",
         "học bổng này", "học bổng đó", "quy tắc này", "quy chế này", "hoạt động này", "danh hiệu này",
+        "giấy đó", "giấy này", "giấy tờ đó", "giấy tờ này", "đơn đó", "đơn này",
+        "biểu mẫu đó", "biểu mẫu này", "mẫu đó", "mẫu này", "minh chứng đó", "minh chứng này",
+        "hồ sơ đó", "hồ sơ này", "điều kiện này", "điều kiện đó", "tiêu chuẩn này", "tiêu chuẩn đó",
+        "yêu cầu này", "yêu cầu đó", "chuẩn đó", "chuẩn này", "mốc đó", "mốc này",
+        "hệ số đó", "hệ số này", "tỷ lệ đó", "tỷ lệ này", "điểm đó", "điểm này",
+        "hoạt động đó", "môn tiên quyết đó", "học phần tiên quyết đó",
     ]
     has_anaphoric_pronoun = has_pronoun_no or any(phrase in q_lower for phrase in anaphoric_pronoun_phrases)
     discourse_connector_phrases = [
         "vậy thì", "vậy còn", "vậy mức", "thế còn", "còn hồ sơ", "còn thủ tục",
-        "còn thời gian", "còn điều kiện", "còn mức", "thì sao"
+        "còn thời gian", "còn điều kiện", "còn mức", "thì sao", "còn chuẩn", "vậy giấy", "vậy loại",
     ]
     has_discourse_connector = (
         any(phrase in q_lower for phrase in discourse_connector_phrases)
@@ -2247,10 +3147,10 @@ def rewrite_conversational_query(query: str, chat_history: list | None = None) -
             return raw_query
 
     contextual_question_markers = [
-        "bao lâu", "như thế nào", "ra sao", "nộp ở đâu", "nộp cho ai",
-        "gồm những gì", "bao nhiêu tiền", "mức tiền", "công thức tính",
+        "bao lâu", "như thế nào", "ra sao", "nộp ở đâu", "nộp cho ai", "xin ở đâu", "lấy ở đâu",
+        "gồm những gì", "bao nhiêu tiền", "bao nhiêu điểm", "mấy điểm", "mức tiền", "công thức tính",
         "đúng không", "phải không", "tức là", "nghĩa là", "vậy là",
-        "như vậy", "được không", "mấy buổi", "bao nhiêu buổi"
+        "như vậy", "được không", "mấy buổi", "bao nhiêu buổi", "mấy ngày", "bao nhiêu ngày",
     ]
     has_contextual_marker = any(marker in q_lower for marker in contextual_question_markers)
 
@@ -2276,7 +3176,8 @@ def rewrite_conversational_query(query: str, chat_history: list | None = None) -
         "cảnh cáo", "đình chỉ", "buộc thôi học", "điểm rèn luyện",
         "khóa luận", "tốt nghiệp", "danh hiệu", "xuất sắc", "sinh viên giỏi",
         "khen thưởng", "quy định", "quy chế", "quy trình", "thông báo", "hướng dẫn",
-        "đề cương", "it1216", "mã nguồn mở"
+        "đề cương", "it1216", "mã nguồn mở", "trang phục", "ứng xử trên mạng",
+        "cấp lại mật khẩu", "email sinh viên",
     ]
     has_article_or_section_ref = bool(
         re.search(r"\b(?:điều|khoản|mục|chương|phụ\s+lục|biểu\s+mẫu|mẫu)\s+[ivxlcdm\d]+", q_lower)
@@ -2294,15 +3195,22 @@ def rewrite_conversational_query(query: str, chat_history: list | None = None) -
     if not needs_rewrite:
         return raw_query
 
-    # Ưu tiên giải quyết đại từ/ngữ cảnh nối tiếp bằng bộ gắn chủ đề xác định (Deterministic Topic Resolver < 0.5ms)
-    topic_anchor = _extract_topic_anchor_from_history(recent_history)
+    # Ưu tiên giải quyết đại từ/ngữ cảnh nối tiếp 2 chiều (Assistant liền trước + Chủ đề User) (< 0.5ms)
+    asst_anchor, user_topic_anchor = _extract_assistant_drilldown_anchor(q_lower, recent_history)
+    topic_anchor = asst_anchor or user_topic_anchor
     if topic_anchor and topic_anchor.lower() not in q_lower:
         rewritten_det = raw_query.strip()
         pronoun_sub_re = re.compile(
             r"\b(?:của\s+nó|nó|cái\s+đó|cái\s+này|mức\s+này|mức\s+đó|loại\s+này|loại\s+đó|"
             r"khoản\s+này|quy\s+định\s+này|quy\s+trình\s+này|trường\s+hợp\s+này|đối\s+tượng\s+này|"
             r"học\s+phần\s+này|học\s+phần\s+đó|môn\s+này|môn\s+đó|chế\s+độ\s+này|chính\s+sách\s+này|"
-            r"học\s+bổng\s+này|học\s+bổng\s+đó|quy\s+tắc\s+này|quy\s+chế\s+này|hoạt\s+động\s+này|danh\s+hiệu\s+này)\b",
+            r"học\s+bổng\s+này|học\s+bổng\s+đó|quy\s+tắc\s+này|quy\s+chế\s+này|hoạt\s+động\s+này|danh\s+hiệu\s+này|"
+            r"giấy\s+tờ\s+đó|giấy\s+tờ\s+này|giấy\s+đó|giấy\s+này|đơn\s+đó|đơn\s+này|"
+            r"biểu\s+mẫu\s+đó|biểu\s+mẫu\s+này|mẫu\s+đó|mẫu\s+này|minh\s+chứng\s+đó|minh\s+chứng\s+này|"
+            r"hồ\s+sơ\s+đó|hồ\s+sơ\s+này|điều\s+kiện\s+này|điều\s+kiện\s+đó|tiêu\s+chuẩn\s+này|tiêu\s+chuẩn\s+đó|"
+            r"yêu\s+cầu\s+này|yêu\s+cầu\s+đó|chuẩn\s+đó|chuẩn\s+này|mốc\s+đó|mốc\s+này|"
+            r"hệ\s+số\s+đó|hệ\s+số\s+này|tỷ\s+lệ\s+đó|tỷ\s+lệ\s+này|điểm\s+đó|điểm\s+này|"
+            r"hoạt\s+động\s+đó|môn\s+tiên\s+quyết\s+đó|học\s+phần\s+tiên\s+quyết\s+đó)\b",
             flags=re.IGNORECASE,
         )
         if pronoun_sub_re.search(rewritten_det):
@@ -2346,7 +3254,7 @@ def rewrite_conversational_query(query: str, chat_history: list | None = None) -
         t_rw = time.time()
         rewriter_llm = get_rewriter_llm()
         resp = rewriter_llm.invoke(rewrite_prompt)
-        rewritten = getattr(resp, "content", str(resp)).strip()
+        rewritten = strip_think_tags(getattr(resp, "content", str(resp))).strip()
         rewritten = re.sub(r"^(Câu hỏi độc lập|Câu hỏi viết lại)\s*:\s*", "", rewritten, flags=re.IGNORECASE)
         rewritten = rewritten.strip().strip('"').strip("'").splitlines()[0].strip()
         if rewritten and len(rewritten) >= 5:

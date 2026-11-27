@@ -22,18 +22,24 @@ from rag import (
     REFUSAL_MESSAGE,
     STREAM_INTERRUPTED_NOTICE,
     TOO_LONG_QUERY_MESSAGE,
+    ThinkTagStreamFilter,
     auto_sync_knowledge_base,
+    build_extractive_offline_fallback,
     clip_context_text,
+    encode_query_l2_vector,
     extract_article_info,
     get_greeting_or_chitchat_reply,
     get_rag_chain,
+    get_semantic_cache,
     is_greeting_or_chitchat,
+    is_llm_refusal_answer,
     is_prompt_injection,
     load_departments_config,
     normalize_chat_slang,
     rewrite_conversational_query,
     sanitize_client_error_message,
     sanitize_no_markdown_tables,
+    strip_think_tags,
 )
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -146,11 +152,12 @@ def get_cached_rag_chain():
 
 
 def ensure_kb_synced_and_fresh_cache() -> dict:
-    """Kiểm tra thay đổi ở thư mục data/ và xóa ANSWER_CACHE nếu cơ sở tri thức cập nhật."""
+    """Kiểm tra thay đổi ở thư mục data/ và xóa ANSWER_CACHE + Semantic Cache nếu cơ sở tri thức cập nhật."""
     sync_res = auto_sync_knowledge_base()
     if isinstance(sync_res, dict) and sync_res.get("changed"):
         with _cache_lock:
             _ANSWER_CACHE.clear()
+        get_semantic_cache().clear()
     return sync_res if isinstance(sync_res, dict) else {"changed": False}
 
 
@@ -246,22 +253,8 @@ def check_social_or_command_reply(query: str) -> str | None:
 
 
 def is_refusal_answer(text: str) -> bool:
-    """Phát hiện câu trả lời thuộc diện từ chối ngoài phạm vi, báo quá tải hoặc bị gián đoạn."""
-    t = (text or "").lower().strip()
-    if not t:
-        return True
-    if "phản hồi bị gián đoạn giữa chừng" in t:
-        return True
-    if "lượng truy cập cao" in t or "đợi khoảng 30–60 giây" in t:
-        return True
-    if "không được đề cập trong các văn bản quy định" in t or "nằm ngoài phạm vi dữ liệu quy chế" in t:
-        return True
-    has_legal_citation = bool(
-        re.search(r"\b(?:điều|khoản|mục|chương|quyết\s+định|phụ\s+lục)\s+[ivxlcdm\d]+", t)
-    )
-    if len(t) < 220 and not has_legal_citation and any(kw in t for kw in ["không được đề cập", "ngoài phạm vi dữ liệu"]):
-        return True
-    return False
+    """Phát hiện thống nhất mọi câu trả lời từ chối ngoài phạm vi, báo quá tải hoặc bị gián đoạn."""
+    return is_llm_refusal_answer(text)
 
 
 def normalize_query_intent(query: str) -> str:
@@ -821,8 +814,9 @@ async def lifespan(app: FastAPI):
     """Prewarm RAG chain và đồng bộ tri thức nền khi server FastAPI khởi động."""
     def _prewarm():
         try:
-            get_cached_rag_chain()
+            chain = get_cached_rag_chain()
             ensure_kb_synced_and_fresh_cache()
+            encode_query_l2_vector("điều kiện xét học bổng khuyến khích học tập", chain=chain)
         except Exception as exc:
             print(f"[FastAPI Prewarm Warning] {exc}")
 
@@ -939,30 +933,72 @@ def chat_sync(body: ChatStreamRequest, request: Request):
         }
     try:
         norm_q = normalize_query_intent(current_user_query)
+        ensure_kb_synced_and_fresh_cache()
         recent_chat_history = _build_filtered_history(body.messages, current_user_query)
-        rewritten_q = rewrite_conversational_query(norm_q, recent_chat_history)
-        dept_reply = check_department_inquiry(rewritten_q)
+        effective_query = normalize_chat_slang(rewrite_conversational_query(norm_q, recent_chat_history))
+        dept_reply = check_department_inquiry(effective_query)
         if dept_reply:
             return {
                 "answer": dept_reply,
                 "verified": False,
                 "is_refusal": False,
                 "is_dept_inquiry": True,
+                "cache_hit": False,
                 "contact": None,
                 "sources": [],
             }
         chain = get_cached_rag_chain()
-        res = chain.invoke({"input": rewritten_q})
+        sem_cache = get_semantic_cache()
+        t0 = time.perf_counter()
+        sem_hit = sem_cache.lookup(effective_query, chain=chain)
+        if sem_hit:
+            hit_elapsed = round(max(0.0005, time.perf_counter() - t0), 4)
+            cached_sources = list(sem_hit.get("sources") or [])
+            cached_contact = sem_hit.get("contact") or get_contact_footer_data(
+                effective_query, retrieved_docs=cached_sources or None, is_refusal=False
+            )
+            return {
+                "answer": sem_hit["answer"],
+                "verified": True,
+                "is_refusal": False,
+                "cache_hit": True,
+                "elapsed_time": hit_elapsed,
+                "semantic_similarity": sem_hit.get("semantic_similarity"),
+                "contact": cached_contact,
+                "sources": cached_sources,
+            }
+
+        res = chain.invoke({"input": effective_query})
         ans = sanitize_no_markdown_tables(str(res.get("answer") or REFUSAL_MESSAGE))
         is_ref = bool(res.get("is_refusal")) or is_refusal_answer(ans)
+        api_err = bool(res.get("api_error"))
         docs = res.get("context") or []
-        contact = None if is_ref else get_contact_footer_data(rewritten_q, retrieved_docs=docs, is_refusal=False)
+        verified_ok = not is_ref and not api_err and bool(docs)
+        sources_list = [os.path.basename(str(d.metadata.get("source", ""))) for d in docs]
+        contact = None if is_ref else get_contact_footer_data(effective_query, retrieved_docs=docs, is_refusal=False)
+        elapsed_sync = round(time.perf_counter() - t0, 2)
+        if verified_ok:
+            sem_cache.store(
+                effective_query,
+                {
+                    "answer": ans,
+                    "sources": sources_list,
+                    "contact": contact,
+                    "verified": True,
+                    "is_refusal": False,
+                    "api_error": False,
+                },
+                chain=chain,
+            )
         return {
             "answer": ans,
-            "verified": not is_ref and bool(docs),
+            "verified": verified_ok,
             "is_refusal": is_ref,
+            "offline_fallback": bool(res.get("offline_fallback")),
+            "cache_hit": False,
+            "elapsed_time": elapsed_sync,
             "contact": contact,
-            "sources": [os.path.basename(str(d.metadata.get("source", ""))) for d in docs],
+            "sources": sources_list,
         }
     except Exception as err:
         return {
@@ -1004,7 +1040,7 @@ def chat_stream(body: ChatStreamRequest, request: Request):
                 "is_greeting": False,
                 "is_dept_inquiry": False,
             })
-            yield _sse_event({"type": "done"})
+            yield _sse_event({"type": "done", "verified": False, "is_refusal": True, "contact": None})
             return
 
         # 0b. Chốt chặn tin nhắn quá dài (> 2.000 ký tự) trong < 5 ms trước khi gọi Embedding/LLM
@@ -1027,7 +1063,7 @@ def chat_stream(body: ChatStreamRequest, request: Request):
                 "is_greeting": False,
                 "is_dept_inquiry": False,
             })
-            yield _sse_event({"type": "done"})
+            yield _sse_event({"type": "done", "verified": False, "is_refusal": True, "contact": None})
             return
 
         # 0c. Chốt chặn Prompt Injection / Jailbreak bằng REFUSAL_MESSAGE (is_refusal=True, contact=None)
@@ -1050,7 +1086,7 @@ def chat_stream(body: ChatStreamRequest, request: Request):
                 "is_greeting": False,
                 "is_dept_inquiry": False,
             })
-            yield _sse_event({"type": "done"})
+            yield _sse_event({"type": "done", "verified": False, "is_refusal": True, "contact": None})
             return
 
         if not current_user_query or not re.search(r"[0-9a-zA-ZÀ-ỹ]", current_user_query):
@@ -1073,7 +1109,7 @@ def chat_stream(body: ChatStreamRequest, request: Request):
                 "is_greeting": True,
                 "is_dept_inquiry": False,
             })
-            yield _sse_event({"type": "done"})
+            yield _sse_event({"type": "done", "verified": False, "is_refusal": True, "contact": None})
             return
 
         social_reply = check_social_or_command_reply(current_user_query)
@@ -1106,24 +1142,15 @@ def chat_stream(body: ChatStreamRequest, request: Request):
                 "is_greeting": True,
                 "is_dept_inquiry": False,
             })
-            yield _sse_event({"type": "done"})
+            yield _sse_event({"type": "done", "verified": False, "is_refusal": True, "contact": None})
             return
 
         recent_chat_history = _build_filtered_history(body.messages, current_user_query)
         canonical_query = normalize_query_intent(current_user_query)
         ensure_kb_synced_and_fresh_cache()
 
+        rewritten_query = normalize_chat_slang(rewrite_conversational_query(canonical_query, recent_chat_history))
         canonical_cache_key = _strip_accents(canonical_query)
-        with _cache_lock:
-            canonical_cached = _ANSWER_CACHE.get(canonical_cache_key) if canonical_cache_key else None
-            if canonical_cached and (time.time() - float(canonical_cached.get("timestamp", 0))) > ANSWER_CACHE_TTL:
-                _ANSWER_CACHE.pop(canonical_cache_key, None)
-                canonical_cached = None
-
-        if canonical_cached and canonical_cached.get("answer"):
-            rewritten_query = canonical_query
-        else:
-            rewritten_query = rewrite_conversational_query(canonical_query, recent_chat_history)
 
         turns_msgs = list(body.messages or []) + [{"role": "user", "content": current_user_query}]
 
@@ -1147,11 +1174,49 @@ def chat_stream(body: ChatStreamRequest, request: Request):
                 "is_greeting": False,
                 "is_dept_inquiry": True,
             })
-            yield _sse_event({"type": "done"})
+            yield _sse_event({"type": "done", "verified": False, "is_refusal": False, "contact": None})
             return
 
-        # Nhánh 3: Kiểm tra ANSWER_CACHE (TTL 1800s) -> RAG Hybrid
+        # Nhánh 3: Kiểm tra Semantic Cache (Cosine >= 0.95 + Numeric Guard + Polarity Guard) + Exact Fallback
+        chain = get_cached_rag_chain()
+        sem_cache = get_semantic_cache()
+        sem_start = time.perf_counter()
+        sem_hit = sem_cache.lookup(rewritten_query, chain=chain)
         cache_key = _strip_accents(rewritten_query)
+
+        if sem_hit and sem_hit.get("answer"):
+            cached_answer = sem_hit["answer"]
+            cached_sources = list(sem_hit.get("sources") or [])
+            cached_contact = sem_hit.get("contact") or get_contact_footer_data(
+                rewritten_query, retrieved_docs=cached_sources or None, is_refusal=False
+            )
+            followups = sem_hit.get("followups") or select_followup_prompts(
+                rewritten_query,
+                prompts_cfg,
+                messages=turns_msgs,
+                sources=cached_sources,
+                assistant_reply=cached_answer,
+                asked_queries=body.asked_queries,
+            )
+            hit_elapsed = round(max(0.0005, time.perf_counter() - sem_start), 4)
+            yield _sse_event({"type": "chunk", "content": cached_answer})
+            yield _sse_event({
+                "type": "meta",
+                "verified": True,
+                "elapsed_time": hit_elapsed,
+                "cache_hit": True,
+                "semantic_similarity": sem_hit.get("semantic_similarity"),
+                "contact": cached_contact,
+                "followups": followups,
+                "sources": cached_sources,
+                "rewritten_query": rewritten_query,
+                "is_refusal": False,
+                "is_greeting": False,
+                "is_dept_inquiry": False,
+            })
+            yield _sse_event({"type": "done", "verified": True, "is_refusal": False, "contact": cached_contact})
+            return
+
         with _cache_lock:
             cached_entry = _ANSWER_CACHE.get(cache_key) if cache_key else None
             if cached_entry and (time.time() - float(cached_entry.get("timestamp", 0))) > ANSWER_CACHE_TTL:
@@ -1175,11 +1240,12 @@ def chat_stream(body: ChatStreamRequest, request: Request):
                 assistant_reply=cached_answer,
                 asked_queries=body.asked_queries,
             )
+            hit_elapsed = round(max(0.0005, time.perf_counter() - sem_start), 4)
             yield _sse_event({"type": "chunk", "content": cached_answer})
             yield _sse_event({
                 "type": "meta",
                 "verified": True,
-                "elapsed_time": 0.05,
+                "elapsed_time": hit_elapsed,
                 "cache_hit": True,
                 "contact": cached_contact,
                 "followups": followups,
@@ -1189,13 +1255,12 @@ def chat_stream(body: ChatStreamRequest, request: Request):
                 "is_greeting": False,
                 "is_dept_inquiry": False,
             })
-            yield _sse_event({"type": "done"})
+            yield _sse_event({"type": "done", "verified": True, "is_refusal": False, "contact": cached_contact})
             return
 
         # Thực thi Live Hybrid RAG + Streaming
         start_time = time.time()
         try:
-            chain = get_cached_rag_chain()
             docs = chain.filter_documents(rewritten_query, k=6)
             if not docs:
                 contact = None
@@ -1221,12 +1286,14 @@ def chat_stream(body: ChatStreamRequest, request: Request):
                     "is_greeting": False,
                     "is_dept_inquiry": False,
                 })
-                yield _sse_event({"type": "done"})
+                yield _sse_event({"type": "done", "verified": False, "is_refusal": True, "contact": None})
                 return
 
             formatted_prompt, sources_to_save = _build_rag_prompt_and_sources(rewritten_query, docs, chain)
             streamed_chunks: list[str] = []
             yielded_any = False
+            had_stream_error = False
+            think_filter = ThinkTagStreamFilter()
 
             try:
                 for chunk in chain.llm.stream(formatted_prompt):
@@ -1238,27 +1305,72 @@ def chat_stream(body: ChatStreamRequest, request: Request):
                         )
                     if chunk_text:
                         yielded_any = True
-                        streamed_chunks.append(chunk_text)
-                        yield _sse_event({"type": "chunk", "content": chunk_text})
+                        clean_chunk = think_filter.feed(chunk_text)
+                        if clean_chunk:
+                            streamed_chunks.append(clean_chunk)
+                            yield _sse_event({"type": "chunk", "content": clean_chunk})
+
+                tail_clean = think_filter.flush()
+                if tail_clean:
+                    streamed_chunks.append(tail_clean)
+                    yield _sse_event({"type": "chunk", "content": tail_clean})
 
                 if not yielded_any:
                     resp_obj = chain.llm.invoke(formatted_prompt)
                     fallback_text = getattr(resp_obj, "content", str(resp_obj))
-                    if fallback_text and str(fallback_text).strip():
-                        text_str = str(fallback_text)
+                    text_str = strip_think_tags(str(fallback_text or ""))
+                    if text_str.strip():
                         streamed_chunks.append(text_str)
                         yield _sse_event({"type": "chunk", "content": text_str})
             except Exception as stream_err:
+                had_stream_error = True
+                tail_clean = think_filter.flush()
+                if tail_clean:
+                    streamed_chunks.append(tail_clean)
+                    yield _sse_event({"type": "chunk", "content": tail_clean})
                 if not yielded_any:
+                    if docs:
+                        fallback_text = build_extractive_offline_fallback(
+                            rewritten_query,
+                            docs,
+                            err=stream_err,
+                            rate_limit_msg=RATE_LIMIT_MESSAGE,
+                        )
+                        contact = get_contact_footer_data(rewritten_query, retrieved_docs=docs, is_refusal=False)
+                        followups = select_followup_prompts(
+                            rewritten_query,
+                            prompts_cfg,
+                            messages=turns_msgs,
+                            sources=sources_to_save,
+                            assistant_reply=fallback_text,
+                            asked_queries=body.asked_queries,
+                        )
+                        yield _sse_event({"type": "chunk", "content": fallback_text})
+                        yield _sse_event({
+                            "type": "meta",
+                            "verified": False,
+                            "elapsed_time": None,
+                            "cache_hit": False,
+                            "offline_fallback": True,
+                            "contact": contact,
+                            "followups": followups,
+                            "sources": sources_to_save,
+                            "rewritten_query": rewritten_query,
+                            "is_refusal": False,
+                            "is_greeting": False,
+                            "is_dept_inquiry": False,
+                        })
+                        yield _sse_event({"type": "done", "verified": False, "is_refusal": False, "contact": contact})
+                        return
                     raise stream_err
                 err_str = str(stream_err)
                 notice = f"\n\n{RATE_LIMIT_MESSAGE}" if ("429" in err_str or "RESOURCE_EXHAUSTED" in err_str.upper()) else f"\n\n{STREAM_INTERRUPTED_NOTICE}"
                 streamed_chunks.append(notice)
                 yield _sse_event({"type": "chunk", "content": notice})
 
-            full_answer = sanitize_no_markdown_tables("".join(streamed_chunks).strip())
+            full_answer = sanitize_no_markdown_tables(strip_think_tags("".join(streamed_chunks)).strip())
             elapsed_time = round(time.time() - start_time, 2)
-            is_interrupted = "phản hồi bị gián đoạn giữa chừng" in full_answer.lower()
+            is_interrupted = had_stream_error or ("phản hồi bị gián đoạn giữa chừng" in full_answer.lower())
 
             if is_interrupted:
                 contact = None
@@ -1270,7 +1382,7 @@ def chat_stream(body: ChatStreamRequest, request: Request):
                     "verified": False,
                     "elapsed_time": None,
                     "cache_hit": False,
-                    "contact": contact,
+                    "contact": None,
                     "followups": followups,
                     "sources": [],
                     "rewritten_query": rewritten_query,
@@ -1278,6 +1390,7 @@ def chat_stream(body: ChatStreamRequest, request: Request):
                     "is_greeting": False,
                     "is_dept_inquiry": False,
                 })
+                done_meta = {"type": "done", "verified": False, "is_refusal": True, "contact": None}
             elif is_refusal_answer(full_answer) or not full_answer:
                 final_text = full_answer or REFUSAL_MESSAGE
                 if not full_answer:
@@ -1291,7 +1404,7 @@ def chat_stream(body: ChatStreamRequest, request: Request):
                     "verified": False,
                     "elapsed_time": None,
                     "cache_hit": False,
-                    "contact": contact,
+                    "contact": None,
                     "followups": followups,
                     "sources": [],
                     "rewritten_query": rewritten_query,
@@ -1299,6 +1412,7 @@ def chat_stream(body: ChatStreamRequest, request: Request):
                     "is_greeting": False,
                     "is_dept_inquiry": False,
                 })
+                done_meta = {"type": "done", "verified": False, "is_refusal": True, "contact": None}
             else:
                 contact = get_contact_footer_data(rewritten_query, retrieved_docs=docs, is_refusal=False)
                 followups = select_followup_prompts(
@@ -1309,7 +1423,21 @@ def chat_stream(body: ChatStreamRequest, request: Request):
                     assistant_reply=full_answer,
                     asked_queries=body.asked_queries,
                 )
-                if cache_key:
+                if not had_stream_error:
+                    sem_cache.store(
+                        rewritten_query,
+                        {
+                            "answer": full_answer,
+                            "sources": sources_to_save,
+                            "contact": contact,
+                            "followups": followups,
+                            "verified": True,
+                            "is_refusal": False,
+                            "api_error": False,
+                        },
+                        chain=chain,
+                    )
+                if cache_key and not had_stream_error:
                     record = {
                         "answer": full_answer,
                         "contact": contact,
@@ -1333,7 +1461,8 @@ def chat_stream(body: ChatStreamRequest, request: Request):
                     "is_greeting": False,
                     "is_dept_inquiry": False,
                 })
-            yield _sse_event({"type": "done"})
+                done_meta = {"type": "done", "verified": True, "is_refusal": False, "contact": contact}
+            yield _sse_event(done_meta)
 
         except Exception as err:
             print(f"[API STREAM ERROR] {type(err).__name__}")
@@ -1348,7 +1477,7 @@ def chat_stream(body: ChatStreamRequest, request: Request):
                 "verified": False,
                 "elapsed_time": None,
                 "cache_hit": False,
-                "contact": contact,
+                "contact": None,
                 "followups": followups,
                 "sources": [],
                 "rewritten_query": rewritten_query,
@@ -1356,7 +1485,7 @@ def chat_stream(body: ChatStreamRequest, request: Request):
                 "is_greeting": False,
                 "is_dept_inquiry": False,
             })
-            yield _sse_event({"type": "done"})
+            yield _sse_event({"type": "done", "verified": False, "is_refusal": True, "contact": None})
 
     return StreamingResponse(
         _event_generator(),

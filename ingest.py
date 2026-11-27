@@ -1110,7 +1110,7 @@ def create_vector_db():
     print("✅ ĐÃ HOÀN TẤT TẠO VÀ HOÁN ĐỔI AN TOÀN VECTOR DATABASE DYNAMIC MỚI!")
 
 
-def sync_knowledge_base_from_data_dir(vector_db=None) -> dict:
+def sync_knowledge_base_from_data_dir(vector_db=None, data_dir: str | None = None) -> dict:
     """
     Đồng bộ tăng cường kho tri thức từ thư mục data/ (.pdf, .docx, .txt) vào chroma_db:
     - File mới thêm: Chỉ trích xuất + chunk + add_documents(), không ảnh hưởng dữ liệu cũ.
@@ -1118,6 +1118,7 @@ def sync_knowledge_base_from_data_dir(vector_db=None) -> dict:
     - File bị xóa / thuộc EXCLUDED_FILES: Tự động xóa toàn bộ chunk của source khỏi chroma_db.
     - File baseline chưa có file_mtime: Ghi bổ sung file_mtime tại chỗ để tránh nhúng lại toàn bộ.
     """
+    target_data_dir = data_dir or DATA_PATH
     if vector_db is None:
         embedding_model = HuggingFaceEmbeddings(
             model_name="bkai-foundation-models/vietnamese-bi-encoder",
@@ -1132,7 +1133,7 @@ def sync_knowledge_base_from_data_dir(vector_db=None) -> dict:
 
     departments = load_departments(DEPARTMENTS_PATH)
     disk_files = {}
-    for full_path in _iter_valid_data_files(DATA_PATH):
+    for full_path in _iter_valid_data_files(target_data_dir):
         fname = os.path.basename(full_path)
         disk_files[fname] = (full_path, round(os.path.getmtime(full_path), 2))
 
@@ -1186,8 +1187,13 @@ def sync_knowledge_base_from_data_dir(vector_db=None) -> dict:
             if not _is_file_ready_for_reading(full_path, wait_sec=0.3):
                 skipped.append(src)
                 continue
+            try:
+                new_chunks = build_chunks_for_file(full_path, departments)
+            except Exception as file_err:
+                print(f"[WARN] Bỏ qua tệp lỗi/hỏng cấu trúc '{src}': {file_err}")
+                skipped.append(src)
+                continue
             vector_db.delete(where={"source": src})
-            new_chunks = build_chunks_for_file(full_path, departments)
             if new_chunks:
                 vector_db.add_documents(new_chunks)
                 raw_t = str(new_chunks[0].metadata.get("title", "") or "").strip()
@@ -1203,7 +1209,12 @@ def sync_knowledge_base_from_data_dir(vector_db=None) -> dict:
             if not _is_file_ready_for_reading(full_path, wait_sec=0.3):
                 skipped.append(src)
                 continue
-            new_chunks = build_chunks_for_file(full_path, departments)
+            try:
+                new_chunks = build_chunks_for_file(full_path, departments)
+            except Exception as file_err:
+                print(f"[WARN] Bỏ qua tệp lỗi/hỏng cấu trúc '{src}': {file_err}")
+                skipped.append(src)
+                continue
             if new_chunks:
                 vector_db.add_documents(new_chunks)
                 added.append(src)

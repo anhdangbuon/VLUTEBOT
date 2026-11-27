@@ -166,7 +166,7 @@ export default function ChatMessage({
           ) : (
             <>
               <AnimatePresence initial={true}>
-                {message.verified && (
+                {message.verified && !message.isRefusal && (
                   <motion.div
                     key="verify-badge"
                     data-testid="verify-badge"
@@ -195,7 +195,7 @@ export default function ChatMessage({
                 </ReactMarkdown>
               </div>
 
-              {message.contact && (
+              {message.contact && !message.isRefusal && (
                 <ContactCard
                   contact={message.contact}
                   disableAnimation={Boolean(message.isWelcome)}

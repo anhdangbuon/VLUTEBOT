@@ -233,10 +233,24 @@ export default function App() {
     }
   }, [initData?.welcome_content, welcomePrompts]);
 
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+    };
+  }, []);
+
   const handleSendQuery = useCallback(
     async (rawQuery) => {
       const trimmed = (rawQuery ?? inputText).trim();
-      if (!trimmed || isStreaming) return;
+      if (!trimmed) return;
+
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
 
       if (rawQuery === undefined) {
         setInputText("");
@@ -251,20 +265,35 @@ export default function App() {
 
       const userMsgId = `user-${Date.now()}`;
       const botMsgId = `assistant-${Date.now() + 1}`;
-      const historyPayload = messages.map((m) => ({
-        role: m.role,
-        content: m.content,
-        query: m.query || "",
-        is_welcome: Boolean(m.isWelcome),
-        is_refusal: Boolean(m.isRefusal),
-        is_greeting: Boolean(m.isGreeting),
-        is_dept_inquiry: Boolean(m.isDeptInquiry),
-      }));
+      const finalizedMessages = messages.map((m) =>
+        m.isThinking || m.isStreaming
+          ? {
+              ...m,
+              content: m.content || "*(Đã hủy lượt trả lời trước)*",
+              isThinking: false,
+              isStreaming: false,
+              verified: false,
+              isRefusal: true,
+              contact: null,
+            }
+          : m
+      );
+      const historyPayload = finalizedMessages
+        .filter((m) => !m.isThinking && !m.isStreaming && m.content !== "*(Đã hủy lượt trả lời trước)*")
+        .map((m) => ({
+          role: m.role,
+          content: m.content,
+          query: m.query || "",
+          is_welcome: Boolean(m.isWelcome),
+          is_refusal: Boolean(m.isRefusal),
+          is_greeting: Boolean(m.isGreeting),
+          is_dept_inquiry: Boolean(m.isDeptInquiry),
+        }));
       const nextAskedQueries = [...askedQueries, trimmed];
       setAskedQueries(nextAskedQueries);
 
-      setMessages((prev) => [
-        ...prev,
+      setMessages([
+        ...finalizedMessages,
         { id: userMsgId, role: "user", content: trimmed },
         {
           id: botMsgId,
@@ -274,6 +303,7 @@ export default function App() {
           isStreaming: true,
           isWelcome: false,
           verified: false,
+          isRefusal: false,
           elapsedTime: null,
           contact: null,
           followups: [],
@@ -300,6 +330,9 @@ export default function App() {
           signal: controller.signal,
         });
 
+        if (controller.signal.aborted || abortControllerRef.current !== controller) {
+          return;
+        }
         if (!res.ok || !res.body) {
           throw new Error(`HTTP ${res.status}`);
         }
@@ -309,7 +342,18 @@ export default function App() {
         let buffer = "";
 
         while (true) {
+          if (controller.signal.aborted || abortControllerRef.current !== controller) {
+            try {
+              await reader.cancel();
+            } catch {
+              // ignore cancel error
+            }
+            return;
+          }
           const { value, done } = await reader.read();
+          if (controller.signal.aborted || abortControllerRef.current !== controller) {
+            return;
+          }
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
 
@@ -342,6 +386,8 @@ export default function App() {
                 if (evt.is_greeting) {
                   nextGreetingCount += 1;
                 }
+                const metaRefusal = Boolean(evt.is_refusal);
+                const metaVerified = metaRefusal ? false : Boolean(evt.verified);
                 setMessages((prev) =>
                   prev.map((m) =>
                     m.id === botMsgId
@@ -349,14 +395,14 @@ export default function App() {
                           ...m,
                           isThinking: false,
                           isStreaming: false,
-                          verified: Boolean(evt.verified),
-                          elapsedTime: evt.elapsed_time ?? null,
+                          verified: metaVerified,
+                          elapsedTime: metaVerified ? (evt.elapsed_time ?? null) : null,
                           cacheHit: Boolean(evt.cache_hit),
-                          contact: evt.contact || null,
+                          contact: metaRefusal ? null : (evt.contact || null),
                           followups: Array.isArray(evt.followups) ? evt.followups : [],
-                          sources: Array.isArray(evt.sources) ? evt.sources : [],
+                          sources: metaRefusal ? [] : (Array.isArray(evt.sources) ? evt.sources : []),
                           query: evt.rewritten_query || trimmed,
-                          isRefusal: Boolean(evt.is_refusal),
+                          isRefusal: metaRefusal,
                           isGreeting: Boolean(evt.is_greeting),
                           isDeptInquiry: Boolean(evt.is_dept_inquiry),
                         }
@@ -365,9 +411,24 @@ export default function App() {
                 );
               } else if (evt.type === "done") {
                 setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === botMsgId ? { ...m, isThinking: false, isStreaming: false } : m
-                  )
+                  prev.map((m) => {
+                    if (m.id !== botMsgId) return m;
+                    const doneRefusal =
+                      typeof evt.is_refusal === "boolean" ? evt.is_refusal : Boolean(m.isRefusal);
+                    const doneVerified = doneRefusal
+                      ? false
+                      : typeof evt.verified === "boolean"
+                        ? evt.verified
+                        : Boolean(m.verified);
+                    return {
+                      ...m,
+                      isThinking: false,
+                      isStreaming: false,
+                      isRefusal: doneRefusal,
+                      verified: doneVerified,
+                      contact: doneRefusal ? null : (evt.contact !== undefined ? evt.contact : m.contact),
+                    };
+                  })
                 );
               }
             }
@@ -378,7 +439,7 @@ export default function App() {
           setGreetingTurnCount(nextGreetingCount);
         }
       } catch (err) {
-        if (err.name !== "AbortError") {
+        if (err.name !== "AbortError" && abortControllerRef.current === controller) {
           setMessages((prev) =>
             prev.map((m) =>
               m.id === botMsgId
@@ -390,6 +451,7 @@ export default function App() {
                     isThinking: false,
                     isStreaming: false,
                     verified: false,
+                    contact: null,
                     isRefusal: true,
                   }
                 : m
@@ -399,16 +461,16 @@ export default function App() {
       } finally {
         if (abortControllerRef.current === controller) {
           abortControllerRef.current = null;
+          setIsStreaming(false);
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === botMsgId ? { ...m, isThinking: false, isStreaming: false } : m
+            )
+          );
         }
-        setIsStreaming(false);
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === botMsgId ? { ...m, isThinking: false, isStreaming: false } : m
-          )
-        );
       }
     },
-    [askedQueries, greetingTurnCount, inputText, isStreaming, messages]
+    [askedQueries, greetingTurnCount, inputText, messages]
   );
 
   const handleKeyDown = (e) => {
@@ -568,14 +630,13 @@ export default function App() {
               onChange={handleTextareaChange}
               onKeyDown={handleKeyDown}
               placeholder={placeholder}
-              disabled={isStreaming}
-              className="flex-1 resize-none overflow-hidden bg-transparent border-0 outline-none text-[0.86rem] md:text-[0.95rem] leading-[1.45] text-[#1e293b] placeholder:text-slate-400 py-1 max-h-[140px] disabled:opacity-60"
+              className="flex-1 resize-none overflow-hidden bg-transparent border-0 outline-none text-[0.86rem] md:text-[0.95rem] leading-[1.45] text-[#1e293b] placeholder:text-slate-400 py-1 max-h-[140px]"
             />
             <motion.button
               type="submit"
               data-testid="send-btn"
               aria-label="Gửi câu hỏi"
-              disabled={!inputText.trim() || isStreaming}
+              disabled={!inputText.trim()}
               whileHover={{ scale: 1.04 }}
               whileTap={{ scale: 0.95 }}
               className="shrink-0 w-9 h-9 rounded-[10px] bg-[#00703c] hover:bg-[#005a30] disabled:bg-slate-300 text-white flex items-center justify-center transition-colors duration-150 cursor-pointer disabled:cursor-not-allowed"
