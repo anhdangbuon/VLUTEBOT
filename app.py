@@ -14,6 +14,7 @@ from rag import (
     REFUSAL_MESSAGE,
     TOO_LONG_QUERY_MESSAGE,
     auto_sync_knowledge_base,
+    build_adaptive_followup_pool,
     clip_context_text,
     extract_article_info,
     get_greeting_or_chitchat_reply,
@@ -2337,67 +2338,12 @@ def _select_followup_prompts(
     limit: int = 2,
 ) -> list[tuple[str, str]]:
     """Chọn 2 nút gợi ý theo 3 tầng: (1) chưa hỏi cùng nhóm, (2) chưa hỏi nhóm khác, (3) LRU Recycling câu cũ nhất."""
-    q_text = (query_or_content or "").lower()
-    reply_text = (assistant_reply or "").lower()
-
-    doc_title = ""
-    doc_snippet = ""
-    doc_dept_key = ""
-    if sources and isinstance(sources, list) and len(sources) > 0:
-        src0 = sources[0]
-        if isinstance(src0, dict):
-            doc_title = str(src0.get("title") or src0.get("short_title") or "").lower()
-            doc_snippet = str(src0.get("snippet") or "")[:400].lower()
-            doc_dept_key = str(src0.get("dept_key") or "").lower().strip()
-        else:
-            meta = getattr(src0, "metadata", {}) or {}
-            doc_title = str(meta.get("title") or "").lower()
-            doc_snippet = str(getattr(src0, "page_content", "") or "")[:400].lower()
-            doc_dept_key = str(meta.get("dept_key") or "").lower().strip()
-
-    categories = config.get("categories", {})
-
-    best_cat_key = None
-    best_score = 0
-    # Chấm điểm độ khớp từ khóa trên ngữ cảnh tổng hợp (ưu tiên trọng số cao cho title và query_or_content)
-    for cat_key, cat_data in categories.items():
-        kws = [str(kw).lower() for kw in cat_data.get("keywords", []) if kw]
-        score = 0
-        for kw in kws:
-            if doc_title and kw in doc_title:
-                score += 4
-            if q_text and kw in q_text:
-                score += 3
-            if reply_text and kw in reply_text:
-                score += 2
-            if doc_snippet and kw in doc_snippet:
-                score += 1
-        if score > best_score:
-            best_score = score
-            best_cat_key = cat_key
-
-    # Lớp dự phòng tổng quát theo dept_key tự động của sources[0] nếu chưa khớp rõ từ khóa
-    if not best_cat_key and doc_dept_key:
-        dept_to_category = {
-            "dao_tao": "hoc_vu_tot_nghiep",
-            "cntt": "hoc_vu_tot_nghiep",
-            "khtc": "hoc_phi",
-            "ctsv": "ctxh_ren_luyen",
-        }
-        mapped_cat = dept_to_category.get(doc_dept_key)
-        if mapped_cat in categories:
-            best_cat_key = mapped_cat
-
-    if best_cat_key and best_cat_key in categories:
-        primary_raw = [(p["label"], p["query"]) for p in categories[best_cat_key].get("prompts", [])]
-    else:
-        primary_raw = [(p["label"], p["query"]) for p in config.get("initial_prompts", [])]
-
-    secondary_raw = []
-    for ckey, cdata in categories.items():
-        if ckey != best_cat_key:
-            secondary_raw.extend((p["label"], p["query"]) for p in cdata.get("prompts", []))
-    secondary_raw.extend((p["label"], p["query"]) for p in config.get("initial_prompts", []))
+    primary_raw, secondary_raw = build_adaptive_followup_pool(
+        config=config,
+        query_or_content=query_or_content,
+        sources=sources,
+        assistant_reply=assistant_reply,
+    )
 
     compiled_turns = _build_chronological_asked_turns(messages, query_or_content, asked_queries)
 
@@ -2773,8 +2719,10 @@ if current_user_query:
 
                     if cached_entry and cached_entry.get("answer"):
                         cached_answer = cached_entry["answer"]
-                        cached_contact = cached_entry.get("contact") or get_contact_footer(rewritten_query, retrieved_docs=None, is_refusal=False)
                         cached_sources = cached_entry.get("sources") or []
+                        cached_contact = cached_entry.get("contact") or get_contact_footer(
+                            rewritten_query, retrieved_docs=cached_sources or None, is_refusal=False
+                        )
                         cached_elapsed = 0.05
                         pre_followups = _preselect_followups(rewritten_query, sources=cached_sources, assistant_reply=cached_answer)
                         status_placeholder.markdown(

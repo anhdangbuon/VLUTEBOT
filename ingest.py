@@ -76,6 +76,7 @@ _DEPT_CONTENT_CUES = {
             "học bổng khuyến khích", "hoc_bong_khuyen_khich",
             "điểm rèn luyện", "diem_ren_luyen", "công tác xã hội", "cong_tac_xa_hoi",
             "kỷ luật sinh viên", "ky_luat_sinh_vien", "quy tắc ứng xử", "quy_tac_ung_xu",
+            "ký túc xá", "ky_tuc_xa", "nội trú", "noi_tru", "lệ phí nội trú", "ban quản lý ktx",
         ),
         "regular": (
             "học bổng", "hoc_bong", "rèn luyện", "ren_luyen",
@@ -1110,6 +1111,15 @@ def create_vector_db():
     print("✅ ĐÃ HOÀN TẤT TẠO VÀ HOÁN ĐỔI AN TOÀN VECTOR DATABASE DYNAMIC MỚI!")
 
 
+_KB_CHANGE_LISTENERS = []
+
+
+def register_kb_change_listener(listener) -> None:
+    """Đăng ký callback tự động làm mới lexicon/BM25/cache khi kho tri thức có thay đổi (thêm/sửa/xóa)."""
+    if callable(listener) and listener not in _KB_CHANGE_LISTENERS:
+        _KB_CHANGE_LISTENERS.append(listener)
+
+
 def sync_knowledge_base_from_data_dir(vector_db=None, data_dir: str | None = None) -> dict:
     """
     Đồng bộ tăng cường kho tri thức từ thư mục data/ (.pdf, .docx, .txt) vào chroma_db:
@@ -1226,13 +1236,20 @@ def sync_knowledge_base_from_data_dir(vector_db=None, data_dir: str | None = Non
 
     _warn_duplicate_doc_titles(title_to_files)
 
-    return {
+    result = {
         "changed": bool(added or updated or deleted),
         "added": added,
         "updated": updated,
         "deleted": deleted,
         "skipped": skipped,
     }
+    if result["changed"]:
+        for listener in list(_KB_CHANGE_LISTENERS):
+            try:
+                listener(vector_db, result)
+            except Exception as cb_err:
+                print(f"[WARN] KB change listener error: {cb_err}")
+    return result
 
 
 if __name__ == "__main__":

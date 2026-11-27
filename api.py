@@ -24,10 +24,12 @@ from rag import (
     TOO_LONG_QUERY_MESSAGE,
     ThinkTagStreamFilter,
     auto_sync_knowledge_base,
+    build_adaptive_followup_pool,
     build_extractive_offline_fallback,
     clip_context_text,
     encode_query_l2_vector,
     extract_article_info,
+    get_corpus_lexicon,
     get_greeting_or_chitchat_reply,
     get_rag_chain,
     get_semantic_cache,
@@ -626,60 +628,13 @@ def select_followup_prompts(
     asked_queries: list[str] | set[str] | None = None,
     limit: int = 2,
 ) -> list[dict[str, str]]:
-    """Chọn 2 nút gợi ý liên quan theo cơ chế 3-tier LRU Recycling giống app.py."""
-    q_text = (query_or_content or "").lower()
-    reply_text = (assistant_reply or "").lower()
-
-    doc_title = ""
-    doc_snippet = ""
-    doc_dept_key = ""
-    if sources and isinstance(sources, list) and len(sources) > 0:
-        src0 = sources[0]
-        if isinstance(src0, dict):
-            doc_title = str(src0.get("title") or src0.get("short_title") or "").lower()
-            doc_snippet = str(src0.get("snippet") or "")[:400].lower()
-            doc_dept_key = str(src0.get("dept_key") or "").lower().strip()
-
-    categories = config.get("categories", {})
-    best_cat_key = None
-    best_score = 0
-    for cat_key, cat_data in categories.items():
-        kws = [str(kw).lower() for kw in cat_data.get("keywords", []) if kw]
-        score = 0
-        for kw in kws:
-            if doc_title and kw in doc_title:
-                score += 4
-            if q_text and kw in q_text:
-                score += 3
-            if reply_text and kw in reply_text:
-                score += 2
-            if doc_snippet and kw in doc_snippet:
-                score += 1
-        if score > best_score:
-            best_score = score
-            best_cat_key = cat_key
-
-    if not best_cat_key and doc_dept_key:
-        dept_to_category = {
-            "dao_tao": "hoc_vu_tot_nghiep",
-            "cntt": "hoc_vu_tot_nghiep",
-            "khtc": "hoc_phi",
-            "ctsv": "ctxh_ren_luyen",
-        }
-        mapped_cat = dept_to_category.get(doc_dept_key)
-        if mapped_cat in categories:
-            best_cat_key = mapped_cat
-
-    if best_cat_key and best_cat_key in categories:
-        primary_raw = [(p["label"], p["query"]) for p in categories[best_cat_key].get("prompts", [])]
-    else:
-        primary_raw = [(p["label"], p["query"]) for p in config.get("initial_prompts", [])]
-
-    secondary_raw = []
-    for ckey, cdata in categories.items():
-        if ckey != best_cat_key:
-            secondary_raw.extend((p["label"], p["query"]) for p in cdata.get("prompts", []))
-    secondary_raw.extend((p["label"], p["query"]) for p in config.get("initial_prompts", []))
+    """Chọn 2 nút gợi ý liên quan theo bộ gợi ý động thích ứng & cơ chế 3-tier LRU Recycling giống app.py."""
+    primary_raw, secondary_raw = build_adaptive_followup_pool(
+        config=config,
+        query_or_content=query_or_content,
+        sources=sources,
+        assistant_reply=assistant_reply,
+    )
 
     compiled_turns = _build_chronological_asked_turns(messages, query_or_content, asked_queries)
 
@@ -816,6 +771,7 @@ async def lifespan(app: FastAPI):
         try:
             chain = get_cached_rag_chain()
             ensure_kb_synced_and_fresh_cache()
+            get_corpus_lexicon(chain.vector_db).ensure_loaded(chain.vector_db)
             encode_query_l2_vector("điều kiện xét học bổng khuyến khích học tập", chain=chain)
         except Exception as exc:
             print(f"[FastAPI Prewarm Warning] {exc}")

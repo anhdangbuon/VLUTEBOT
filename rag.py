@@ -40,6 +40,7 @@ from langchain_groq import ChatGroq
 from langchain_openai import ChatOpenAI
 from ingest import (
     match_department_for_file,
+    register_kb_change_listener,
     sync_knowledge_base_from_data_dir,
     SUPPORTED_EXTENSIONS,
     DATA_PATH,
@@ -320,12 +321,53 @@ def extract_article_info(content: str):
     return None
 
 
+_PURE_UTILITY_OOS_PATTERNS = (
+    "viết code", "đoạn code", "code python", "code c++", "code java", "code javascript",
+    "code c#", "code php", "code html", "code sql", "lập trình python", "lập trình c++",
+    "lập trình java", "lập trình web", "giải phương trình", "hệ phương trình",
+    "tính tích phân", "tính đạo hàm", "ma trận nghịch đảo", "thuật toán sắp xếp",
+    "cây nhị phân", "dịch đoạn văn", "dịch sang tiếng", "dịch câu này", "viết bài văn",
+    "viết đoạn văn", "làm bài thơ", "sáng tác thơ", "tóm tắt truyện", "tóm tắt tác phẩm",
+    "truyện kiều", "chí phèo", "tắt đèn", "vợ nhặt", "lão hạc", "cách làm món",
+    "cách nấu", "công thức nấu", "thịt kho tàu", "phở bò", "bún bò", "canh chua",
+    "thời tiết", "dự báo thời tiết", "nhiệt độ hôm nay", "trời có mưa không",
+    "cấu hình pc", "build pc", "pc gaming", "mua laptop", "tư vấn laptop", "tư vấn điện thoại",
+    "giá vàng", "tỷ giá ngoại tệ", "tỷ giá usd", "chứng khoán", "bitcoin", "tiền ảo",
+    "giá xăng", "bóng đá", "ngoại hạng anh", "world cup", "champions league",
+    "xổ số", "vietlott", "cung hoàng đạo", "tử vi", "bói toán", "xem bói", "phong thủy",
+    "nghi_quyet_71", "nghi_quyet_72", "nghi_quyet_153",
+)
+
+_CONDITIONAL_INSTITUTIONAL_OOS_PATTERNS = (
+    "căn tin", "cantin", "căng tin", "ký túc xá", "nội trú", "ktx",
+    "tiền điện nước ở ktx", "tiền phòng trọ", "thuê trọ", "nhà trọ sinh viên",
+    "vé gửi xe", "giữ xe tháng", "gửi xe tháng", "bãi giữ xe", "nhà xe sinh viên",
+    "tuyến xe buýt", "xe buýt số", "xe bus số",
+    "điểm chuẩn", "điểm sàn xét tuyển", "chỉ tiêu tuyển sinh", "xét học bạ", "mã trường tuyển sinh",
+    "lịch nghỉ tết", "tết nguyên đán", "nghỉ lễ 30/4", "nghỉ lễ 2/9", "lịch nghỉ hè",
+    "thư viện mở cửa", "giờ mở cửa thư viện", "đơn giá 1 tín chỉ là bao nhiêu tiền",
+    "1 tín chỉ bao nhiêu tiền", "một tín chỉ bao nhiêu tiền", "học phí 1 tín chỉ",
+    "học phí một tín chỉ", "quy chế sau đại học", "đào tạo sau đại học", "đào tạo thạc sĩ",
+    "đào tạo tiến sĩ", "trình độ thạc sĩ", "trình độ tiến sĩ", "luận văn thạc sĩ",
+    "luận án tiến sĩ", "tuyển sinh cao học", "học viên cao học",
+)
+
+_PURE_ARITHMETIC_OOS_RE = re.compile(
+    r"(?:^|\s)\d+(?:[.,]\d+)?\s*(?:\+|\-|\*|×|\^|\bcộng\b|\btrừ\b|\bnhân\b)\s*\d+(?:[.,]\d+)?\s*(?:=|bằng\b|là\s+mấy|là\s+bao\s+nhiêu)",
+    re.IGNORECASE,
+)
+
+
 class SmartRAGChain:
     def __init__(self, vector_db, llm, prompt):
         self.vector_db = vector_db
         self.llm = llm
         self.prompt = prompt
         self.last_retrieval_debug = {}
+        try:
+            get_corpus_lexicon(self.vector_db).ensure_loaded(self.vector_db)
+        except Exception:
+            pass
 
     @staticmethod
     def _is_excluded_resolution_query(q_lower: str) -> bool:
@@ -339,10 +381,10 @@ class SmartRAGChain:
         return any(pat in q_lower for pat in excluded_patterns)
 
     @staticmethod
-    def _has_core_in_scope_regulation_anchor(q_lower: str) -> bool:
+    def _has_core_in_scope_regulation_anchor(q_lower: str, vector_db=None) -> bool:
         """
-        Kiểm tra câu hỏi có chứa chủ đề quy chế/học phần cốt lõi nằm trong 8 tài liệu chính thức hay không.
-        Giúp nhận diện câu hỏi ghép 'nửa trong – nửa ngoài' (Hybrid Trap) để không từ chối oan toàn bộ câu.
+        Kiểm tra câu hỏi có chứa chủ đề quy chế/mã học phần/tên văn bản cốt lõi hiện có trong kho dữ liệu hay không.
+        Giúp nhận diện câu hỏi ghép 'nửa trong – nửa ngoài' (Hybrid Trap) và các văn bản nạp nóng về sau.
         """
         core_anchors = (
             "học bổng khuyến khích", "học bổng kkht", "học bổng spkt", "xét cấp học bổng",
@@ -351,49 +393,45 @@ class SmartRAGChain:
             "hoàn trả học phí", "học phí thừa", "qt-sv-04", "công tác xã hội", "ngày ctxh",
             "tín chỉ ctxh", "hiến máu tình nguyện", "mùa hè xanh", "điểm rèn luyện",
             "ban cán sự lớp", "kỷ luật sinh viên", "thi hộ", "học hộ", "quy tắc ứng xử",
-            "an toàn thông tin", "an ninh mạng", "it1216", "phần mềm mã nguồn mở", "đề cương học phần",
+            "an toàn thông tin", "an ninh mạng", "phần mềm mã nguồn mở", "đề cương học phần",
         )
-        return any(anchor in q_lower for anchor in core_anchors)
+        if any(anchor in q_lower for anchor in core_anchors):
+            return True
+        try:
+            lexicon = get_corpus_lexicon(vector_db)
+            if lexicon.is_loaded():
+                return lexicon.has_explicit_code_or_title_anchor(q_lower)
+        except Exception:
+            pass
+        return False
 
     @staticmethod
-    def _is_explicit_out_of_scope_query(q_lower: str) -> bool:
+    def _is_explicit_out_of_scope_query(q_lower: str, vector_db=None) -> bool:
         """
-        Nhận diện các câu hỏi kiểu ChatGPT / Gemini đa năng hoặc chủ đề đời sống/tuyển sinh/sau đại học
-        nằm ngoài phạm vi 8 văn bản quy chế đại học chính quy & đề cương học phần của Nhà trường.
-        Nếu là câu hỏi ghép 'nửa trong – nửa ngoài' (có chứa chủ đề quy chế cốt lõi), cho phép đi qua
-        để LLM trả lời vế đúng quy chế và bác bỏ vế bịa đặt.
+        Nhận diện hai tầng ngoài phạm vi:
+        1) Tầng tiện ích đa năng / toán phổ thông / ChatGPT thuần túy (_PURE_UTILITY_OOS_PATTERNS & phép tính thuần):
+           luôn từ chối trừ khi câu hỏi chứa neo quy chế hoặc mã văn bản/học phần chính thức rõ ràng.
+        2) Tầng chủ đề học vụ/đời sống có điều kiện (_CONDITIONAL_INSTITUTIONAL_OOS_PATTERNS):
+           từ chối khi kho tri thức hiện tại chưa có tài liệu liên quan, nhưng TỰ ĐỘNG MỞ KHÓA ngay
+           khi CorpusAdaptiveLexicon phát hiện văn bản mới tương ứng được nạp vào chroma_db.
         """
-        if SmartRAGChain._has_core_in_scope_regulation_anchor(q_lower):
-            return False
-        oos_patterns = (
-            "viết code", "đoạn code", "code python", "code c++", "code java", "code javascript",
-            "code c#", "code php", "code html", "code sql", "lập trình python", "lập trình c++",
-            "lập trình java", "lập trình web", "giải phương trình", "hệ phương trình",
-            "tính tích phân", "tính đạo hàm", "ma trận nghịch đảo", "thuật toán sắp xếp",
-            "cây nhị phân", "dịch đoạn văn", "dịch sang tiếng", "dịch câu này", "viết bài văn",
-            "viết đoạn văn", "làm bài thơ", "sáng tác thơ", "tóm tắt truyện", "tóm tắt tác phẩm",
-            "truyện kiều", "chí phèo", "tắt đèn", "vợ nhặt", "lão hạc", "cách làm món",
-            "cách nấu", "công thức nấu", "thịt kho tàu", "phở bò", "bún bò", "canh chua",
-            "thời tiết", "dự báo thời tiết", "nhiệt độ hôm nay", "trời có mưa không",
-            "cấu hình pc", "build pc", "pc gaming", "mua laptop", "tư vấn laptop", "tư vấn điện thoại",
-            "giá vàng", "tỷ giá ngoại tệ", "tỷ giá usd", "chứng khoán", "bitcoin", "tiền ảo",
-            "giá xăng", "bóng đá", "ngoại hạng anh", "world cup", "champions league",
-            "xổ số", "vietlott", "cung hoàng đạo", "tử vi", "bói toán", "xem bói", "phong thủy",
-            "căn tin", "cantin", "căng tin", "ký túc xá trường", "phòng ký túc xá",
-            "nội quy ký túc xá", "quy chế nội trú", "đăng ký ở ký túc xá", "cổng ký túc xá",
-            "ktx trường", "ktx của trường", "tiền điện nước ở ktx", "tiền phòng trọ", "thuê trọ",
-            "nhà trọ sinh viên", "vé gửi xe", "giữ xe tháng", "gửi xe tháng", "bãi giữ xe",
-            "nhà xe sinh viên", "tuyến xe buýt", "xe buýt số", "xe bus số",
-            "điểm chuẩn", "điểm sàn xét tuyển", "chỉ tiêu tuyển sinh", "xét học bạ", "mã trường tuyển sinh",
-            "lịch nghỉ tết", "tết nguyên đán", "nghỉ lễ 30/4", "nghỉ lễ 2/9", "lịch nghỉ hè",
-            "thư viện mở cửa", "giờ mở cửa thư viện", "đơn giá 1 tín chỉ là bao nhiêu tiền",
-            "1 tín chỉ bao nhiêu tiền", "một tín chỉ bao nhiêu tiền", "học phí 1 tín chỉ",
-            "học phí một tín chỉ", "quy chế sau đại học", "đào tạo sau đại học", "đào tạo thạc sĩ",
-            "đào tạo tiến sĩ", "trình độ thạc sĩ", "trình độ tiến sĩ", "luận văn thạc sĩ",
-            "luận án tiến sĩ", "tuyển sinh cao học", "học viên cao học",
-            "nghi_quyet_71", "nghi_quyet_72", "nghi_quyet_153",
-        )
-        return any(pat in q_lower for pat in oos_patterns)
+        has_core_anchor = SmartRAGChain._has_core_in_scope_regulation_anchor(q_lower, vector_db=vector_db)
+        if any(pat in q_lower for pat in _PURE_UTILITY_OOS_PATTERNS):
+            return not has_core_anchor
+        if _PURE_ARITHMETIC_OOS_RE.search(q_lower):
+            return not has_core_anchor
+
+        if any(pat in q_lower for pat in _CONDITIONAL_INSTITUTIONAL_OOS_PATTERNS):
+            if has_core_anchor:
+                return False
+            try:
+                lexicon = get_corpus_lexicon(vector_db)
+                if lexicon.is_loaded() and lexicon.unlocks_conditional_oos(q_lower):
+                    return False
+            except Exception:
+                pass
+            return True
+        return False
 
     @staticmethod
     def _looks_like_table_or_split_page(text: str, page_chunk_count: int) -> bool:
@@ -762,7 +800,9 @@ class SmartRAGChain:
             self.last_retrieval_debug = {"reason": "greeting_or_chitchat", "accepted": False}
             return []
 
-        if self._is_excluded_resolution_query(q_lower) or self._is_explicit_out_of_scope_query(q_lower):
+        if self._is_excluded_resolution_query(q_lower) or self._is_explicit_out_of_scope_query(
+            q_lower, vector_db=self.vector_db
+        ):
             self.last_retrieval_debug = {"reason": "excluded_or_explicit_oos", "accepted": False}
             return []
 
@@ -779,7 +819,7 @@ class SmartRAGChain:
                 q_clean, k=max(HYBRID_DENSE_CANDIDATES, k * 4)
             )
 
-        bm25_data = get_bm25_index()
+        bm25_data = get_bm25_index(self.vector_db)
         docs_corpus = bm25_data["docs"]
         unigram_sets = bm25_data["unigram_sets"]
         meta_unigram_sets = bm25_data.get("meta_unigram_sets", [])
@@ -848,18 +888,42 @@ class SmartRAGChain:
 
         q_b_set_gate = {t for t in q_tokens if "_" in t}
         total_q_idf = sum(raw_idf.get(u, 2.2) for u in q_unigrams) or 1.0
+        lexicon = get_corpus_lexicon(self.vector_db)
+        lex_match = lexicon.analyze_query(q_lower)
+        matched_codes = lex_match["matched_codes"]
+        matched_phrases = lex_match["matched_phrases"]
+        matched_distinctive = lex_match["matched_distinctive"]
+        anchor_strength = lex_match["anchor_strength"]
+
         eval_candidates = set(list(dense_rank.keys())[:15]) | set(list(bm25_rank.keys())[:15])
         best_idf_cov = 0.0
         has_doc_title_anchor = False
+        has_code_candidate_hit = False
+        has_lexicon_candidate_hit = False
 
         for idx in eval_candidates:
             d_set = unigram_sets[idx]
+            cand_doc = docs_corpus[idx] if idx < len(docs_corpus) else None
+            cand_meta = (cand_doc.metadata or {}) if cand_doc is not None else {}
+            cand_title_low = str(cand_meta.get("title", "") or "").lower()
+            cand_text_low = str(getattr(cand_doc, "page_content", "") or "").lower()
             if idx < len(meta_unigram_sets):
                 d_set = d_set | meta_unigram_sets[idx]
                 meta_u_hits = len(seen_u & meta_unigram_sets[idx])
                 meta_b_hits = len(q_b_set_gate & meta_bigram_sets[idx]) if idx < len(meta_bigram_sets) else 0
                 if meta_b_hits >= 2 or meta_u_hits >= 3:
                     has_doc_title_anchor = True
+            if matched_codes and (matched_codes & d_set):
+                has_doc_title_anchor = True
+                has_code_candidate_hit = True
+            if matched_phrases:
+                for phr in matched_phrases:
+                    if phr in cand_title_low or phr in cand_text_low:
+                        has_lexicon_candidate_hit = True
+                        break
+            if not has_lexicon_candidate_hit and matched_distinctive:
+                if len(matched_distinctive & d_set) >= 2:
+                    has_lexicon_candidate_hit = True
             matched_idf = sum(raw_idf.get(u, 2.2) for u in q_unigrams if u in d_set)
             cov = matched_idf / total_q_idf
             if cov > best_idf_cov:
@@ -891,17 +955,31 @@ class SmartRAGChain:
             and (max_dense_score >= 0.33)
             and (best_idf_cov >= 0.32)
         )
-        accepted = bool(dense_strong or lexical_strong or both_moderate)
+        corpus_adaptive_ok = (
+            has_doc_title_anchor
+            and has_code_candidate_hit
+            and (best_idf_cov >= 0.30)
+            and (max_dense_score >= 0.30 or max_bm25_score >= 12.0)
+        ) or (
+            has_lexicon_candidate_hit
+            and (anchor_strength >= 2.0)
+            and (best_idf_cov >= 0.35)
+            and (max_dense_score >= 0.38 or max_bm25_score >= 16.0)
+        )
+        accepted = bool(dense_strong or lexical_strong or both_moderate or corpus_adaptive_ok)
 
         self.last_retrieval_debug = {
             "max_dense": round(max_dense_score, 4),
             "max_bm25": round(max_bm25_score, 4),
             "best_idf_cov": round(best_idf_cov, 4),
+            "corpus_anchor_strength": round(anchor_strength, 2),
             "accepted": accepted,
             "reason": (
                 "dense_strong" if dense_strong else (
                     "lexical_strong" if lexical_strong else (
-                        "both_moderate" if both_moderate else "dual_refusal_gate"
+                        "both_moderate" if both_moderate else (
+                            "corpus_adaptive" if corpus_adaptive_ok else "dual_refusal_gate"
+                        )
                     )
                 )
             ),
@@ -1059,7 +1137,9 @@ class SmartRAGChain:
             self.last_retrieval_debug = {"reason": "greeting_or_chitchat", "accepted": False}
             return []
         q_low_raw = norm_query.lower()
-        if self._is_excluded_resolution_query(q_low_raw) or self._is_explicit_out_of_scope_query(q_low_raw):
+        if self._is_excluded_resolution_query(q_low_raw) or self._is_explicit_out_of_scope_query(
+            q_low_raw, vector_db=self.vector_db
+        ):
             self.last_retrieval_debug = {"reason": "excluded_or_explicit_oos", "accepted": False}
             return []
 
@@ -1154,6 +1234,8 @@ class SmartRAGChain:
                 "offline_fallback": True,
             }
         answer = raw_answer if isinstance(raw_answer, str) else getattr(raw_answer, 'content', str(raw_answer))
+        if strip_think_tags(answer).strip() == "REFUSAL_MESSAGE":
+            answer = REFUSAL_MESSAGE
         answer = sanitize_no_markdown_tables(answer)
         is_refusal = is_llm_refusal_answer(answer)
 
@@ -1177,6 +1259,9 @@ _GLOBAL_LLM = None
 _GLOBAL_CHAIN = None
 _GLOBAL_REWRITER_LLM = None
 _GLOBAL_BM25_DATA = None
+_BM25_BY_DB_ID = {}
+_GLOBAL_CORPUS_LEXICON = None
+_LEXICON_BY_DB_ID = {}
 _LAST_DATA_DIR_SIGNATURE = None
 _DEAD_GROQ_MODELS = set()
 _COOLDOWN_GROQ_MODELS: dict[str, float] = {}
@@ -1303,7 +1388,7 @@ def is_llm_refusal_answer(text: str) -> bool:
     """
     cleaned = strip_think_tags(text or "").strip()
     t = cleaned.lower()
-    if not t:
+    if not t or re.fullmatch(r"refusal_message", t):
         return True
     if REFUSAL_MESSAGE.lower() in t:
         return True
@@ -1611,20 +1696,705 @@ def _expand_bm25_corpus(raw_docs: list[str], raw_metas: list[dict], departments:
     }
 
 
-@st.cache_resource(show_spinner=False)
-def get_bm25_index():
-    """Khởi tạo và cache chỉ mục BM25 toàn văn từ ChromaDB để phục vụ Hybrid Search."""
+_LEXICON_STOPWORDS = _BM25_STOPWORDS | frozenset({
+    "quy", "định", "chế", "trường", "đại", "vĩnh", "long", "sư", "phạm", "kỹ", "thuật",
+    "sinh", "viên", "giảng", "chương", "trình", "đào", "tạo", "chính", "ban", "hành",
+    "kèm", "theo", "quyết", "thông", "tư", "nghị", "trang", "mục", "khoản", "điều",
+    "phần", "bảng", "phụ", "lục", "biểu", "mẫu", "năm", "tháng", "ngày", "hiện",
+    "tại", "nay", "mức", "số", "tỷ", "lệ", "đơn", "vị", "công", "tác", "thực", "tập",
+    "hoạt", "động", "nội", "dung", "đối", "tượng", "hướng", "dẫn", "văn", "bản",
+    "tài", "liệu", "người", "cấp", "xét", "duyệt", "nhà", "một", "hai", "ba", "bốn",
+    "sáu", "bảy", "tám", "chín", "mười", "đồng", "tiền", "tín", "chỉ", "điểm", "môn",
+    "lớp", "khóa", "ngành", "hệ", "bộ", "phòng", "khoa", "gồm", "trở", "tối", "đa",
+    "thiểu", "loại", "khác", "cách", "thế", "sao", "nào", "đâu", "mấy", "ai", "gì", "học",
+    "sử", "dụng", "dùng", "cài", "đặt", "những", "công", "cụ", "thư", "viện",
+    "tính", "giải", "viết", "đoạn", "phương", "trời", "hôm", "thời", "tiết", "giá",
+    "bao", "chất", "lượng", "yêu", "cầu", "mục", "tiêu", "hoàn", "thành", "tham", "gia",
+    "bắt", "buộc", "cần", "thiết", "đầy", "đủ", "liên", "quan", "nhưng", "tuy", "vẫn",
+})
+
+_PHRASE_EDGE_STOPWORDS = frozenset({
+    "và", "của", "các", "cho", "với", "trong", "là", "có", "khi", "nếu", "thì", "được",
+    "không", "tại", "theo", "từ", "đến", "này", "đó", "kia", "những", "một", "mỗi",
+    "mọi", "về", "như", "hoặc", "hay", "bởi", "qua", "vào", "ra", "lên", "xuống",
+    "lại", "nữa", "cũng", "đều", "phải", "cần", "nên", "gì", "nào", "đâu", "mấy",
+    "ai", "sao", "thế", "bằng", "trên", "dưới", "sau", "trước", "giữa", "vì", "để",
+    "rằng", "sẽ", "đã", "đang", "bị", "do", "gồm", "tất", "cả", "còn", "hỏi", "xin",
+})
+
+
+class CorpusAdaptiveLexicon:
+    """
+    Bộ từ điển thích ứng tự động trích xuất từ kho dữ liệu vector thực tế (chroma_db):
+    tự nhận diện mã học phần, số hiệu văn bản, tiêu đề, cụm thuật ngữ, độ hiếm IDF và
+    danh mục chủ đề từng tài liệu để mở/đóng cổng từ chối & sinh gợi ý động không cần sửa code.
+    """
+
+    def __init__(self):
+        self._lock = threading.RLock()
+        self.corpus_codes: set[str] = set()
+        self.corpus_titles: list[str] = []
+        self.corpus_phrases: set[str] = set()
+        self.structural_phrases: set[str] = set()
+        self.structural_text_blobs: list[str] = []
+        self.corpus_unigrams: set[str] = set()
+        self.corpus_idf: dict[str, float] = {}
+        self.distinctive_unigrams: set[str] = set()
+        self.doc_catalog: list[dict] = []
+        self._catalog_by_source: dict[str, dict] = {}
+        self.total_chunks: int = 0
+        self.version: int = 0
+        self._loaded: bool = False
+
+    def is_loaded(self) -> bool:
+        with self._lock:
+            return self._loaded
+
+    def ensure_loaded(self, vector_db=None) -> "CorpusAdaptiveLexicon":
+        with self._lock:
+            if not self._loaded:
+                self.refresh_from_vector_db(vector_db=vector_db)
+        return self
+
+    @staticmethod
+    def _clean_heading_candidate(raw_h: str) -> str:
+        s = unicodedata.normalize("NFC", str(raw_h or ""))
+        s = re.sub(r"\s+", " ", s).strip(" .,:;-–—•*#|[]()")
+        s = re.sub(r"^(?:Điều\s+\d+|CHƯƠNG\s+[IVX\d]+|[IVX]+\.|[0-9]+\.)[.:]?\s*", "", s, flags=re.IGNORECASE)
+        s = s.strip(" .,:;-–—•*#|[]()")
+        if len(s) < 6 or len(s) > 78:
+            return ""
+        if re.fullmatch(r"[\d\s.,/-]+", s) or "http" in s.lower() or "|" in s:
+            return ""
+        return s
+
+    @staticmethod
+    def _extract_phrases_from_text(text: str) -> set[str]:
+        phrases: set[str] = set()
+        if not text:
+            return phrases
+        norm = unicodedata.normalize("NFC", text).lower()
+        norm = re.sub(r"\s+", " ", norm).strip()
+        # Giữ nguyên cụm từ có dấu gạch nối (vd: mạng nơ-ron, e-learning)
+        for hyph in re.findall(r"[a-zà-ỹđ0-9]+-[a-zà-ỹđ0-9]+(?:-[a-zà-ỹđ0-9]+)*", norm):
+            if len(hyph) >= 4:
+                phrases.add(hyph)
+
+        for clause in re.split(r"[\n\r.;:!?()\[\]|]+", norm):
+            words = re.findall(r"[a-zà-ỹđ0-9-]+", clause)
+            if len(words) < 2:
+                continue
+            for n in (2, 3, 4):
+                if len(words) < n:
+                    continue
+                for i in range(len(words) - n + 1):
+                    gram = words[i:i + n]
+                    if gram[0] in _PHRASE_EDGE_STOPWORDS or gram[-1] in _PHRASE_EDGE_STOPWORDS:
+                        continue
+                    if all(w in _LEXICON_STOPWORDS or w.isdigit() for w in gram):
+                        continue
+                    if not any(len(w) >= 2 and re.search(r"[a-zà-ỹđ]", w) for w in gram):
+                        continue
+                    cand = " ".join(gram)
+                    if len(cand) >= 6:
+                        phrases.add(cand)
+        return phrases
+
+    def refresh_from_vector_db(self, vector_db=None) -> "CorpusAdaptiveLexicon":
+        vdb = vector_db or get_vector_db()
+        try:
+            data = vdb.get(include=["documents", "metadatas"])
+        except Exception as exc:
+            print(f"[LEXICON WARN] Không thể đọc chroma_db để làm mới từ điển thích ứng: {exc}")
+            return self
+
+        raw_docs = data.get("documents", []) or []
+        raw_metas = data.get("metadatas", []) or []
+        total_chunks = len(raw_docs)
+
+        codes: set[str] = set()
+        titles_seen: set[str] = set()
+        titles_list: list[str] = []
+        meta_terms_set: set[str] = set()
+        unigram_df: dict[str, int] = {}
+        phrase_set: set[str] = set()
+        structural_phrase_set: set[str] = set()
+        structural_blobs: list[str] = []
+        structural_blobs_seen: set[str] = set()
+        source_acc: dict[str, dict] = {}
+        departments = load_departments_config()
+
+        for raw_text, raw_meta in zip(raw_docs, raw_metas):
+            text_str = unicodedata.normalize("NFC", str(raw_text or ""))
+            meta = dict(raw_meta or {})
+            src = str(meta.get("source", "") or "unknown").strip()
+            title = unicodedata.normalize("NFC", str(meta.get("title", "") or "").strip())
+            doc_code = unicodedata.normalize("NFC", str(meta.get("doc_code", "") or "").strip())
+            dept_key = str(meta.get("dept_key", "") or "").strip().lower()
+            if not dept_key and src != "unknown":
+                try:
+                    dept_info = match_department_for_file(src, text_str[:1200], departments)
+                    dept_key = str((dept_info or {}).get("dept_key", "") or "").strip().lower()
+                except Exception:
+                    dept_key = ""
+
+            src_base = os.path.splitext(src)[0].replace("_", " ")
+            combined_meta_text = f"{title} {doc_code} {src_base}".strip()
+            combined_all_text = f"{combined_meta_text}\n{text_str}"
+
+            # 1. Trích xuất mã học phần ([A-Z]{2,5}\d{2,6}) & số hiệu quyết định/quy trình
+            for c_code in re.findall(r"\b[a-z]{2,5}\d{2,6}\b", combined_all_text.lower()):
+                codes.add(c_code)
+            for q_code in re.findall(
+                r"\b(?:[a-z]{1,4}(?:-[a-z0-9]{1,8}){1,3}|\d{1,4}/[a-zđ]{2,10}(?:-[a-z0-9đ]+)*)\b",
+                combined_all_text.lower(),
+            ):
+                if len(q_code) >= 4:
+                    codes.add(q_code)
+
+            # 2. Thu thập tiêu đề chuẩn
+            t_low = re.sub(r"\s+", " ", title.lower()).strip()
+            if t_low and len(t_low) >= 6 and t_low not in titles_seen:
+                titles_seen.add(t_low)
+                titles_list.append(t_low)
+
+            # 3. Đếm DF unigram cho bảng IDF động
+            chunk_tokens = tokenize_vietnamese_for_bm25(combined_all_text, include_bigrams=False)
+            chunk_u = {tok for tok in chunk_tokens if len(tok) >= 2 and "_" not in tok}
+            for u in chunk_u:
+                unigram_df[u] = unigram_df.get(u, 0) + 1
+
+            meta_tokens = tokenize_vietnamese_for_bm25(combined_meta_text, include_bigrams=False)
+            for mu in meta_tokens:
+                if len(mu) >= 2 and mu not in _LEXICON_STOPWORDS:
+                    meta_terms_set.add(mu)
+
+            # 4. Trích xuất cụm từ & tiêu đề mục từng tài liệu
+            if combined_meta_text:
+                meta_phrases = self._extract_phrases_from_text(combined_meta_text)
+                phrase_set.update(meta_phrases)
+                structural_phrase_set.update(meta_phrases)
+                meta_low = re.sub(r"\s+", " ", combined_meta_text.lower()).strip()
+                if meta_low and meta_low not in structural_blobs_seen:
+                    structural_blobs_seen.add(meta_low)
+                    structural_blobs.append(meta_low)
+            phrase_set.update(self._extract_phrases_from_text(text_str))
+
+            acc = source_acc.setdefault(src, {
+                "source": src,
+                "title": title or src_base,
+                "doc_code": doc_code,
+                "dept_key": dept_key or "dao_tao",
+                "codes": set(),
+                "headings": [],
+                "headings_seen": set(),
+                "chunk_samples": [],
+            })
+            if title and (not acc["title"] or len(title) > len(acc["title"])):
+                acc["title"] = title
+            if doc_code and not acc["doc_code"]:
+                acc["doc_code"] = doc_code
+            if dept_key:
+                acc["dept_key"] = dept_key
+            for mc in re.findall(r"\b[a-z]{2,5}\d{2,6}\b", combined_all_text.lower()):
+                acc["codes"].add(mc)
+            if len(acc["chunk_samples"]) < 4:
+                acc["chunk_samples"].append(text_str[:600].lower())
+
+            for pat in (
+                r"(?m)^(?:Điều\s+\d+[.:]\s*|CHƯƠNG\s+[IVX\d]+[.:]?\s*|Mục\s+\d+[.:]\s*|[IVX]+\.\s+)([^\n]{5,80})",
+                r"(?m)^([A-ZÀ-Ỹ][^\n:]{3,55}):",
+            ):
+                for m in re.finditer(pat, text_str):
+                    h_clean = self._clean_heading_candidate(m.group(1))
+                    h_low = h_clean.lower()
+                    if h_clean:
+                        structural_phrase_set.update(self._extract_phrases_from_text(h_clean))
+                        if h_low not in structural_blobs_seen:
+                            structural_blobs_seen.add(h_low)
+                            structural_blobs.append(h_low)
+                    if h_clean and h_low not in acc["headings_seen"] and len(acc["headings"]) < 14:
+                        acc["headings_seen"].add(h_low)
+                        acc["headings"].append(h_clean)
+
+        n_docs = max(total_chunks, 1)
+        corpus_idf: dict[str, float] = {}
+        distinctive: set[str] = set()
+        for u, df in unigram_df.items():
+            idf_val = max(0.25, math.log((n_docs - df + 0.5) / (df + 0.5)))
+            corpus_idf[u] = idf_val
+            if u in _LEXICON_STOPWORDS or u.isdigit():
+                continue
+            if (len(u) >= 3 and idf_val >= 1.45) or (u in meta_terms_set and len(u) >= 3) or (u in codes):
+                distinctive.add(u)
+
+        distinctive.update(codes)
+
+        catalog_list: list[dict] = []
+        catalog_by_src: dict[str, dict] = {}
+        for src, acc in source_acc.items():
+            entry = {
+                "source": acc["source"],
+                "title": acc["title"],
+                "doc_code": acc["doc_code"],
+                "dept_key": acc["dept_key"],
+                "codes": sorted(acc["codes"]),
+                "headings": acc["headings"],
+                "sample_text": " ".join(acc["chunk_samples"]),
+            }
+            catalog_list.append(entry)
+            catalog_by_src[src] = entry
+
+        with self._lock:
+            self.corpus_codes = codes
+            self.corpus_titles = titles_list
+            self.corpus_phrases = phrase_set
+            self.structural_phrases = structural_phrase_set
+            self.structural_text_blobs = structural_blobs
+            self.corpus_unigrams = set(unigram_df.keys())
+            self.corpus_idf = corpus_idf
+            self.distinctive_unigrams = distinctive
+            self.doc_catalog = catalog_list
+            self._catalog_by_source = catalog_by_src
+            self.total_chunks = total_chunks
+            self.version += 1
+            self._loaded = True
+        return self
+
+    def analyze_query(self, q_lower: str) -> dict:
+        with self._lock:
+            if not self._loaded:
+                return {
+                    "matched_codes": set(),
+                    "matched_phrases": [],
+                    "matched_distinctive": set(),
+                    "matched_title": False,
+                    "anchor_strength": 0.0,
+                }
+            norm_q = re.sub(r"\s+", " ", unicodedata.normalize("NFC", (q_lower or "").lower())).strip()
+            q_toks = set(re.findall(r"[a-zà-ỹđ0-9-]+", norm_q))
+
+            matched_codes = {
+                c for c in self.corpus_codes
+                if c in q_toks or (("/" in c or "-" in c) and re.search(rf"(?<![\w/]){re.escape(c)}(?![\w/])", norm_q))
+            }
+            matched_title = any(
+                len(t) >= 12 and t in norm_q for t in self.corpus_titles
+            )
+            q_phrases = self._extract_phrases_from_text(norm_q)
+            matched_phrases = sorted(
+                (p for p in (q_phrases & self.corpus_phrases)),
+                key=len,
+                reverse=True,
+            )
+            matched_distinctive = {
+                u for u in (q_toks & self.distinctive_unigrams)
+                if u not in _LEXICON_STOPWORDS
+            }
+            anchor_strength = (
+                len(matched_codes) * 3.0
+                + (3.0 if matched_title else 0.0)
+                + min(len(matched_phrases), 3) * 2.0
+                + min(len(matched_distinctive), 4) * 1.25
+            )
+            return {
+                "matched_codes": matched_codes,
+                "matched_phrases": matched_phrases,
+                "matched_distinctive": matched_distinctive,
+                "matched_title": matched_title,
+                "anchor_strength": anchor_strength,
+            }
+
+    def has_explicit_code_or_title_anchor(self, q_lower: str) -> bool:
+        info = self.analyze_query(q_lower)
+        return bool(info["matched_codes"] or info["matched_title"])
+
+    def unlocks_conditional_oos(self, q_lower: str) -> bool:
+        info = self.analyze_query(q_lower)
+        if info["matched_codes"] or info["matched_title"]:
+            return True
+        norm_q = re.sub(r"\s+", " ", unicodedata.normalize("NFC", (q_lower or "").lower())).strip()
+        triggered = [pat for pat in _CONDITIONAL_INSTITUTIONAL_OOS_PATTERNS if pat in norm_q]
+        with self._lock:
+            blobs = list(self.structural_text_blobs)
+        if triggered:
+            return any(any(pat in b for b in blobs) for pat in triggered)
+        return any(any(phr in b for b in blobs) for phr in info["matched_phrases"])
+
+    def has_domain_match(self, q_lower: str) -> bool:
+        info = self.analyze_query(q_lower)
+        return info["anchor_strength"] >= 1.5
+
+    def find_best_doc_for_text(self, text: str) -> dict | None:
+        norm = re.sub(r"\s+", " ", unicodedata.normalize("NFC", (text or "").lower())).strip()
+        if not norm:
+            return None
+        with self._lock:
+            best_entry = None
+            best_score = 0.0
+            q_phrases = self._extract_phrases_from_text(norm)
+            for entry in self.doc_catalog:
+                sc = 0.0
+                for c in entry.get("codes", []):
+                    if re.search(rf"\b{re.escape(c)}\b", norm):
+                        sc += 8.0
+                t_low = str(entry.get("title", "") or "").lower()
+                if t_low and len(t_low) >= 8:
+                    if t_low in norm:
+                        sc += 7.0
+                    else:
+                        t_phrases = self._extract_phrases_from_text(t_low)
+                        sc += len(t_phrases & q_phrases) * 2.5
+                for h in entry.get("headings", []):
+                    if h.lower() in norm:
+                        sc += 2.0
+                if sc > best_score:
+                    best_score = sc
+                    best_entry = entry
+            return best_entry if best_score >= 2.0 else None
+
+    def get_snapshot_stats(self) -> dict:
+        with self._lock:
+            return {
+                "loaded": self._loaded,
+                "version": self.version,
+                "total_chunks": self.total_chunks,
+                "codes_count": len(self.corpus_codes),
+                "titles_count": len(self.corpus_titles),
+                "phrases_count": len(self.corpus_phrases),
+                "distinctive_count": len(self.distinctive_unigrams),
+                "docs_count": len(self.doc_catalog),
+            }
+
+
+def _is_global_vector_db(vector_db) -> bool:
+    return vector_db is None or vector_db is _GLOBAL_VECTOR_DB
+
+
+def get_corpus_lexicon(vector_db=None) -> CorpusAdaptiveLexicon:
+    """Trả về CorpusAdaptiveLexicon gắn với vector_db toàn cục hoặc sandbox cô lập."""
+    global _GLOBAL_CORPUS_LEXICON
+    if _is_global_vector_db(vector_db):
+        if _GLOBAL_CORPUS_LEXICON is None:
+            _GLOBAL_CORPUS_LEXICON = CorpusAdaptiveLexicon()
+        return _GLOBAL_CORPUS_LEXICON.ensure_loaded(get_vector_db())
+
+    db_id = id(vector_db)
+    lex = _LEXICON_BY_DB_ID.get(db_id)
+    if lex is None:
+        lex = CorpusAdaptiveLexicon()
+        _LEXICON_BY_DB_ID[db_id] = lex
+    return lex.ensure_loaded(vector_db)
+
+
+def _shorten_doc_topic(title: str, max_len: int = 38) -> str:
+    s = unicodedata.normalize("NFC", str(title or "")).strip()
+    s = re.sub(
+        r"^(?:Quyết định\s+(?:về việc\s+)?ban hành\s+|Thông báo\s+(?:về việc\s+)?|Hướng dẫn\s+|Đề cương chi tiết\s+học phần\s+)",
+        "",
+        s,
+        flags=re.IGNORECASE,
+    ).strip()
+    s = re.sub(r"\s*\(\d{4}\)\s*$", "", s).strip()
+    if len(s) <= max_len:
+        return s
+    cut = s[:max_len].rsplit(" ", 1)[0].strip()
+    return cut or s[:max_len]
+
+
+def _extract_course_subject_label(title: str, source: str, course_code: str) -> str:
+    src_base = os.path.splitext(source or "")[0].replace("_", " ")
+    raw = str(title or src_base or "").strip()
+    raw = re.sub(
+        r"^(?:Đề\s+cương\s+(?:chi\s+tiết\s+)?(?:học\s+phần|môn\s+học)\s*[:\-–—]?\s*)",
+        "",
+        raw,
+        flags=re.IGNORECASE,
+    ).strip()
+    raw = re.sub(r"\(\d{4}\)", "", raw)
+    if course_code:
+        raw = re.sub(
+            rf"[-–—:\s]*\b(?:mã(?:\s+học\s+phần|\s+hp)?\s*[:\-]?\s*)?\(?{re.escape(course_code)}\)?\s*",
+            " ",
+            raw,
+            flags=re.IGNORECASE,
+        )
+    raw = re.sub(r"[-–—:\s]*\b(?:mã\s+(?:học\s+phần|hp))\b[:\-]?\s*$", "", raw, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", raw).strip(" -_:.")
+    if len(cleaned) >= 4:
+        return cleaned[:52]
+    fallback = _shorten_doc_topic(str(title or src_base or ""), max_len=48)
+    return fallback or course_code or "học phần này"
+
+
+def _is_ctxh_prompt_pair(label: str, query: str) -> bool:
+    combined = f"{label} {query}".lower()
+    return any(tok in combined for tok in ("ctxh", "công tác xã hội", "hiến máu", "mùa hè xanh", "ban cán sự", "điểm rèn luyện"))
+
+
+def build_adaptive_followup_pool(
+    config: dict,
+    query_or_content: str,
+    sources: list | None = None,
+    assistant_reply: str = "",
+    vector_db=None,
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """
+    Sinh bộ gợi ý theo dõi động thích ứng trực tiếp từ tài liệu vừa truy xuất (title, doc_code,
+    dept_key, headings/corpus) kết hợp prompts.json; ngăn rò rỉ gợi ý CTXH (ctsv) sang nhóm
+    Đào tạo / CNTT / KHTC khi trả lời quy chế đào tạo hoặc đề cương học phần.
+    """
+    q_text = (query_or_content or "").lower()
+    reply_text = (assistant_reply or "").lower()
+
+    doc_title = ""
+    doc_snippet = ""
+    doc_dept_key = ""
+    doc_source = ""
+    doc_code = ""
+    if sources and isinstance(sources, list) and len(sources) > 0:
+        src0 = sources[0]
+        if isinstance(src0, dict):
+            doc_title = str(src0.get("title") or src0.get("short_title") or "").strip()
+            doc_snippet = str(src0.get("snippet") or "")[:400].lower()
+            doc_dept_key = str(src0.get("dept_key") or "").lower().strip()
+            doc_source = str(src0.get("source") or src0.get("file") or "").strip()
+            doc_code = str(src0.get("doc_code") or "").strip()
+        else:
+            meta = getattr(src0, "metadata", {}) or {}
+            doc_title = str(meta.get("title") or "").strip()
+            doc_snippet = str(getattr(src0, "page_content", "") or "")[:400].lower()
+            doc_dept_key = str(meta.get("dept_key") or "").lower().strip()
+            doc_source = str(meta.get("source") or "").strip()
+            doc_code = str(meta.get("doc_code") or "").strip()
+
+    lexicon = get_corpus_lexicon(vector_db)
+    matched_doc = None
+    with lexicon._lock:
+        if doc_source and doc_source in lexicon._catalog_by_source:
+            matched_doc = lexicon._catalog_by_source[doc_source]
+        elif doc_title:
+            for entry in lexicon.doc_catalog:
+                if entry.get("title", "").lower() == doc_title.lower():
+                    matched_doc = entry
+                    break
+    if matched_doc is None:
+        matched_doc = lexicon.find_best_doc_for_text(f"{doc_title} {query_or_content}")
+
+    if matched_doc:
+        doc_title = doc_title or str(matched_doc.get("title") or "")
+        doc_source = doc_source or str(matched_doc.get("source") or "")
+        doc_code = doc_code or str(matched_doc.get("doc_code") or "")
+        if not doc_dept_key:
+            doc_dept_key = str(matched_doc.get("dept_key") or "").lower().strip()
+
+    doc_title_low = doc_title.lower()
+    course_codes = [
+        c.upper() for c in ((matched_doc or {}).get("codes", []) or [])
+        if re.match(r"^[a-z]{2,5}\d{2,6}$", str(c).lower())
+    ]
+    if not course_codes and (doc_title or doc_source):
+        course_codes = [c.upper() for c in re.findall(r"\b[A-Za-z]{2,5}\d{2,6}\b", f"{doc_title} {doc_source}")]
+    is_syllabus = bool(course_codes) or ("đề cương" in doc_title_low) or ("bm-dt" in doc_source.lower())
+
+    doc_dynamic_prompts: list[tuple[str, str]] = []
+    if is_syllabus:
+        c_code = course_codes[0] if course_codes else ""
+        subj_name = _extract_course_subject_label(doc_title, doc_source, c_code)
+        code_tag = f" ({c_code})" if c_code and c_code.lower() not in subj_name.lower() else ""
+        short_ref = c_code or _shorten_doc_topic(subj_name, 24)
+        sample_blob = f"{(matched_doc or {}).get('sample_text', '')} {doc_snippet}".lower()
+
+        if not any(kw in q_text for kw in ("tín chỉ", "đánh giá", "điểm quá trình", "cuối kỳ", "tỷ trọng", "hệ số")):
+            doc_dynamic_prompts.append((
+                f"Đánh giá & tỷ trọng điểm {short_ref}"[:52],
+                f"Học phần {subj_name}{code_tag} đánh giá điểm quá trình và thi cuối kỳ theo tỷ trọng nào?",
+            ))
+        if not any(kw in q_text for kw in ("chuẩn đầu ra", "cđr", "clo", "mục tiêu")):
+            doc_dynamic_prompts.append((
+                f"Chuẩn đầu ra & mục tiêu {short_ref}"[:52],
+                f"Chuẩn đầu ra (CĐR) và mục tiêu của học phần {subj_name}{code_tag} gồm những nội dung gì?",
+            ))
+        if not any(kw in q_text for kw in ("hệ điều hành", "phần mềm", "framework", "thư viện", "cài đặt", "công cụ")):
+            doc_dynamic_prompts.append((
+                f"Phần mềm & công cụ thực hành {short_ref}"[:52],
+                f"Học phần {subj_name}{code_tag} yêu cầu cài đặt và sử dụng phần mềm hoặc công cụ thực hành nào?",
+            ))
+        if not any(kw in q_text for kw in ("chuyên cần", "dự lớp", "vắng", "dự thi", "điều kiện")):
+            doc_dynamic_prompts.append((
+                f"Điều kiện chuyên cần & dự thi {short_ref}"[:52],
+                f"Điều kiện chuyên cần dự lớp và dự thi kết thúc học phần {subj_name}{code_tag} là gì?",
+            ))
+        if not any(kw in q_text for kw in ("giáo trình", "tài liệu")):
+            if "giáo trình" in sample_blob or "tài liệu" in sample_blob:
+                doc_dynamic_prompts.append((
+                    f"Giáo trình & tài liệu {short_ref}"[:52],
+                    f"Học phần {subj_name}{code_tag} sử dụng giáo trình và tài liệu tham khảo nào?",
+                ))
+    elif matched_doc:
+        topic_short = _shorten_doc_topic(doc_title or doc_source, max_len=28)
+        doc_ref = doc_title or topic_short
+        sample_blob = f"{matched_doc.get('sample_text', '')} {doc_snippet}".lower()
+        for h in matched_doc.get("headings", []):
+            h_low = h.lower()
+            if h_low in q_text or len(h) < 8:
+                continue
+            lbl = f"{h[:30].rstrip()} ({topic_short[:18]})" if len(h) > 30 else f"{h} ({topic_short})"
+            if len(lbl) > 54:
+                lbl = f"{h[:51].rstrip()}..."
+            doc_dynamic_prompts.append((
+                lbl,
+                f"{h} trong {doc_ref} được quy định cụ thể như thế nào?",
+            ))
+            if len(doc_dynamic_prompts) >= 3:
+                break
+        if len(doc_dynamic_prompts) < 3:
+            aspect_rules = (
+                (("lệ phí", "mức thu", "mức hỗ trợ", "đồng/tháng", "chi phí"),
+                 f"Mức phí & chi phí ({topic_short})",
+                 f"Mức lệ phí hoặc chi phí được quy định trong {doc_ref} là bao nhiêu?"),
+                (("đối tượng", "điều kiện", "tiêu chuẩn"),
+                 f"Đối tượng & điều kiện ({topic_short})",
+                 f"Đối tượng áp dụng và điều kiện theo {doc_ref} gồm những gì?"),
+                (("hồ sơ", "thủ tục", "đăng ký", "nộp đơn"),
+                 f"Hồ sơ & thủ tục ({topic_short})",
+                 f"Hồ sơ và thủ tục thực hiện theo {doc_ref} gồm những bước nào?"),
+                (("nội quy", "trách nhiệm", "xử lý", "kỷ luật", "vi phạm"),
+                 f"Quy định & xử lý vi phạm ({topic_short})",
+                 f"Quy định tuân thủ và xử lý vi phạm theo {doc_ref} như thế nào?"),
+            )
+            for cues, lbl, qq in aspect_rules:
+                if any(c in sample_blob for c in cues) and not any(c in q_text for c in cues):
+                    doc_dynamic_prompts.append((lbl[:54], qq))
+
+    categories = config.get("categories", {})
+    cat_allowed_for_dept = {
+        "dao_tao": {"hoc_vu_tot_nghiep", "ky_luat_noi_quy"},
+        "cntt": {"hoc_vu_tot_nghiep", "ky_luat_noi_quy"},
+        "khtc": {"hoc_phi", "hoc_vu_tot_nghiep"},
+        "ctsv": {"hoc_bong", "ctxh_ren_luyen", "ky_luat_noi_quy"},
+    }
+    allowed_cats = cat_allowed_for_dept.get(doc_dept_key)
+
+    best_cat_key = None
+    best_score = 0
+    for cat_key, cat_data in categories.items():
+        if allowed_cats is not None and cat_key not in allowed_cats:
+            continue
+        kws = [str(kw).lower() for kw in cat_data.get("keywords", []) if kw]
+        score = 0
+        for kw in kws:
+            if doc_title_low and kw in doc_title_low:
+                score += 4
+            if q_text and kw in q_text:
+                score += 3
+            if reply_text and kw in reply_text:
+                score += 2
+            if doc_snippet and kw in doc_snippet:
+                score += 1
+        if score > best_score:
+            best_score = score
+            best_cat_key = cat_key
+
+    if not best_cat_key and doc_dept_key:
+        dept_to_category = {
+            "dao_tao": "hoc_vu_tot_nghiep",
+            "cntt": "hoc_vu_tot_nghiep",
+            "khtc": "hoc_phi",
+            "ctsv": "ctxh_ren_luyen",
+        }
+        mapped_cat = dept_to_category.get(doc_dept_key)
+        if mapped_cat in categories:
+            best_cat_key = mapped_cat
+
+    suppress_ctxh = doc_dept_key in ("dao_tao", "cntt", "khtc") or is_syllabus
+    cat_prompts = [
+        (p["label"], p["query"])
+        for p in categories.get(best_cat_key, {}).get("prompts", [])
+        if not (suppress_ctxh and _is_ctxh_prompt_pair(p["label"], p["query"]))
+    ] if best_cat_key and best_cat_key in categories else []
+
+    init_prompts = [
+        (p["label"], p["query"])
+        for p in config.get("initial_prompts", [])
+        if not (suppress_ctxh and _is_ctxh_prompt_pair(p["label"], p["query"]))
+    ]
+
+    # Với đề cương học phần hoặc văn bản mới chưa có sẵn nhóm từ khóa mạnh trong prompts.json,
+    # đặt gợi ý động sinh từ chính tài liệu vừa truy xuất lên ưu tiên số 1.
+    if doc_dynamic_prompts and (is_syllabus or best_score < 6):
+        primary_raw = doc_dynamic_prompts + (cat_prompts if cat_prompts else init_prompts)
+    elif cat_prompts:
+        primary_raw = cat_prompts + doc_dynamic_prompts
+    else:
+        primary_raw = doc_dynamic_prompts + init_prompts
+
+    secondary_raw: list[tuple[str, str]] = []
+    for ckey, cdata in categories.items():
+        if ckey == best_cat_key:
+            continue
+        if suppress_ctxh and ckey == "ctxh_ren_luyen":
+            continue
+        for p in cdata.get("prompts", []):
+            if suppress_ctxh and _is_ctxh_prompt_pair(p["label"], p["query"]):
+                continue
+            secondary_raw.append((p["label"], p["query"]))
+    secondary_raw.extend(init_prompts)
+    return primary_raw, secondary_raw
+
+
+def _on_kb_changed(vector_db, sync_result: dict) -> None:
+    """Callback sự kiện khi ingest đồng bộ thêm/sửa/xóa file: tự làm mới BM25, Lexicon & Semantic Cache."""
     global _GLOBAL_BM25_DATA
-    if _GLOBAL_BM25_DATA is not None:
+    if "_GLOBAL_SEMANTIC_CACHE" in globals() and _GLOBAL_SEMANTIC_CACHE is not None:
+        try:
+            _GLOBAL_SEMANTIC_CACHE.clear()
+        except Exception:
+            pass
+
+    if _is_global_vector_db(vector_db):
+        _GLOBAL_BM25_DATA = None
+        try:
+            get_bm25_index.clear()
+        except Exception:
+            pass
+        get_bm25_index()
+        get_corpus_lexicon().refresh_from_vector_db(vector_db or get_vector_db())
+    else:
+        db_id = id(vector_db)
+        _BM25_BY_DB_ID.pop(db_id, None)
+        get_bm25_index(vector_db)
+        get_corpus_lexicon(vector_db).refresh_from_vector_db(vector_db)
+
+
+register_kb_change_listener(_on_kb_changed)
+
+
+def get_bm25_index(vector_db=None):
+    """Khởi tạo và cache chỉ mục BM25 toàn văn từ ChromaDB để phục vụ Hybrid Search (hỗ trợ cả global DB và sandbox DB)."""
+    global _GLOBAL_BM25_DATA
+    if _is_global_vector_db(vector_db):
+        if _GLOBAL_BM25_DATA is not None:
+            return _GLOBAL_BM25_DATA
+        vdb = get_vector_db()
+        data = vdb.get(include=["documents", "metadatas"])
+        raw_docs = data.get("documents", []) or []
+        raw_metas = data.get("metadatas", []) or []
+        departments = load_departments_config()
+        _GLOBAL_BM25_DATA = _expand_bm25_corpus(raw_docs, raw_metas, departments)
         return _GLOBAL_BM25_DATA
 
-    vector_db = get_vector_db()
+    db_id = id(vector_db)
+    cached = _BM25_BY_DB_ID.get(db_id)
+    if cached is not None:
+        return cached
     data = vector_db.get(include=["documents", "metadatas"])
     raw_docs = data.get("documents", []) or []
     raw_metas = data.get("metadatas", []) or []
     departments = load_departments_config()
-    _GLOBAL_BM25_DATA = _expand_bm25_corpus(raw_docs, raw_metas, departments)
-    return _GLOBAL_BM25_DATA
+    bm25_built = _expand_bm25_corpus(raw_docs, raw_metas, departments)
+    _BM25_BY_DB_ID[db_id] = bm25_built
+    return bm25_built
 
 
 def get_data_dir_signature(data_dir: str = DATA_PATH) -> tuple:
@@ -1656,9 +2426,9 @@ def get_data_dir_signature(data_dir: str = DATA_PATH) -> tuple:
 def auto_sync_knowledge_base(force: bool = False) -> dict:
     """
     Kiểm tra chữ ký thư mục data/ với chi phí < 5ms; chỉ đồng bộ ChromaDB & làm mới BM25 RRF
-    khi phát hiện có file mới, file sửa đổi hoặc file bị xóa.
+    + CorpusAdaptiveLexicon khi phát hiện có file mới, file sửa đổi hoặc file bị xóa.
     """
-    global _LAST_DATA_DIR_SIGNATURE, _GLOBAL_BM25_DATA
+    global _LAST_DATA_DIR_SIGNATURE
     current_sig = get_data_dir_signature(DATA_PATH)
     if not force and _LAST_DATA_DIR_SIGNATURE == current_sig:
         return {"changed": False, "added": [], "updated": [], "deleted": []}
@@ -1668,18 +2438,8 @@ def auto_sync_knowledge_base(force: bool = False) -> dict:
     _LAST_DATA_DIR_SIGNATURE = current_sig
 
     if sync_res.get("changed"):
-        _GLOBAL_BM25_DATA = None
-        if "_GLOBAL_SEMANTIC_CACHE" in globals() and _GLOBAL_SEMANTIC_CACHE is not None:
-            try:
-                _GLOBAL_SEMANTIC_CACHE.clear()
-            except Exception:
-                pass
-        try:
-            get_bm25_index.clear()
-        except Exception:
-            pass
-        get_bm25_index()
-        print(f"[AUTO-SYNC] Đồng bộ hoàn tất và đã làm mới Hybrid BM25 Index: {sync_res}")
+        _on_kb_changed(vector_db, sync_res)
+        print(f"[AUTO-SYNC] Đồng bộ hoàn tất và đã làm mới Hybrid BM25 Index + Adaptive Lexicon: {sync_res}")
 
     return sync_res
 
@@ -2777,6 +3537,13 @@ def get_greeting_or_chitchat_reply(query: str) -> str | None:
     if any(kw in clean for kw in _REGULATION_SUBJECT_KEYWORDS):
         if not re.match(r"^(?:test|kiểm tra thử)\b", clean):
             return None
+    try:
+        lexicon = get_corpus_lexicon()
+        if lexicon.is_loaded() and lexicon.has_domain_match(clean):
+            if not re.match(r"^(?:test|kiểm tra thử)\b", clean):
+                return None
+    except Exception:
+        pass
     if any(cue in clean for cue in _ANAPHORIC_FOLLOWUP_CUES):
         return None
     if SmartRAGChain._is_excluded_resolution_query(clean) or SmartRAGChain._is_explicit_out_of_scope_query(clean):
@@ -2915,6 +3682,12 @@ def _extract_topic_anchor_from_history(recent_history: list[tuple[str, str]]) ->
                     best_label = label
         if best_label:
             return best_label
+        try:
+            lex_doc = get_corpus_lexicon().find_best_doc_for_text(c_low)
+            if lex_doc and lex_doc.get("title"):
+                return str(lex_doc["title"])
+        except Exception:
+            pass
     for role, content in reversed(recent_history):
         c_low = normalize_chat_slang(content).lower()
         for pat, label in topic_patterns:
@@ -3182,9 +3955,17 @@ def rewrite_conversational_query(query: str, chat_history: list | None = None) -
     has_article_or_section_ref = bool(
         re.search(r"\b(?:điều|khoản|mục|chương|phụ\s+lục|biểu\s+mẫu|mẫu)\s+[ivxlcdm\d]+", q_lower)
     )
+    has_adaptive_subject = False
+    try:
+        lexicon = get_corpus_lexicon()
+        if lexicon.is_loaded():
+            has_adaptive_subject = lexicon.has_domain_match(q_lower)
+    except Exception:
+        pass
     has_standalone_subject = (
         any(subj in q_lower for subj in standalone_subjects)
         or has_article_or_section_ref
+        or has_adaptive_subject
     )
 
     needs_rewrite = has_anaphoric_pronoun or (
@@ -3303,7 +4084,7 @@ def get_rag_chain():
         "   - Trình bày dạng gạch đầu dòng ngắn gọn để sinh viên nắm bắt thông tin nhanh nhất.\n"
         "   - Tuyệt đối KHÔNG kẻ bảng Markdown bằng dấu gạch đứng (| ... |) và KHÔNG dùng thẻ HTML như <br>; luôn chuyển dữ liệu bảng thành các gạch đầu dòng phân cấp rõ ràng.\n"
         "   - Tuyệt đối KHÔNG dùng ký hiệu toán học LaTeX như '\\[ ... \\]', '\\( ... \\)', '$$ ... $$', '\\text', '\\frac', '\\div', '\\times'. Luôn viết phép tính bằng chữ và số thuần túy rõ ràng (ví dụ: 15 - 3 = 12 ngày còn thiếu; 12 : 0,5 = 24 buổi).\n"
-        f"4. CHỈ trả về hằng số REFUSAL_MESSAGE duy nhất (không giải thích thêm) khi câu hỏi hoàn toàn nằm ngoài phạm vi các văn bản quy chế tham khảo (ví dụ: hỏi giá phòng ký túc xá, điểm chuẩn tuyển sinh, tuyến xe buýt, học phí 1 tín chỉ...). Nếu tài liệu quy chế đã có quy định liên quan đến chủ đề câu hỏi, tuyệt đối KHÔNG trả về REFUSAL_MESSAGE:\n{REFUSAL_MESSAGE}\n\n"
+        f"4. CHỈ trả về hằng số REFUSAL_MESSAGE duy nhất (không giải thích thêm) khi câu hỏi hoàn toàn nằm ngoài phạm vi các đoạn tài liệu quy chế tham khảo được cung cấp dưới đây. Nếu tài liệu hiện tại đã có quy định liên quan đến chủ đề câu hỏi, tuyệt đối KHÔNG trả về REFUSAL_MESSAGE:\n{REFUSAL_MESSAGE}\n\n"
         "Nội dung quy chế tham khảo:\n{context}\n\n"
         "Câu hỏi: {input}\n\n"
         "Trả lời:"
@@ -3311,4 +4092,8 @@ def get_rag_chain():
 
     prompt = ChatPromptTemplate.from_template(system_prompt)
     _GLOBAL_CHAIN = SmartRAGChain(vector_db, llm, prompt)
+    try:
+        get_corpus_lexicon(vector_db).ensure_loaded(vector_db)
+    except Exception:
+        pass
     return _GLOBAL_CHAIN
